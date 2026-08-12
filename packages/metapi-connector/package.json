@@ -1,0 +1,31 @@
+{
+  "name": "metapi-connector",
+  "version": "1.0.4",
+  "description": "Local-first Codex connector for Metapi session control, approvals and notifications",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "metapi-connector": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=25.0.0"
+  },
+  "dependencies": {
+    "get-port": "^7.2.0",
+    "smol-toml": "^1.7.1",
+    "ws": "^8.20.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cita-777/metapi.git",
+    "directory": "packages/metapi-connector"
+  }
+}

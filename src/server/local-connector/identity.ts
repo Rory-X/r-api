@@ -1,0 +1,11 @@
+export const CONNECTOR_VERSION = '1.0.4';
+
+export const LOCAL_CONNECTOR_CAPABILITIES = Object.freeze([
+  'action-driver-v1',
+  'encrypted-backup-v1',
+  'durable-event-queue-v1',
+  'durable-bridge-queue-v1',
+  'app-server-observer-v1',
+  'app-server-control-v1',
+  'local-dashboard-v1',
+] as const);
