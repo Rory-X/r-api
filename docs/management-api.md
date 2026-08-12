@@ -20,7 +20,7 @@
 
 > [!IMPORTANT]
 > 本页介绍的是 **管理 API**，不是下游客户端调用的 `/v1/*` 代理接口。
-> - 管理 API 使用 `AUTH_TOKEN`
+> - 管理 API 脚本使用当前管理员登录凭据
 > - 代理接口使用 `PROXY_TOKEN`
 
 ## 认证方式
@@ -28,16 +28,20 @@
 所有受保护的管理接口都需要携带：
 
 ```http
-Authorization: Bearer <AUTH_TOKEN>
+Authorization: Bearer <ADMIN_CREDENTIAL>
 ```
 
 其中：
 
-- `AUTH_TOKEN` 就是你启动 Metapi 时配置的管理员令牌
-- 如果你后来在「设置」里修改过管理员令牌，脚本里也要同步改成新值
+- 首次启动时，当前管理员登录凭据来自 `AUTH_TOKEN` 或 `AUTH_TOKEN_HASH`
+- 初始化后数据库只保存 Argon2id 哈希；如果后来在「设置」里修改过登录凭据，脚本也要同步改成新值
 - 管理端如果启用了 `ADMIN_IP_ALLOWLIST`，脚本调用方的来源 IP 也必须命中白名单
+- 反向代理部署只有在配置 `TRUST_PROXY` 后才采信转发 IP；重复错误 Bearer 会按解析后的客户端 IP 限流
 
-管理 API 不需要额外先调用“登录接口”；脚本直接带 `AUTH_TOKEN` 即可。
+管理 API 不需要额外先调用“登录接口”；非浏览器脚本可以直接携带 Bearer 凭据。WebUI 不走这条路径，而是使用 HttpOnly Cookie 和 CSRF。
+
+> [!IMPORTANT]
+> WebUI 启用 TOTP 后，显式脚本 Bearer 仍只校验当前管理员登录凭据，不要求动态验证码。这是为了保持现有 CI、Shell 和无人值守自动化兼容；因此管理员凭据仍必须作为高敏秘密管理。TOTP 管理接口只接受 WebUI 管理会话，脚本 Bearer 不能远程停用或重置 TOTP。
 
 推荐先准备两个环境变量：
 
@@ -45,7 +49,7 @@ Authorization: Bearer <AUTH_TOKEN>
 export METAPI_ADMIN_BASE_URL="http://127.0.0.1:4000"
 # 或者
 # export METAPI_ADMIN_BASE_URL="https://your-domain.com"
-export METAPI_AUTH_TOKEN="your-admin-token"
+export METAPI_AUTH_TOKEN="your-current-admin-credential"
 ```
 
 之后所有请求都可以复用：
@@ -61,7 +65,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 |------|------|
 | 接口前缀 | 管理接口统一在 `/api/*` |
 | 请求体 | 默认使用 `application/json` |
-| 认证方式 | `Authorization: Bearer <AUTH_TOKEN>` |
+| 认证方式 | 脚本：`Authorization: Bearer <ADMIN_CREDENTIAL>`；WebUI：HttpOnly Cookie + CSRF |
 | 成功判定 | 除了看 HTTP 状态码，也要看响应体里的 `success` / `error` / `message` |
 | 业务失败返回 | 有些接口会返回 `200`，但响应体里是 `success: false` |
 | 常见错误码 | `400` 参数错误、`401/403` 认证失败、`409` 资源冲突、`429` 触发限流 |
@@ -528,6 +532,23 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/1/rebind-session" \
   "apiTokenFound": true
 }
 ```
+
+### 5. 启用浏览器凭证
+
+浏览器扩展完成采集后，结果先进入加密 Vault。只有经过管理员认证的启用动作才会把它转换为账号 Session，并触发模型同步和路由重建。
+
+`POST /api/browser-credential-tasks/:taskId/activate`
+
+请求体可传 `accountId`；如果创建任务时已绑定账号，可以省略：
+
+```bash
+curl -sS "${METAPI_ADMIN_BASE_URL}/api/browser-credential-tasks/<TASK_ID>/activate" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"accountId": 1}'
+```
+
+服务端会校验任务已完成、账号属于同一站点，并按站点适配器的浏览器运行时声明提取字段；验证不是 `session` 时不会修改账号。启用失败不会删除 Vault 条目，可重新绑定其他同站点账号或撤销该条目。
 
 ## OAuth 接口
 

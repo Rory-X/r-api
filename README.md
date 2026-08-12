@@ -56,7 +56,7 @@
 |                        |                                                            |
 | ---------------------- | ---------------------------------------------------------- |
 | 🔗**体验地址**   | [metapi-t9od.onrender.com](https://metapi-t9od.onrender.com/) |
-| 🔑**管理员令牌** | `123456`                                                 |
+| 🔑**管理员登录凭据** | `123456`                                             |
 
 > **⚠️ 安全提示**：体验站为公共环境，**请勿填入你的 API Key、账号密码或站点信息**。数据随时可能被清空。
 
@@ -118,7 +118,7 @@
     </td>
     <td align="center">
       <img src="docs/screenshots/tokens.png" alt="tokens" style="width:100%;height:auto;"/>
-      <div><b>令牌管理</b> — API Token 生命周期管理</div>
+      <div><b>上游 API Token</b> — 同步或创建面板账号的调用凭证</div>
     </td>
   </tr>
   <tr>
@@ -301,7 +301,10 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
+      ACCOUNT_CREDENTIAL_SECRET: ${ACCOUNT_CREDENTIAL_SECRET:?ACCOUNT_CREDENTIAL_SECRET is required}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      AUTH_TOKEN_HASH: ${AUTH_TOKEN_HASH:-}
+      ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED: "true"
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
@@ -311,9 +314,11 @@ services:
     restart: unless-stopped
 EOF
 
-# 设置 Token 并启动
-# AUTH_TOKEN = 管理后台登录令牌（登录时输入此值）
+# 设置凭据并启动
+# AUTH_TOKEN = 首次初始化管理员登录凭据（登录时输入此值）
 export AUTH_TOKEN=your-admin-token
+# 独立 Vault/账号凭证加密根密钥，不要与 AUTH_TOKEN 相同
+export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
 # PROXY_TOKEN = 下游客户端调用 /v1/* 的 Token
 export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
@@ -325,6 +330,7 @@ docker compose up -d
 ```bash
 docker run -d --name metapi \
   -p 4000:4000 \
+  -e ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
@@ -343,13 +349,15 @@ docker run -d --name metapi \
 
 <!-- markdownlint-disable-next-line MD028 -->
 > [!IMPORTANT]
-> 请务必修改 `AUTH_TOKEN` 和 `PROXY_TOKEN`，不要使用默认值。数据存储在 `./data` 目录，升级不会丢失。
+> 首次部署请设置 `AUTH_TOKEN` 或 `AUTH_TOKEN_HASH`，并单独设置 `ACCOUNT_CREDENTIAL_SECRET` 与 `PROXY_TOKEN`。数据存储在 `./data` 目录，升级不会丢失。
 
 > [!TIP]
-> 初始管理员令牌即启动时配置的 `AUTH_TOKEN`。
+> 初始管理员登录凭据来自 `AUTH_TOKEN`，也可以预先提供 `AUTH_TOKEN_HASH`。
+> 首次验证后数据库只保存 Argon2id 哈希，后续容器启动可以移除 `AUTH_TOKEN`。
 > 若在 Compose 外运行且未显式设置 `AUTH_TOKEN`，默认为 `change-me-admin-token`（仅用于本地调试）。
-> 桌面安装包首次启动也属于这类场景：如果你没有额外注入 `AUTH_TOKEN`，默认管理员令牌同样是 `change-me-admin-token`。
-> 如果在「设置」面板中修改了管理员令牌，后续登录请使用新令牌。
+> 桌面安装包首次启动也属于这类场景：如果你没有额外注入 `AUTH_TOKEN`，默认管理员登录凭据同样是 `change-me-admin-token`。
+> 如果在「设置」面板中修改了管理员登录凭据，全部现有管理会话会被撤销。
+> 可在「系统设置 → 管理员安全」启用 TOTP 双重验证。TOTP Secret 由独立 `ACCOUNT_CREDENTIAL_SECRET` 加密，恢复码只显示一次；显式管理脚本 Bearer 保持密码单因素兼容。
 
 Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](https://metapi.cita777.me/deployment)。
 

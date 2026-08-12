@@ -64,7 +64,9 @@
 
 | 变量 | 说明 |
 |------|------|
-| `AUTH_TOKEN` | 后台管理员登录令牌（请设置强密码） |
+| `AUTH_TOKEN` | 首次初始化管理员登录凭据（请设置强密码） |
+| `AUTH_TOKEN_HASH` | 可选 Argon2id 初始化哈希；设置后优先于 `AUTH_TOKEN` |
+| `ACCOUNT_CREDENTIAL_SECRET` | 独立 Vault/账号凭证加密根密钥，必须与管理员凭据分离 |
 | `PROXY_TOKEN` | 下游客户端调用 `/v1/*` 时使用的 Bearer Token |
 | `TZ` | 服务时区，影响定时任务和日志（如 `Asia/Shanghai`） |
 | `PORT` | 内部监听端口（默认 `4000`，一般无需修改） |
@@ -132,7 +134,12 @@
 
 | 变量 | 说明 | 示例值 |
 |------|------|--------|
-| `AUTH_TOKEN` | 管理后台登录令牌（**必填**） | 你的强密码 |
+| `AUTH_TOKEN` | 首次初始化管理员登录凭据；与下一项二选一 | 你的强密码 |
+| `AUTH_TOKEN_HASH` | Argon2id 初始化哈希；与上一项二选一 | `$argon2id$...` |
+| `ACCOUNT_CREDENTIAL_SECRET` | 独立 Vault/账号凭证加密根密钥（**必填**） | 32 字节以上随机值 |
+| `ADMIN_SESSION_TTL_MS` | HttpOnly 管理会话有效期 | `43200000` |
+| `ADMIN_COOKIE_SECURE` | 反向代理无法传递 HTTPS 协议时强制安全 Cookie | `true` |
+| `TRUST_PROXY` | 可信反向代理 IP/CIDR；不要对直连公网实例设为 `true` | Render/网关实际代理地址 |
 | `PROXY_TOKEN` | 代理接口 Bearer Token（**必填**） | 你的代理密钥 |
 | `DB_TYPE` | 数据库类型（**必填**） | `mysql` |
 | `DB_URL` | TiDB 连接串（**必填**） | `mysql://user:pass@host:4000/db?ssl=...` |
@@ -152,7 +159,7 @@ Render 免费实例在 15 分钟无流量后会自动休眠。使用 UptimeRobot
 3. 保存即可，UptimeRobot 会每 5 分钟访问一次你的服务，防止休眠
 
 > [!TIP]
-> 部署完成后，通过 Render 分配的 `.onrender.com` 域名访问后台，使用 `AUTH_TOKEN` 登录即可。也可以在 Render 设置中绑定自定义域名。
+> 部署完成后，通过 Render 分配的 `.onrender.com` 域名访问后台。首次使用 `AUTH_TOKEN` 登录后，管理员凭据会迁移为数据库中的 Argon2id 哈希；也可以在 Render 设置中绑定自定义域名。
 
 ---
 
@@ -166,6 +173,7 @@ mkdir metapi && cd metapi
 # 创建 docker-compose.yml（参见快速上手）
 # 设置环境变量
 export AUTH_TOKEN=your-admin-token
+export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
 export PROXY_TOKEN=your-proxy-sk-token
 
 # 启动
@@ -179,6 +187,7 @@ docker compose up -d
 ```bash
 # .env
 AUTH_TOKEN=your-admin-token
+ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
 PROXY_TOKEN=your-proxy-sk-token
 TZ=Asia/Shanghai
 PORT=4000
@@ -195,6 +204,7 @@ docker compose --env-file .env up -d
 ```bash
 docker run -d --name metapi \
   -p 4000:4000 \
+  -e ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
@@ -220,8 +230,8 @@ docker run -d --name metapi \
 - 支持基于 GitHub Releases 的应用内更新检查
 
 > [!IMPORTANT]
-> 桌面版首次启动时，如果没有显式注入 `AUTH_TOKEN`，管理员登录令牌默认是 `change-me-admin-token`。
-> 这只适合本机初始调试使用，首次登录后应立即修改。
+> 桌面版首次启动时，如果没有显式注入 `AUTH_TOKEN`，管理员初始登录凭据默认是 `change-me-admin-token`。
+> 这只适合本机初始调试使用，首次登录后应立即修改；浏览器端不会持久化该凭据。
 
 > [!NOTE]
 > 服务器部署不再提供裸 Node.js Release 压缩包，统一推荐 Docker / Docker Compose。

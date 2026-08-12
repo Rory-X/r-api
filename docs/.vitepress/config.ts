@@ -1,5 +1,5 @@
-import { existsSync, globSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
 import { withMermaid } from 'vitepress-plugin-mermaid';
@@ -13,8 +13,20 @@ function resolveDependencyEntry(hoistedRelativePath: string, pnpmPattern: string
     const hoistedEntry = resolve(currentRoot, hoistedRelativePath);
     if (existsSync(hoistedEntry)) return hoistedEntry;
 
-    const [pnpmEntry] = globSync(resolve(currentRoot, pnpmPattern));
-    if (pnpmEntry) return pnpmEntry;
+    const wildcardIndex = pnpmPattern.indexOf('*');
+    if (wildcardIndex >= 0) {
+      const wildcardBase = resolve(currentRoot, pnpmPattern.slice(0, wildcardIndex));
+      const wildcardParent = dirname(wildcardBase);
+      const wildcardPrefix = basename(wildcardBase);
+      const wildcardSuffix = pnpmPattern.slice(wildcardIndex + 1);
+      if (existsSync(wildcardParent)) {
+        const pnpmEntry = readdirSync(wildcardParent)
+          .filter((entry) => entry.startsWith(wildcardPrefix))
+          .map((entry) => resolve(wildcardParent, `${entry}${wildcardSuffix}`))
+          .find((entry) => existsSync(entry));
+        if (pnpmEntry) return pnpmEntry;
+      }
+    }
 
     const parentRoot = dirname(currentRoot);
     if (parentRoot === currentRoot) break;
@@ -68,6 +80,7 @@ export default withMermaid(
       nav: [
         { text: '首页', link: '/' },
         { text: '快速上手', link: '/getting-started' },
+        { text: '二开功能指南', link: '/fork-features-guide' },
         { text: '上游接入', link: '/upstream-integration' },
         { text: 'OAuth 管理', link: '/oauth' },
         { text: 'FAQ', link: '/faq' },
@@ -86,6 +99,7 @@ export default withMermaid(
         {
           text: '使用与运维',
           items: [
+            { text: '二开功能使用指南', link: '/fork-features-guide' },
             { text: '上游接入', link: '/upstream-integration' },
             { text: 'OAuth 管理', link: '/oauth' },
             { text: '配置说明', link: '/configuration' },

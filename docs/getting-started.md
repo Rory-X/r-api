@@ -40,7 +40,10 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
+      ACCOUNT_CREDENTIAL_SECRET: ${ACCOUNT_CREDENTIAL_SECRET:?ACCOUNT_CREDENTIAL_SECRET is required}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      AUTH_TOKEN_HASH: ${AUTH_TOKEN_HASH:-}
+      ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED: "true"
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
@@ -50,11 +53,13 @@ services:
     restart: unless-stopped
 ```
 
-### 3. 设置令牌并启动
+### 3. 设置凭据并启动
 
 ```bash
-# AUTH_TOKEN = 管理后台初始管理员令牌（登录后台时输入这个值）
+# AUTH_TOKEN = 首次初始化管理员登录凭据（第一次登录时输入这个值）
 export AUTH_TOKEN=your-admin-token
+# ACCOUNT_CREDENTIAL_SECRET = 独立的 Vault/账号凭证加密根密钥，不要与 AUTH_TOKEN 相同
+export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
 # PROXY_TOKEN = 下游客户端调用 /v1/* 使用的令牌
 export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
@@ -62,12 +67,15 @@ docker compose up -d
 
 ### 4. 访问管理后台
 
-打开 `http://localhost:4000`，使用 `AUTH_TOKEN` 的值登录。
+打开 `http://localhost:4000`，首次使用 `AUTH_TOKEN` 的值登录。
 
 > [!TIP]
-> 初始管理员令牌就是启动时配置的 `AUTH_TOKEN`。  
-> 如果未显式设置（非 Compose 场景），默认值为 `change-me-admin-token`（仅建议本地调试）。  
-> 若你在后台「设置」里修改过管理员令牌，后续登录请使用新令牌。
+> 初始管理员登录凭据就是启动时配置的 `AUTH_TOKEN`。首次验证后，数据库只保留 Argon2id 哈希。
+> 也可以只提供 `AUTH_TOKEN_HASH`；数据库完成初始化后，后续启动可以移除 `AUTH_TOKEN`。若数据目录为空且两者都未提供，Compose 会拒绝启动。
+> 如果未显式设置（非 Compose 场景），默认值为 `change-me-admin-token`（仅建议本地调试）。
+> 若你在后台「设置」里修改过管理员登录凭据，所有现有管理会话会被撤销，后续请使用新凭据登录。
+>
+> 登录后可在「系统设置 → 管理员安全」启用可选 TOTP。恢复码只显示一次，请离线保存；TOTP 只约束 WebUI 登录，显式管理脚本 Bearer 仍使用当前管理员登录凭据。
 
 ## 方式二：桌面版启动（Windows / macOS / Linux）
 
@@ -91,8 +99,8 @@ Linux 安装包选择建议：
 | 日志目录 | 保存在 `app.getPath('userData')/logs`；托盘菜单提供 `Open Logs Folder` |
 
 > [!IMPORTANT]
-> 桌面版首次启动时，如果你没有额外注入 `AUTH_TOKEN`，默认管理员令牌就是 `change-me-admin-token`。
-> 首次登录后建议立即到「设置」里改成你自己的强密码令牌。
+> 桌面版首次启动时，如果你没有额外注入 `AUTH_TOKEN`，默认管理员登录凭据就是 `change-me-admin-token`。
+> 首次登录后建议立即到「设置」里改成你自己的强凭据；WebUI 使用 HttpOnly Cookie，会清理旧版 localStorage 管理令牌。
 
 > [!TIP]
 > - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
@@ -125,16 +133,49 @@ npm run dev
 
 完成部署后，按以下顺序配置：
 
+### 先理解渠道管理
+
+现在所有上游 API 接入都从左侧的 **渠道管理** 进入。渠道管理是唯一的上游业务入口，内部按职责分成几个视图：
+
+| 渠道管理视图 | 它负责什么 | 是否直接参与每次请求选路 |
+|------|------------|----------------------|
+| **渠道总览** | 汇总每个上游渠道的站点、连接、OAuth、凭证和 API 端点状态 | 否，负责查看和进入具体管理面 |
+| **上游站点** | 定义平台、主 URL、API 端点池、站点状态和全局权重 | 是，提供最终请求地址和站点健康信号 |
+| **账号与 API Key** | 管理面板账号及其 Session、直连 API Key，以及面板账号签发的上游 API Token | 是，路由通道最终绑定到这里的连接 |
+| **OAuth** | 通过 Provider 授权创建、刷新或重绑 OAuth 连接 | 间接参与，负责连接的创建和维护 |
+| **浏览器凭证** | 管理需要浏览器或本地连接器协助采集的凭证任务 | 间接参与，完成后写入凭证中心并可启用到连接 |
+
+跨渠道和系统集成使用的秘密统一在 **系统与安全 → 凭证中心** 治理。凭证中心负责加密存储、归属、过期和撤销；渠道管理只保留与上游接入直接相关的工作流和站点级凭证统计。
+
+路由仍然是独立的运行时决策入口，它只消费渠道管理产生的可用连接和站点健康状态：
+
+```mermaid
+flowchart LR
+  Channel["渠道管理<br/>所有 API 上游渠道"] --> Site["上游站点<br/>平台 / URL / 端点"]
+  Channel --> Connection["账号与 API Key<br/>账号 / Session / API Key / 上游 API Token"]
+  Channel --> OAuth["OAuth<br/>授权 / 刷新 / 重绑"]
+  Channel --> Recovery["浏览器凭证<br/>采集 / 验证 / 启用"]
+  Security["系统与安全"] --> Vault["凭证中心<br/>加密存储 / 归属 / 撤销"]
+  Site --> Available["可用模型与健康状态"]
+  Connection --> Available
+  OAuth --> Connection
+  Recovery --> Vault
+  Vault -. 提供或恢复凭证 .-> Connection
+  Available --> Route["路由<br/>请求调度入口"]
+```
+
+日常接入顺序是：进入 **渠道管理**，先在「上游站点」建立渠道，再按手上的凭证选择「账号与 API Key」或「OAuth」；需要采集浏览器登录态时使用「浏览器凭证」，需要统一查看、录入或撤销秘密时进入 **系统与安全 → 凭证中心**。配置完成后，到「路由」决定模型请求如何调度。
+
 > [!TIP] 从 ALL-API-Hub 迁移（可选）
 > 如果你使用过 ALL-API-Hub，Metapi 兼容其导出的备份设置，可直接导入，无需手动逐项配置。
 >
-> 导入后刷新账号状态可能出现个别账号令牌过期，点击重新绑定按钮按照下面步骤2的方法获取Access Token或者Cookie等即可。
+> 导入后刷新账号状态时，个别面板账号的登录 Session 可能已经过期。点击重新绑定，并按下面步骤 2 获取 Access Token 或 Cookie 即可。
 >
 > ![ALL-API-Hub备份导入](./screenshots/allapi-hub-backup.png)
 
-### 步骤 1：添加站点
+### 步骤 1：在渠道管理中添加上游站点
 
-进入 **站点管理**，添加你使用的上游中转站：
+进入 **渠道管理 → 上游站点**，添加你使用的上游中转站：
 
 - 填写站点名称（自己想怎么取就怎么取）和 URL
 - 按你手上的上游形态选择：
@@ -153,13 +194,13 @@ npm run dev
 
 ![站点管理](./screenshots/site-management.png)
 
-### 步骤 2：添加连接（账号 / API Key / OAuth）
+### 步骤 2：在渠道管理中添加连接（账号 / API Key / OAuth）
 
 这一步不要再死记“所有站点都先加账号”。现在推荐按场景分流：
 
 #### 2A. 面板型站点：添加账号 / Session
 
-进入 **连接管理中的账号管理**，为每个站点添加已注册的账号：
+进入 **渠道管理 → 账号与 API Key**，为每个站点添加已注册的账号：
 
 ![账号管理](./screenshots/account-management.png)
 
@@ -185,7 +226,7 @@ npm run dev
 
 #### 2B. 兼容接口 / 官方预设 / CPA：添加 API Key
 
-进入 **连接管理中的 API Key 管理**，为站点添加你的 API Key：
+进入 **渠道管理 → 账号与 API Key**，为站点添加你的 API Key：
 
 ![API Key 管理](./screenshots/api-key-management.png)
 
@@ -206,19 +247,19 @@ npm run dev
 - Gemini CLI
 - Antigravity
 
-那就不要在这里手填普通账号，而是直接去左侧菜单 **OAuth 管理** 完成授权，详见 [OAuth 管理](/oauth)。
+那就不要在这里手填普通账号，而是进入 **渠道管理 → OAuth** 完成授权，详见 [OAuth 管理](/oauth)。
 
-### 步骤 3：同步账号令牌（可选，仅面板型站点）
+### 步骤 3：同步或创建上游 API Token（可选，仅面板型站点）
 
-进入 **连接管理中的账号令牌管理**：
+进入 **渠道管理 → 账号与 API Key → 上游 API Token**：
 
-- 点击「同步」从上游账号拉取 账号令牌
+- 点击「同步上游 Token」，从选中的面板账号拉取已有 API Token
 
-- 或手动添加已有的账号令牌，添加后上游站点的令牌管理页面会同步出现令牌，如下图所示。
+- 点击「在上游创建 Token」，通过面板 API 在上游创建新 Token，并自动同步到本地。
 
   ![Token管理](./screenshots/token-management.png)
 
-如果你走的是 API Key-only 或 OAuth 流程，这一步通常不是必需的。
+这里的 Token 不是登录 Session，也不是直连 API Key；它是面板账号在上游签发、供模型路由实际调用的凭证。如果你走的是 API Key-only 或 OAuth 流程，这一步通常不是必需的。
 
 ### 步骤 4：路由管理
 

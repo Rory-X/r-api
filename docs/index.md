@@ -74,8 +74,8 @@ features:
       <figcaption>站点管理</figcaption>
     </figure>
     <figure class="home-carousel-slide">
-      <img src="./screenshots/tokens.png" alt="令牌管理" />
-      <figcaption>令牌管理</figcaption>
+      <img src="./screenshots/tokens.png" alt="上游 API Token" />
+      <figcaption>上游 API Token</figcaption>
     </figure>
     <figure class="home-carousel-slide">
       <img src="./screenshots/playground.png" alt="模型操练场" />

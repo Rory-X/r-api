@@ -40,13 +40,13 @@ Metapi 当前有三类主要配置入口：
 
 | UI 项 | 对应能力 | 生效方式 |
 |------|----------|----------|
-| 管理员登录令牌 | `AUTH_TOKEN` 的后续修改 | 保存后即时生效 |
-| 定时任务 | `CHECKIN_CRON`、`BALANCE_REFRESH_CRON`、日志清理计划 | 保存后即时生效 |
+| 管理员登录凭据 | Argon2id 管理凭据 | 保存后立即撤销现有管理会话，重新登录后生效 |
+| TOTP 双重验证 | 验证器动态码、恢复码和第二因素会话 | 启用/重置/停用后立即生效并撤销其他管理会话 |
+| 定时任务 | 签到模式、Cron/间隔、时区窗口、抖动、补签、余额与日志计划 | 保存后即时生效 |
 | 系统代理 | `SYSTEM_PROXY_URL` | 保存后即时生效 |
 | 代理失败判定 | 失败关键词、空内容失败判定 | 保存后即时生效 |
 | Codex 上游传输与会话并发 | WebSocket 开关、并发与队列参数 | 保存后即时生效 |
 | 批量测活 | 后台模型可用性探测开关 | 保存后即时生效 |
-| 下游访问令牌 | `PROXY_TOKEN` | 保存后即时生效 |
 | 路由策略 | 成本/余额/使用率权重、默认单价、首字超时、协议回退、失败冷却上限 | 保存后即时生效 |
 | 全局品牌屏蔽 | 全局品牌屏蔽 | 保存后即时生效，并触发路由重建 |
 | 全局模型白名单 | 全局模型白名单 | 保存后即时生效，并触发路由重建 |
@@ -55,8 +55,8 @@ Metapi 当前有三类主要配置入口：
 | 会话与安全 | `ADMIN_IP_ALLOWLIST` | 保存后即时生效 |
 
 > [!TIP]
-> `AUTH_TOKEN` 和 `PROXY_TOKEN` 并不是“只能靠环境变量改”的配置。
-> 正常情况下，**首次启动先给一个值，后续都可以在 UI 里改**。
+> `AUTH_TOKEN` 只用于首次初始化管理员凭据；初始化后数据库只保存 Argon2id 哈希。
+> `PROXY_TOKEN` 可在「控制台 → 下游密钥 → 全局主密钥」中轮换。它与项目级下游密钥是不同权限边界。
 
 ### 2. 管理后台「通知设置」
 
@@ -71,7 +71,7 @@ Metapi 当前有三类主要配置入口：
 | Server酱 | SendKey 与开关 | 保存后即时生效 |
 | Telegram | API Base URL、Chat ID、Topic ID、Bot Token、是否走系统代理 | 保存后即时生效 |
 | SMTP | SMTP 主机、端口、账号、密码、发件/收件地址 | 保存后即时生效 |
-| 告警冷静期 | `NOTIFY_COOLDOWN_SEC` | 保存后即时生效 |
+| 告警冷静期与投递策略 | `NOTIFY_COOLDOWN_SEC`、`NOTIFY_DELIVERY_POLICY` | 保存后即时生效 |
 
 通知设置页面已经支持：
 
@@ -85,7 +85,10 @@ Metapi 当前有三类主要配置入口：
 
 侧边栏入口：**控制台 → 下游密钥**
 
-「下游密钥」页面负责的是项目级下游 API Key，而不是全局 `PROXY_TOKEN`。
+「下游密钥」页面统一管理全局主密钥与项目级下游 API Key：
+
+- **全局主密钥（`PROXY_TOKEN`）**：兼容早期客户端，拥有完整权限，不受项目级额度、白名单与有效期限制。
+- **项目级下游密钥**：适合按团队或项目分发，可配置细粒度策略。
 
 适合在这里配置的内容：
 
@@ -107,7 +110,12 @@ Metapi 当前有三类主要配置入口：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `AUTH_TOKEN` | 初始管理员登录令牌 | `change-me-admin-token` |
+| `AUTH_TOKEN` | 首次初始化使用的管理员登录凭据 | `change-me-admin-token` |
+| `AUTH_TOKEN_HASH` | 可选 Argon2id 初始化哈希，设置后优先于 `AUTH_TOKEN` | 空 |
+| `ACCOUNT_CREDENTIAL_SECRET` | 独立 Vault/账号凭证加密根密钥；生产环境必须单独生成 | 兼容旧部署时回退到 `AUTH_TOKEN` |
+| `ADMIN_SESSION_TTL_MS` | HttpOnly 管理会话绝对有效期 | `43200000`（12 小时） |
+| `ADMIN_COOKIE_SECURE` | 强制管理会话 Cookie 使用 `Secure` | `false` |
+| `TRUST_PROXY` | 可信反向代理 IP/CIDR 或跳数；默认不信任转发头 | `false` |
 | `PROXY_TOKEN` | 初始下游访问令牌 | `change-me-proxy-sk-token` |
 | `PORT` | 服务监听端口 | `4000` |
 | `DATA_DIR` | 数据目录（SQLite 默认落这里） | `./data` |
@@ -115,9 +123,43 @@ Metapi 当前有三类主要配置入口：
 
 说明：
 
-- `AUTH_TOKEN` 只是**第一次登录前**必须要有；登录后可以去「设置」里改。
-- `PROXY_TOKEN` 也只是建议先给一个初始值；后续可以在「设置」里改。
+- `AUTH_TOKEN` 只在当前数据库尚未建立管理员哈希时参与初始化；旧版 `auth_token` 明文设置会在升级后自动迁移并删除。
+- 官方 Compose 会要求首次启动时提供 `AUTH_TOKEN` 或 `AUTH_TOKEN_HASH`；数据库已经存在 `admin_password_hash` 后，可以移除启动环境里的 `AUTH_TOKEN`。
+- WebUI 登录后使用 HttpOnly Cookie；浏览器只保存会话绑定的 CSRF 元数据，不保存管理员凭据。
+- WebUI 可在「系统设置 → 管理员安全」启用 TOTP；Challenge 只保留在当前页面内存，TOTP Secret 和恢复码不会写入浏览器持久化存储。
+- 脚本仍可显式使用 `Authorization: Bearer <当前管理员登录凭据>` 调用管理 API；脚本 Bearer 不要求 TOTP，避免破坏无人值守自动化。
+- `ACCOUNT_CREDENTIAL_SECRET` 必须与管理员登录凭据分离，修改后既有 Vault/账号密文将无法解密。
+- 直接暴露 Metapi 时保持 `TRUST_PROXY=false`；只有在请求必经可信反向代理时才配置代理 IP/CIDR，并由代理覆盖传入的转发头。
+- `PROXY_TOKEN` 也只是建议先给一个初始值；后续可在「控制台 → 下游密钥 → 全局主密钥」中轮换。
 - `PORT`、`DATA_DIR`、`TZ` 这类属于部署级参数，更适合留在环境变量。
+
+---
+
+## 管理员 TOTP 双重验证
+
+TOTP 默认关闭。启用后，WebUI 密码登录会进入第二阶段，可输入验证器生成的 6 位动态码或一枚恢复码。动态码周期为 30 秒，允许相邻一个时间窗口；同一计数器只能接受一次。
+
+- TOTP Secret 使用 `ACCOUNT_CREDENTIAL_SECRET` 派生密钥做 AES-256-GCM 加密。
+- 恢复码只保存带独立 Pepper 的 HMAC 摘要，每枚只能使用一次；新生成恢复码会让旧码立即失效。
+- 恢复码仅在启用或重新生成后显示一次，可在 WebUI 复制或下载。
+- 普通备份不包含管理员 TOTP Secret、恢复码、管理员密码哈希或管理会话。
+- 不要直接更换 `ACCOUNT_CREDENTIAL_SECRET`；它同时保护 Vault、账号凭证和 TOTP Secret。
+
+如果验证器和恢复码同时丢失，只能在服务器或容器本地恢复。恢复命令要求当前管理员登录凭据和固定确认值，且会撤销全部管理会话：
+
+```bash
+docker compose stop metapi
+export METAPI_ADMIN_RECOVERY_CREDENTIAL='your-current-admin-credential'
+export METAPI_ADMIN_TOTP_RESET_CONFIRM='disable-totp'
+docker compose run --rm \
+  -e METAPI_ADMIN_RECOVERY_CREDENTIAL \
+  -e METAPI_ADMIN_TOTP_RESET_CONFIRM \
+  metapi npm run admin:reset-totp
+unset METAPI_ADMIN_RECOVERY_CREDENTIAL METAPI_ADMIN_TOTP_RESET_CONFIRM
+docker compose up -d
+```
+
+源码开发环境使用同样两个环境变量执行 `npm run admin:reset-totp:dev`。项目不提供远程 TOTP 绕过端点。
 
 ---
 
@@ -132,7 +174,13 @@ Metapi 当前有三类主要配置入口：
 | `PORT` | 服务监听端口 | `4000` |
 | `DATA_DIR` | 数据目录（SQLite 数据库存储位置） | `./data` |
 | `TZ` | 时区 | `Asia/Shanghai` |
-| `ACCOUNT_CREDENTIAL_SECRET` | 账号凭证加密密钥（用于加密存储的上游账号密码） | 默认使用 `AUTH_TOKEN` |
+| `ACCOUNT_CREDENTIAL_SECRET` | Vault、账号凭证及交互签名的独立根密钥 | 兼容旧部署时回退到 `AUTH_TOKEN`；生产必须显式设置 |
+| `AUTH_TOKEN_HASH` | 可选 Argon2id 管理员初始化哈希 | 空 |
+| `ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED` | 新数据库缺少显式管理员初始化凭据时拒绝启动；官方 Compose 已启用 | `false` |
+| `ADMIN_SESSION_TTL_MS` | 管理会话有效期（毫秒） | `43200000` |
+| `ADMIN_SESSION_TOUCH_INTERVAL_MS` | 会话最近访问时间写回间隔（毫秒） | `300000` |
+| `ADMIN_COOKIE_SECURE` | 无法从反向代理识别 HTTPS 时强制设置安全 Cookie | `false` |
+| `TRUST_PROXY` | Fastify 可信代理配置，可填 `true`、跳数、单个 IP/CIDR 或逗号分隔列表 | `false` |
 
 ### 2. OAuth 与 Provider 登录
 
@@ -152,7 +200,60 @@ Metapi 当前有三类主要配置入口：
 - 如果你的部署环境访问 provider 受限，优先先在 UI 里配置**系统代理**。
 - 如果 OAuth 页面运行在远程服务器上，还要考虑 SSH 隧道或手动回填 callback，详见 [OAuth 管理](./oauth.md)。
 
-### 3. K3s 更新中心与 Deploy Helper
+#### OAuth 刷新协调（高级）
+
+这些参数用于服务器常驻或多实例部署。默认值已经适合单实例，不需要为了接入 Codex 客户端而单独配置。
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `OAUTH_REFRESH_LEASE_TTL_MS` | 单账号刷新 DB 租约 TTL | `60000` |
+| `OAUTH_REFRESH_LEASE_HEARTBEAT_MS` | 刷新租约心跳间隔 | `15000` |
+| `OAUTH_REFRESH_LEASE_WAIT_MS` | 在线请求等待并复用其他 worker 刷新结果的最长时间 | `10000` |
+| `OAUTH_REFRESH_PROVIDER_MIN_INTERVAL_MS` | 同一 Provider 两次刷新启动之间的最小间隔 | `250` |
+| `OAUTH_REFRESH_PROVIDER_DEFAULT_CONCURRENCY` | 每个 Provider 的默认刷新槽位数 | `1` |
+| `OAUTH_REFRESH_PROVIDER_CONCURRENCY_JSON` | Provider 并发覆盖，例如 `{"codex":2,"claude":1}` | `{}` |
+| `OAUTH_REFRESH_TRANSIENT_BACKOFF_BASE_MS` | 临时错误指数退避的基础时长 | `30000` |
+
+刷新协调会使用数据库短租约和凭证版本 CAS，避免多个 worker 同时消费同一个 refresh token。Provider 返回 `Retry-After` 时会进入共享冷却；持久化结果不确定时账号会停止自动刷新并等待重新授权。
+
+### 3. 上游连接与首字速度（高级）
+
+Metapi 会为上游请求复用长连接，并在兼容时优先使用 HTTP/2。默认值适合单实例部署，修改后需要重启后端进程。
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `UPSTREAM_HTTP2_ENABLED` | 是否允许上游连接协商 HTTP/2；遇到不兼容网关时可关闭 | `true` |
+| `UPSTREAM_HTTP_CONNECTIONS_PER_ORIGIN` | 每个上游 Origin 的连接池上限 | `100` |
+| `UPSTREAM_HTTP_KEEP_ALIVE_TIMEOUT_MS` | 空闲连接保留时间 | `90000` |
+| `UPSTREAM_HTTP_KEEP_ALIVE_MAX_TIMEOUT_MS` | 单条长连接允许保留的最长时间 | `600000` |
+| `UPSTREAM_HTTP_AUTO_SELECT_FAMILY` | IPv4 / IPv6 快速选择，减少坏链路等待 | `true` |
+| `UPSTREAM_HTTP_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS` | 地址族候选连接的切换等待时间 | `250` |
+
+流式 Responses 和 Chat 请求会返回 `Server-Timing`，慢请求也会写入 `[proxy/ttft]` 结构化日志。可重点查看：
+
+| 指标 | 含义 |
+|------|------|
+| `metapi_route` | 请求进入 Metapi 后，到真正发起上游请求前的路由耗时 |
+| `upstream_headers` | 上游从请求发出到返回响应头的耗时 |
+| `upstream_first_byte` | 上游从请求发出到返回首个响应字节的耗时 |
+| `metapi_stream_start` | Metapi 收到上游首字后，到开始向客户端写流的耗时 |
+
+如果 `upstream_first_byte` 占绝大多数，瓶颈通常在上游模型处理、超长上下文、上游排队或跨地域网络；继续增加连接数不会明显改善。Coding Agent 会话应优先使用自身的压缩/新会话能力，不建议网关静默截断或改写历史消息。
+
+> [!WARNING]
+> `PROXY_FIRST_BYTE_TIMEOUT_SEC` 是超时后切换渠道的容错策略，不是加速开关。设置过短可能在原上游仍执行时发起第二次请求，带来重复扣费或重复副作用。
+
+历史首字调度是另一层机制：它读取真实请求积累的首字 EMA，在达到最低样本数后对慢渠道做软降权，不会触发熔断，也不会中断当前请求。运行时优先在 **路由 → 调度策略** 中维护；以下环境变量只提供首次启动或数据库尚未保存策略时的默认值：
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `FIRST_BYTE_ROUTING_ENABLED` | 是否让历史首字速度参与 Token Router 调度 | `true` |
+| `FIRST_BYTE_ROUTING_BASELINE_MS` | 不降权的首字 EMA 基线（毫秒） | `2500` |
+| `FIRST_BYTE_ROUTING_PENALTY_WINDOW_MS` | 超过基线后的线性降权窗口（毫秒） | `10000` |
+| `FIRST_BYTE_ROUTING_MAX_PENALTY_RATIO` | 最大降权比例，`0.65` 表示最低保留 `35%` 权重 | `0.65` |
+| `FIRST_BYTE_ROUTING_MIN_SAMPLES` | 开始参与调度前需要的有效首字样本数 | `5` |
+
+### 4. K3s 更新中心与 Deploy Helper
 
 这里要分清楚两层：
 
@@ -191,7 +292,24 @@ Metapi 当前有三类主要配置入口：
 
 完整接入步骤见 [K3s 更新中心（高级）](./k3s-update-center.md)。
 
-### 4. 当前没有 UI 的高级部署级参数
+### 5. 签到启动默认值（可被 UI 覆盖）
+
+这些变量只用于服务首次启动或数据库尚未保存运行时设置时的默认值。服务启动后，优先使用 **设置 → 定时任务 → 签到执行窗口** 中保存的策略。
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `CHECKIN_SCHEDULE_MODE` | `cron` 或 `interval` | `cron` |
+| `CHECKIN_INTERVAL_HOURS` | 间隔模式的账号检查周期（1 到 24 小时） | `6` |
+| `CHECKIN_TIME_ZONE` | 签到窗口使用的 IANA 时区，留空使用服务器时区 | 空 |
+| `CHECKIN_WINDOW_START` | 自动签到窗口开始时间（`HH:mm`） | `00:00` |
+| `CHECKIN_WINDOW_END` | 自动签到窗口结束时间（`HH:mm`），早于开始时间表示跨午夜 | `23:59` |
+| `CHECKIN_JITTER_MINUTES` | 按账号和本地日期确定性分散的最大抖动（0 到 180 分钟） | `0` |
+| `CHECKIN_CATCH_UP` | 服务错过 Cron 后是否在窗口内补签 | `true` |
+| `CHECKIN_SCHEDULE_POLICY_JSON` | 以上字段的 JSON 覆盖，适合容器编排 | 空 |
+
+自动调度只会调用站点适配器声明允许的签到操作；站点能力未知或要求人工验证时会记录 `skipped`，不会以推理请求做测活。
+
+### 6. 当前没有 UI 的高级部署级参数
 
 下面这些参数目前更偏部署级，仍然建议通过环境变量维护：
 
@@ -203,10 +321,12 @@ Metapi 当前有三类主要配置入口：
 | `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 批量测活间隔（毫秒） | `1800000` |
 | `MODEL_AVAILABILITY_PROBE_TIMEOUT_MS` | 批量测活单次探测超时（毫秒） | `15000` |
 | `MODEL_AVAILABILITY_PROBE_CONCURRENCY` | 批量测活并发数 | `1` |
+| `CHANNEL_RECOVERY_PROBE_ENABLED` | 是否允许渠道恢复调度器发送真实推理请求 | `false` |
 
 注意：
 
 - **批量测活开关本身**已经在 UI 里有了
+- **渠道恢复探测默认关闭**。它会产生真实模型调用，只能在所有上游明确允许主动测活时通过环境变量开启
 - 这里只剩下间隔、超时、并发这些更高级的细项还没有 UI
 
 ---
@@ -215,8 +335,8 @@ Metapi 当前有三类主要配置入口：
 
 ### 通常已经有 UI 的配置
 
-- 管理员令牌
-- 下游访问令牌
+- 管理员登录凭据
+- 全局主密钥（下游密钥页）
 - 系统代理
 - 定时任务
 - 路由策略
@@ -318,6 +438,12 @@ Metapi 当前的配置关系可以概括为：
 | UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
 | `NOTIFY_COOLDOWN_SEC` | 相同告警冷静期（秒），防止同一事件重复通知 | `300` |
+| `NOTIFY_DELIVERY_POLICY` | 投递结果不确定时的全局策略：`prefer_delivery` 继续重试（可能重复）；`prefer_no_duplicate` 停止重试（可能漏发） | `prefer_delivery` |
+| `NOTIFY_OUTBOX_POLL_INTERVAL_MS` | Durable Outbox worker 轮询间隔（毫秒） | `1000` |
+| `NOTIFY_OUTBOX_LEASE_TTL_MS` | 单条 Outbox 投递 lease 有效期（毫秒） | `30000` |
+| `NOTIFY_OUTBOX_RETRY_BASE_MS` | 已知失败和可重试未知结果的指数退避起始值（毫秒） | `5000` |
+| `NOTIFY_OUTBOX_RETRY_MAX_MS` | 指数退避最大间隔（毫秒） | `900000` |
+| `NOTIFY_OUTBOX_RETENTION_DAYS` | 已投递/已停止重试记录保留天数 | `30` |
 
 ---
 

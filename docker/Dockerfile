@@ -12,7 +12,7 @@ ENV PYTHON=/usr/bin/python3
 
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-RUN npm rebuild esbuild sharp better-sqlite3 --no-audit --no-fund
+RUN npm rebuild esbuild sharp better-sqlite3 argon2 --no-audit --no-fund
 
 COPY . .
 RUN npm run build:web && npm run build:server
@@ -29,15 +29,18 @@ ARG HELM_VERSION=v3.18.6
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl tar gzip \
-  && case "$TARGETARCH" in \
-    amd64|arm64) export ARCH="$TARGETARCH" ;; \
+  && DETECTED_ARCH="$(dpkg --print-architecture)" \
+  && RESOLVED_ARCH="${TARGETARCH:-$DETECTED_ARCH}" \
+  && case "$RESOLVED_ARCH" in \
+    amd64|arm64) export ARCH="$RESOLVED_ARCH" ;; \
     arm) \
-      if [ "${TARGETVARIANT:-}" = "v7" ]; then \
+      if [ -z "${TARGETVARIANT:-}" ] || [ "$TARGETVARIANT" = "v7" ]; then \
         export ARCH="arm"; \
       else \
-        echo "Unsupported TARGETARCH/TARGETVARIANT: $TARGETARCH/${TARGETVARIANT:-}" >&2; exit 1; \
+        echo "Unsupported TARGETARCH/TARGETVARIANT: $RESOLVED_ARCH/${TARGETVARIANT:-}" >&2; exit 1; \
       fi ;; \
-    *) echo "Unsupported TARGETARCH/TARGETVARIANT: $TARGETARCH/${TARGETVARIANT:-}" >&2; exit 1 ;; \
+    armhf) export ARCH="arm" ;; \
+    *) echo "Unsupported TARGETARCH/TARGETVARIANT: $RESOLVED_ARCH/${TARGETVARIANT:-}" >&2; exit 1 ;; \
   esac \
   && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
   && chmod +x /usr/local/bin/kubectl \

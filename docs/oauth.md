@@ -128,7 +128,7 @@ Metapi 会同时给出：
 
 | 方式 | 入口 | 适合什么 | 典型例子 |
 |------|------|------|------|
-| 普通站点 + Session | 站点管理 / 账号管理 | 有后台面板，需要签到、余额、账号令牌管理 | New API、One API、DoneHub、AnyRouter、Sub2API |
+| 普通站点 + Session | 站点管理 / 账号管理 | 有后台面板，需要签到、余额和上游 API Token 管理 | New API、One API、DoneHub、AnyRouter、Sub2API |
 | 普通站点 + API Key | 站点管理 / API Key 管理 | 只关心代理调用和模型列表 | OpenAI-compatible、Claude-compatible、CPA |
 | OAuth 连接 | OAuth 管理 | 需要 provider 官方授权、刷新、重绑 | Codex、Claude、Gemini CLI、Antigravity |
 
@@ -213,6 +213,23 @@ OAuth 成功后，Metapi 会确保对应 provider 的站点存在。这样做是
 - 后续重绑 / 刷新逻辑
 
 它不代表你又新增了一个普通面板站点。
+
+### 多个请求同时遇到 401，会不会重复刷新
+
+不会直接让每个请求各自消费 refresh token。Metapi 会先获取账号级数据库短租约；其他请求等待后重读账号，并复用已经轮换的新 access token。服务器多实例部署也使用同一套数据库租约和凭证版本 CAS。
+
+### 429 或 Provider 临时故障会怎样
+
+Metapi 会优先遵守 Provider 的 `Retry-After`，否则使用指数退避。定时刷新遇到租约忙、Provider 冷却或账号退避时会记为跳过，不会当成新的账号失败反复重试。
+
+### 为什么连接会要求重新授权
+
+以下两类状态不会继续进入代理路由：
+
+- Provider 明确拒绝 refresh token，例如 `invalid_grant`
+- Provider 已返回新凭证，但本地持久化结果无法确认
+
+前者会标记为需要重新授权；后者会进入 `refresh_unknown`，同样停止自动重试，避免继续使用状态不确定的凭证。
 
 ---
 

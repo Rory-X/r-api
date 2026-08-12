@@ -85,26 +85,46 @@
 3. 检查防火墙是否放行了端口（默认 4000）
 4. 如果使用反向代理，确认代理配置正确
 
-### Q: 登录失败，提示令牌无效
+### Q: 登录失败，提示登录凭据无效
 
-**A:** 先确认你输入的是管理员令牌，而不是代理令牌。登录后台使用的是 `AUTH_TOKEN`，注意：
+**A:** 先确认你输入的是管理员登录凭据，而不是代理令牌。首次登录使用 `AUTH_TOKEN`，注意：
 
-- 初始管理员令牌 = 启动时设置的 `AUTH_TOKEN`
+- 初始管理员登录凭据 = 启动时设置的 `AUTH_TOKEN`，或 `AUTH_TOKEN_HASH` 对应的明文
 - 如果你在非 Compose 场景未显式设置 `AUTH_TOKEN`，默认值是 `change-me-admin-token`（仅建议本地调试）
-- 若复用旧 SQLite `data/` 目录，或当前实例已切到 MySQL / Postgres，系统会优先读取当前运行数据库中的 `auth_token` 设置（可能覆盖当前环境变量）
+- 若复用旧 SQLite `data/` 目录，或当前实例已切到 MySQL / Postgres，系统会优先使用数据库中的 `admin_password_hash`；旧版 `auth_token` 明文设置会自动迁移并删除
+- 在「设置」里改过登录凭据后，应使用新值；改密会撤销全部现有管理会话
 - 使用 `.env` 文件时，确认文件路径正确，且值不需要加引号
 
-### Q: Docker Compose 启动报错 `AUTH_TOKEN is required`
+### Q: Docker Compose 提示管理员初始化凭据缺失
 
-**A:** 使用了 `${AUTH_TOKEN:?}` 语法，需要先设置环境变量：
+**A:** 新数据目录第一次启动必须提供 `AUTH_TOKEN` 或 `AUTH_TOKEN_HASH`；同时必须提供独立的 `ACCOUNT_CREDENTIAL_SECRET`：
 
 ```bash
 export AUTH_TOKEN=your-token
+export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
 export PROXY_TOKEN=your-proxy-token
 docker compose up -d
 ```
 
-或使用 `.env` 文件。
+也可以只设置 Argon2id 编码的 `AUTH_TOKEN_HASH`。数据库已经保存 `admin_password_hash` 后，后续重启可以不再注入 `AUTH_TOKEN`；不要删除或随意更换 `ACCOUNT_CREDENTIAL_SECRET`。
+
+### Q: 丢失了 TOTP 验证器和全部恢复码怎么办
+
+**A:** WebUI 不提供绕过第二因素的入口。请在服务器本地停止主服务，用当前管理员登录凭据执行恢复命令；命令会停用 TOTP 并撤销全部管理会话：
+
+```bash
+docker compose stop metapi
+export METAPI_ADMIN_RECOVERY_CREDENTIAL='your-current-admin-credential'
+export METAPI_ADMIN_TOTP_RESET_CONFIRM='disable-totp'
+docker compose run --rm \
+  -e METAPI_ADMIN_RECOVERY_CREDENTIAL \
+  -e METAPI_ADMIN_TOTP_RESET_CONFIRM \
+  metapi npm run admin:reset-totp
+unset METAPI_ADMIN_RECOVERY_CREDENTIAL METAPI_ADMIN_TOTP_RESET_CONFIRM
+docker compose up -d
+```
+
+如果当前管理员登录凭据也丢失，不能通过 TOTP 恢复命令绕过 Argon2id 管理边界。请使用受控数据库备份恢复或重新部署，并重新录入凭证。
 
 ### Q: 桌面版启动失败
 
