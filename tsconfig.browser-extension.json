@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "rootDir": "src",
+    "noEmit": true,
+    "noImplicitAny": false,
+    "strict": true
+  },
+  "include": ["src/browser-extension/**/*.ts", "src/browser-extension/**/*.tsx"],
+  "exclude": ["src/browser-extension/**/*.test.ts"]
+}
