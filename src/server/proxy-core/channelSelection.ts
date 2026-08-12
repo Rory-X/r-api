@@ -3,6 +3,13 @@ import { proxyChannelCoordinator } from '../services/proxyChannelCoordinator.js'
 import { canRetryProxyChannel } from '../services/proxyChannelRetry.js';
 import type { DownstreamRoutingPolicy } from '../services/downstreamPolicyTypes.js';
 import { tokenRouter } from '../services/tokenRouter.js';
+import { classifyRetryErrorScope, type RetryErrorScope } from '../services/proxyRetryContract.js';
+import { localProxyOwnsRetryForFailure } from '../services/proxyRetryOwnership.js';
+import type { BridgeProxyRoutePlan } from '../services/bridgeContinuationRouting.js';
+import type {
+  TokenRouterCredentialIdentity,
+  TokenRouterSelectionConstraints,
+} from '../services/tokenRouter.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 
@@ -81,6 +88,58 @@ export function canRetryChannelSelection(retryCount: number, forcedChannelId?: n
   return canRetryProxyChannel(retryCount);
 }
 
+export function canRetryChannelSelectionForFailure(input: {
+  retryCount: number;
+  forcedChannelId?: number | null;
+  selected: {
+    channel: {
+      retryOwner?: unknown;
+      upstreamRetryMode?: unknown;
+    };
+  };
+  status?: number;
+  errorText?: string | null;
+  errorScope?: RetryErrorScope;
+  explicitUpstreamRetryable?: boolean;
+}): boolean {
+  if (!canRetryChannelSelection(input.retryCount, input.forcedChannelId)) return false;
+  return localProxyOwnsRetryForFailure({
+    channel: input.selected.channel,
+    errorScope: input.errorScope ?? classifyRetryErrorScope({
+      status: input.status ?? 0,
+      rawErrorText: input.errorText || '',
+    }),
+    explicitUpstreamRetryable: input.explicitUpstreamRetryable,
+  });
+}
+
+export function buildBridgeTokenRouterSelectionConstraints(input: {
+  plan: BridgeProxyRoutePlan;
+  excludedCredentials?: readonly TokenRouterCredentialIdentity[];
+}): TokenRouterSelectionConstraints {
+  const previousCredential = Object.freeze({
+    accountId: input.plan.previousSelection.accountId,
+    tokenId: input.plan.previousSelection.tokenId,
+  });
+  const excludedCredentials = [...(input.excludedCredentials || [])];
+  if (input.plan.effectiveAction === 'preserve') {
+    return Object.freeze({
+      allowedSiteIds: Object.freeze([input.plan.previousSelection.siteId]),
+      preferredCredential: previousCredential,
+    });
+  }
+  if (input.plan.effectiveAction === 'rotate_credential') {
+    return Object.freeze({
+      allowedSiteIds: Object.freeze([input.plan.previousSelection.siteId]),
+      excludedCredentials: Object.freeze([previousCredential, ...excludedCredentials]),
+    });
+  }
+  return Object.freeze({
+    excludedSiteIds: Object.freeze([input.plan.previousSelection.siteId]),
+    excludedCredentials: Object.freeze(excludedCredentials),
+  });
+}
+
 export async function selectProxyChannelForAttempt(input: {
   requestedModel: string;
   downstreamPolicy: DownstreamRoutingPolicy;
@@ -88,6 +147,8 @@ export async function selectProxyChannelForAttempt(input: {
   retryCount: number;
   stickySessionKey?: string | null;
   forcedChannelId?: number | null;
+  bridgeRoutePlan?: BridgeProxyRoutePlan | null;
+  excludeCredentials?: readonly TokenRouterCredentialIdentity[];
 }): Promise<SelectedChannel> {
   const normalizedForcedChannelId = normalizeForcedChannelId(input.forcedChannelId);
   if (normalizedForcedChannelId !== null) {
@@ -114,6 +175,44 @@ export async function selectProxyChannelForAttempt(input: {
       return false;
     }
   };
+
+  if (input.bridgeRoutePlan) {
+    const constraints = buildBridgeTokenRouterSelectionConstraints({
+      plan: input.bridgeRoutePlan,
+      excludedCredentials: input.excludeCredentials,
+    });
+    const selectWithBridgePlan = async (): Promise<SelectedChannel> => {
+      if (input.bridgeRoutePlan?.effectiveAction === 'preserve') {
+        if (input.retryCount > 0) return null;
+        return await tokenRouter.selectPreferredChannel(
+          input.requestedModel,
+          input.bridgeRoutePlan.previousSelection.channelId,
+          input.downstreamPolicy,
+          input.excludeChannelIds,
+          constraints,
+        );
+      }
+      return input.retryCount === 0
+        ? await tokenRouter.selectChannel(
+          input.requestedModel,
+          input.downstreamPolicy,
+          constraints,
+        )
+        : await tokenRouter.selectNextChannel(
+          input.requestedModel,
+          input.excludeChannelIds,
+          input.downstreamPolicy,
+          constraints,
+        );
+    };
+
+    selected = await selectWithBridgePlan();
+    if (!selected && input.retryCount === 0) {
+      await refreshRoutesForFirstAttempt();
+      selected = await selectWithBridgePlan();
+    }
+    return selected;
+  }
 
   if (input.retryCount === 0 && input.stickySessionKey) {
     const preferredChannelId = proxyChannelCoordinator.getStickyChannelId(input.stickySessionKey);

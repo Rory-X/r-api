@@ -383,7 +383,10 @@ describe('chat proxy codex oauth compatibility', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33, expect.objectContaining({
+      reason: 'unauthorized',
+      failedAccessToken: 'expired-access-token',
+    }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, any];
@@ -431,7 +434,10 @@ describe('chat proxy codex oauth compatibility', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33, expect.objectContaining({
+      reason: 'unauthorized',
+      failedAccessToken: 'oauth-access-token',
+    }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
     expect(secondOptions.headers.Authorization).toBe('Bearer fresh-access-token');

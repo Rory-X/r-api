@@ -174,6 +174,7 @@ export async function createProxyDebugTrace(input: {
   clientKind?: string | null;
   sessionId?: string | null;
   traceHint?: string | null;
+  requestId?: string | null;
   requestedModel?: string | null;
   downstreamApiKeyId?: number | null;
   requestHeaders?: HeadersLike;
@@ -189,6 +190,7 @@ export async function createProxyDebugTrace(input: {
     clientKind: input.clientKind ?? null,
     sessionId: input.sessionId ?? null,
     traceHint: input.traceHint ?? null,
+    requestId: input.requestId ?? null,
     requestedModel: input.requestedModel ?? null,
     downstreamApiKeyId: input.downstreamApiKeyId ?? null,
     requestHeadersJson: serializeHeaders(input.requestHeaders, maxBodyBytes),
@@ -208,6 +210,7 @@ export async function startProxyDebugTraceSession(input: {
   clientKind?: string | null;
   sessionId?: string | null;
   traceHint?: string | null;
+  requestId?: string | null;
   requestedModel?: string | null;
   downstreamApiKeyId?: number | null;
   requestHeaders?: HeadersLike;
@@ -223,6 +226,7 @@ export async function startProxyDebugTraceSession(input: {
     clientKind: input.clientKind ?? null,
     sessionId: input.sessionId ?? null,
     traceHint: input.traceHint ?? null,
+    requestId: input.requestId ?? null,
     requestedModel: input.requestedModel ?? null,
     downstreamApiKeyId: input.downstreamApiKeyId ?? null,
     requestHeaders: options.captureHeaders ? input.requestHeaders : null,
@@ -275,6 +279,7 @@ export async function updateProxyDebugTraceCandidates(traceId: number, input: {
 export async function insertProxyDebugAttempt(input: {
   traceId: number;
   attemptIndex: number;
+  attemptId?: string | null;
   endpoint: string;
   requestPath: string;
   targetUrl: string;
@@ -296,6 +301,7 @@ export async function insertProxyDebugAttempt(input: {
   const inserted = await db.insert(schema.proxyDebugAttempts).values({
     traceId: input.traceId,
     attemptIndex: input.attemptIndex,
+    attemptId: input.attemptId ?? null,
     endpoint: input.endpoint,
     requestPath: input.requestPath,
     targetUrl: input.targetUrl,
@@ -360,6 +366,7 @@ export async function listProxyDebugTraces(input: { limit?: number }) {
     id: schema.proxyDebugTraces.id,
     createdAt: schema.proxyDebugTraces.createdAt,
     downstreamPath: schema.proxyDebugTraces.downstreamPath,
+    requestId: schema.proxyDebugTraces.requestId,
     clientKind: schema.proxyDebugTraces.clientKind,
     sessionId: schema.proxyDebugTraces.sessionId,
     requestedModel: schema.proxyDebugTraces.requestedModel,

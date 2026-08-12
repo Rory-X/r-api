@@ -20,6 +20,7 @@ import {
 import { createCodexWebsocketSessionStore } from './codexWebsocketSessionStore.js';
 import type {
   CodexWebsocketRuntimeResult,
+  CodexWebsocketRuntimeAttemptEvent,
   CodexWebsocketRuntimeSendInput,
   CodexWebsocketSession,
   CodexWebsocketSessionStore,
@@ -266,12 +267,37 @@ async function sendSessionRequestAttempt(
   input: CodexWebsocketRuntimeSendInput & {
     body: Record<string, unknown>;
   },
+  attemptIndex: number,
 ): Promise<CodexWebsocketRuntimeResult> {
   const { socket, reusedSession } = await ensureSessionSocket(session, input);
   const events: Array<Record<string, unknown>> = [];
+  const requestPath = (() => {
+    try {
+      return new URL(input.requestUrl).pathname;
+    } catch {
+      return input.requestUrl;
+    }
+  })();
+  let lifecycleQueue = Promise.resolve();
+  const emitAttemptEvent = (event: Omit<CodexWebsocketRuntimeAttemptEvent, 'attemptIndex' | 'requestUrl' | 'requestPath' | 'body'>) => {
+    if (!input.onAttemptEvent) return lifecycleQueue;
+    lifecycleQueue = lifecycleQueue
+      .then(() => input.onAttemptEvent?.({
+        ...event,
+        attemptIndex,
+        requestUrl: input.requestUrl,
+        requestPath,
+        body: input.body,
+      }))
+      .catch(() => undefined);
+    return lifecycleQueue;
+  };
 
   return new Promise<CodexWebsocketRuntimeResult>((resolve, reject) => {
     let settled = false;
+    let requestSent = false;
+    let responseStarted = false;
+    let messageQueue = Promise.resolve();
 
     const cleanup = () => {
       socket.off('message', onMessage);
@@ -279,11 +305,38 @@ async function sendSessionRequestAttempt(
       socket.off('close', onClose);
     };
 
-    const rejectWith = (message: string) => {
+    const rejectWith = async (message: string, options?: {
+      transportUnknown?: boolean;
+      status?: number;
+      payload?: Record<string, unknown>;
+      terminal?: boolean;
+      recoverable?: boolean;
+    }) => {
       if (settled) return;
+      await emitAttemptEvent({
+        type: options?.transportUnknown ? 'transport_unknown' : 'failed',
+        message,
+        status: options?.status,
+        payload: options?.payload,
+        responseStarted,
+        terminal: options?.terminal === true,
+        recoverable: options?.recoverable === true,
+      });
       settled = true;
       cleanup();
-      reject(new CodexWebsocketRuntimeError(message, { events: [...events] }));
+      if (options?.transportUnknown) {
+        reject(new CodexWebsocketRuntimeError(message, {
+          events: [...events],
+          status: options.status,
+          payload: options.payload,
+        }));
+        return;
+      }
+      reject(new CodexWebsocketRuntimeError(message, {
+        events: [...events],
+        status: options?.status,
+        payload: options?.payload,
+      }));
     };
 
     const onMessage = (payload: WebSocket.RawData) => {
@@ -291,32 +344,66 @@ async function sendSessionRequestAttempt(
         const parsed = JSON.parse(String(payload));
         if (!isRecord(parsed)) return;
         events.push(parsed);
-        if (!isTerminalEvent(parsed)) return;
-        if (settled) return;
-        if (
-          isRuntimeErrorEvent(parsed)
-          || isResponsesPreviousResponseNotFoundError({
-            payload: parsed,
-            rawErrText: extractTerminalErrorMessage(parsed),
-          })
-        ) {
+        messageQueue = messageQueue.then(async () => {
+          if (settled) return;
+          if (!responseStarted) {
+            responseStarted = true;
+            await emitAttemptEvent({
+              type: 'response_started',
+              payload: parsed,
+              responseStarted: true,
+            });
+          }
+          if (!isTerminalEvent(parsed) || settled) return;
+          if (
+            isRuntimeErrorEvent(parsed)
+            || isResponsesPreviousResponseNotFoundError({
+              payload: parsed,
+              rawErrText: extractTerminalErrorMessage(parsed),
+            })
+          ) {
+            await rejectWith(extractTerminalErrorMessage(parsed), {
+              status: extractFailureTerminalStatus(parsed),
+              payload: parsed,
+              terminal: true,
+              recoverable: isResponsesPreviousResponseNotFoundError({
+                payload: parsed,
+                rawErrText: extractTerminalErrorMessage(parsed),
+              }),
+            });
+            clearSessionSocket(session, socket);
+            void closeSocket(socket);
+            return;
+          }
+          const type = asTrimmedString(parsed.type);
+          if (type === 'response.failed' || type === 'response.incomplete') {
+            await emitAttemptEvent({
+              type: 'failed',
+              message: extractTerminalErrorMessage(parsed),
+              status: extractFailureTerminalStatus(parsed),
+              payload: parsed,
+              responseStarted: true,
+              terminal: true,
+            });
+          } else {
+            await emitAttemptEvent({
+              type: 'completed',
+              payload: parsed,
+              responseStarted: true,
+              terminal: true,
+            });
+          }
+          rememberSessionResponseId(session.sessionId, parsed);
           settled = true;
           cleanup();
-          clearSessionSocket(session, socket);
-          void closeSocket(socket);
-          reject(new CodexWebsocketRuntimeError(extractTerminalErrorMessage(parsed), {
+          resolve({
             events: [...events],
-            status: extractFailureTerminalStatus(parsed),
-            payload: parsed,
-          }));
-          return;
-        }
-        rememberSessionResponseId(session.sessionId, parsed);
-        settled = true;
-        cleanup();
-        resolve({
-          events: [...events],
-          reusedSession,
+            reusedSession,
+          });
+        }).catch((error) => {
+          void rejectWith(error instanceof Error ? error.message : 'upstream websocket event processing failed', {
+            transportUnknown: true,
+          });
         });
       } catch {
         // Ignore malformed frames and wait for a terminal event.
@@ -325,22 +412,45 @@ async function sendSessionRequestAttempt(
 
     const onError = (error: Error) => {
       clearSessionSocket(session, socket);
-      rejectWith(error.message || 'upstream websocket error');
+      void rejectWith(error.message || 'upstream websocket error', {
+        transportUnknown: requestSent,
+      });
     };
 
     const onClose = () => {
       clearSessionSocket(session, socket);
-      rejectWith('stream closed before response.completed');
+      void rejectWith('stream closed before response.completed', {
+        transportUnknown: requestSent,
+      });
     };
 
     socket.on('message', onMessage);
     socket.once('error', onError);
     socket.once('close', onClose);
 
-    socket.send(JSON.stringify(buildCodexWebsocketRequestBody(input.body)), (error?: Error) => {
-      if (!error) return;
-      clearSessionSocket(session, socket);
-      rejectWith(error.message || 'failed to send upstream websocket request');
+    void emitAttemptEvent({
+      type: 'attempt_started',
+      reusedSession,
+      responseStarted: false,
+    }).then(() => {
+      try {
+        socket.send(JSON.stringify(buildCodexWebsocketRequestBody(input.body)), (error?: Error) => {
+          if (!error) return;
+          clearSessionSocket(session, socket);
+          void rejectWith(error.message || 'failed to send upstream websocket request', {
+            transportUnknown: true,
+          });
+        });
+        requestSent = true;
+        void emitAttemptEvent({
+          type: 'request_sent',
+          reusedSession,
+          responseStarted: false,
+        });
+      } catch (error) {
+        clearSessionSocket(session, socket);
+        void rejectWith(error instanceof Error ? error.message : 'failed to send upstream websocket request');
+      }
     });
   });
 }
@@ -351,13 +461,14 @@ async function sendSessionRequest(
 ): Promise<CodexWebsocketRuntimeResult> {
   let currentBody = buildContinuationAwareRuntimeBody(session.sessionId, input.body);
   let previousResponseRecoveryTried = false;
+  let attemptIndex = 0;
 
   for (;;) {
     try {
       return await sendSessionRequestAttempt(session, {
         ...input,
         body: currentBody,
-      });
+      }, attemptIndex++);
     } catch (error) {
       if (
         previousResponseRecoveryTried

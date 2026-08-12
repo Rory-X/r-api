@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type ServiceModule = typeof import('./downstreamApiKeyService.js');
@@ -30,6 +31,7 @@ describe('downstreamApiKeyService', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.downstreamApiKeyLeases).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.tokenRoutes).run();
     config.proxyToken = 'sk-global-proxy-token';
@@ -211,5 +213,148 @@ describe('downstreamApiKeyService', () => {
 
     const authResult = await service.authorizeDownstreamToken(row.key);
     expect(authResult.ok).toBe(false);
+  });
+
+  it('captures an immutable policy snapshot that survives ordinary policy edits', async () => {
+    const row = await db.insert(schema.downstreamApiKeys).values({
+      name: 'snapshot-key',
+      key: 'sk-snapshot-key',
+      enabled: true,
+      maxConcurrency: 2,
+      policyVersion: 4,
+      supportedModels: JSON.stringify(['gpt-4.1']),
+      allowedRouteIds: JSON.stringify([11]),
+      siteWeightMultipliers: JSON.stringify({ 7: 1.5 }),
+    }).returning().get();
+
+    const first = await service.authorizeDownstreamToken(row.key);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    expect(first.snapshot.policyVersion).toBe(4);
+    expect(first.snapshot.maxConcurrency).toBe(2);
+    expect(first.snapshot.policy.supportedModels).toEqual(['gpt-4.1']);
+    expect(Object.isFrozen(first.snapshot)).toBe(true);
+    expect(Object.isFrozen(first.snapshot.policy)).toBe(true);
+    expect(Object.isFrozen(first.snapshot.policy.supportedModels)).toBe(true);
+
+    await db.update(schema.downstreamApiKeys).set({
+      supportedModels: JSON.stringify(['gpt-5.4']),
+      maxConcurrency: 5,
+      policyVersion: 5,
+    }).where(eq(schema.downstreamApiKeys.id, row.id)).run();
+
+    expect(first.snapshot.policy.supportedModels).toEqual(['gpt-4.1']);
+    expect(first.snapshot.maxConcurrency).toBe(2);
+    expect(await service.verifyDownstreamPolicySnapshotActive(first.snapshot)).toEqual({ ok: true });
+
+    const second = await service.authorizeDownstreamToken(row.key);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.snapshot.policyVersion).toBe(5);
+    expect(second.snapshot.maxConcurrency).toBe(5);
+    expect(second.snapshot.policy.supportedModels).toEqual(['gpt-5.4']);
+  });
+
+  it('detects disable, expiry, key rotation, and deletion without invalidating ordinary edits', async () => {
+    const row = await db.insert(schema.downstreamApiKeys).values({
+      name: 'revocable-key',
+      key: 'sk-revocable-key',
+      enabled: true,
+    }).returning().get();
+    const authorized = await service.authorizeDownstreamToken(row.key);
+    expect(authorized.ok).toBe(true);
+    if (!authorized.ok) return;
+
+    await db.update(schema.downstreamApiKeys).set({
+      name: 'ordinary-edit',
+      policyVersion: 2,
+    }).where(eq(schema.downstreamApiKeys.id, row.id)).run();
+    expect(await service.verifyDownstreamPolicySnapshotActive(authorized.snapshot)).toEqual({ ok: true });
+
+    await db.update(schema.downstreamApiKeys).set({ enabled: false })
+      .where(eq(schema.downstreamApiKeys.id, row.id)).run();
+    expect(await service.verifyDownstreamPolicySnapshotActive(authorized.snapshot)).toMatchObject({
+      ok: false,
+      reason: 'disabled',
+    });
+
+    await db.update(schema.downstreamApiKeys).set({
+      enabled: true,
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+    }).where(eq(schema.downstreamApiKeys.id, row.id)).run();
+    expect(await service.verifyDownstreamPolicySnapshotActive(authorized.snapshot)).toMatchObject({
+      ok: false,
+      reason: 'expired',
+    });
+
+    await db.update(schema.downstreamApiKeys).set({
+      expiresAt: null,
+      key: 'sk-revocable-key-rotated',
+    }).where(eq(schema.downstreamApiKeys.id, row.id)).run();
+    expect(await service.verifyDownstreamPolicySnapshotActive(authorized.snapshot)).toMatchObject({
+      ok: false,
+      reason: 'rotated',
+    });
+
+    await db.delete(schema.downstreamApiKeys).where(eq(schema.downstreamApiKeys.id, row.id)).run();
+    expect(await service.verifyDownstreamPolicySnapshotActive(authorized.snapshot)).toMatchObject({
+      ok: false,
+      reason: 'deleted',
+    });
+  });
+
+  it('enforces managed-key concurrency with durable slots and releases them idempotently', async () => {
+    const row = await db.insert(schema.downstreamApiKeys).values({
+      name: 'single-flight-key',
+      key: 'sk-single-flight-key',
+      enabled: true,
+      maxConcurrency: 1,
+    }).returning().get();
+    const authorized = await service.authorizeDownstreamToken(row.key);
+    expect(authorized.ok).toBe(true);
+    if (!authorized.ok) return;
+
+    const [first, second] = await Promise.all([
+      service.acquireDownstreamConcurrencyLease(authorized.snapshot, { heartbeatIntervalMs: 0 }),
+      service.acquireDownstreamConcurrencyLease(authorized.snapshot, { heartbeatIntervalMs: 0 }),
+    ]);
+    const acquired = [first, second].find((result) => result.ok && result.lease);
+    const rejected = [first, second].find((result) => !result.ok);
+    expect(acquired?.ok).toBe(true);
+    expect(rejected).toMatchObject({ ok: false, reason: 'max_concurrency', statusCode: 429 });
+    if (!acquired?.ok || !acquired.lease) return;
+
+    expect(await db.select().from(schema.downstreamApiKeyLeases).all()).toHaveLength(1);
+    await acquired.lease.release();
+    await acquired.lease.release();
+    expect(await db.select().from(schema.downstreamApiKeyLeases).all()).toHaveLength(0);
+
+    const next = await service.acquireDownstreamConcurrencyLease(authorized.snapshot, { heartbeatIntervalMs: 0 });
+    expect(next.ok).toBe(true);
+    if (next.ok) await next.lease?.release();
+  });
+
+  it('reclaims expired concurrency slots after an unclean shutdown', async () => {
+    const row = await db.insert(schema.downstreamApiKeys).values({
+      name: 'stale-lease-key',
+      key: 'sk-stale-lease-key',
+      enabled: true,
+      maxConcurrency: 1,
+    }).returning().get();
+    await db.insert(schema.downstreamApiKeyLeases).values({
+      downstreamApiKeyId: row.id,
+      leaseToken: 'stale-lease',
+      slot: 1,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    }).run();
+    const authorized = await service.authorizeDownstreamToken(row.key);
+    expect(authorized.ok).toBe(true);
+    if (!authorized.ok) return;
+
+    const acquired = await service.acquireDownstreamConcurrencyLease(authorized.snapshot, { heartbeatIntervalMs: 0 });
+    expect(acquired.ok).toBe(true);
+    expect(await db.select().from(schema.downstreamApiKeyLeases).all()).toHaveLength(1);
+    if (acquired.ok) await acquired.lease?.release();
   });
 });

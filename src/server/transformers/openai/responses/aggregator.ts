@@ -559,25 +559,135 @@ function collectOutputText(state: OpenAiResponsesAggregateState): string {
   return parts.join('');
 }
 
+function areTerminalOutputTypesCompatible(existingType: string, incomingType: string): boolean {
+  if (existingType === incomingType) return true;
+  return (
+    (existingType === 'function_call' || existingType === 'custom_tool_call')
+    && (incomingType === 'function_call' || incomingType === 'custom_tool_call')
+  );
+}
+
+function collectTerminalComparableText(item: AggregateOutputItem, itemType: string): string {
+  const parts = itemType === 'reasoning'
+    ? (Array.isArray(item.summary) ? item.summary : [])
+    : (itemType === 'message' && Array.isArray(item.content) ? item.content : []);
+  return parts
+    .filter((part): part is Record<string, unknown> => isRecord(part))
+    .map((part) => (typeof part.text === 'string' ? part.text : ''))
+    .join('');
+}
+
+function findTerminalOutputIndex(input: {
+  state: OpenAiResponsesAggregateState;
+  item: AggregateOutputItem;
+  itemType: string;
+  terminalIndex: number;
+  claimedIndices: Set<number>;
+}): number {
+  const {
+    state,
+    item,
+    itemType,
+    terminalIndex,
+    claimedIndices,
+  } = input;
+  const itemId = asTrimmedString(item.id);
+  const callId = asTrimmedString(item.call_id);
+  const identityCandidates = [
+    itemId ? state.outputIndexById[itemId] : undefined,
+    callId ? state.functionIndexById[callId] : undefined,
+    callId ? state.customToolIndexById[callId] : undefined,
+  ];
+  for (const candidate of identityCandidates) {
+    if (candidate !== undefined && !claimedIndices.has(candidate)) return candidate;
+  }
+
+  const comparableText = collectTerminalComparableText(item, itemType);
+  const compatibleIndices = state.outputItems.flatMap((existing, index) => {
+    if (!isRecord(existing) || claimedIndices.has(index)) return [];
+    const existingType = asTrimmedString(existing.type).toLowerCase();
+    return areTerminalOutputTypesCompatible(existingType, itemType) ? [index] : [];
+  });
+  if (comparableText) {
+    const semanticMatch = compatibleIndices.find((index) => {
+      const existing = state.outputItems[index];
+      return isRecord(existing)
+        && collectTerminalComparableText(existing, asTrimmedString(existing.type).toLowerCase()) === comparableText;
+    });
+    if (semanticMatch !== undefined) return semanticMatch;
+  }
+
+  if (compatibleIndices.length === 1) return compatibleIndices[0];
+  if (itemType === 'message' && state.messageIndex !== null && !claimedIndices.has(state.messageIndex)) {
+    return state.messageIndex;
+  }
+  if (itemType === 'reasoning' && compatibleIndices.length > 0) {
+    return compatibleIndices[compatibleIndices.length - 1];
+  }
+
+  const indexedItem = state.outputItems[terminalIndex];
+  if (!indexedItem) return terminalIndex;
+  if (
+    !claimedIndices.has(terminalIndex)
+    && areTerminalOutputTypesCompatible(asTrimmedString(indexedItem.type).toLowerCase(), itemType)
+  ) {
+    return terminalIndex;
+  }
+  return state.outputItems.length;
+}
+
+function normalizeTerminalItemForExisting(
+  existing: AggregateOutputItem | undefined,
+  incoming: AggregateOutputItem,
+): AggregateOutputItem {
+  if (!isRecord(existing)) return incoming;
+  const existingType = asTrimmedString(existing.type).toLowerCase();
+  const incomingType = asTrimmedString(incoming.type).toLowerCase();
+  if (existingType === incomingType || !areTerminalOutputTypesCompatible(existingType, incomingType)) {
+    return incoming;
+  }
+
+  const normalized: AggregateOutputItem = {
+    ...incoming,
+    type: existing.type,
+  };
+  if (existingType === 'custom_tool_call' && normalized.input === undefined && normalized.arguments !== undefined) {
+    normalized.input = normalized.arguments;
+    delete normalized.arguments;
+  } else if (existingType === 'function_call' && normalized.arguments === undefined && normalized.input !== undefined) {
+    normalized.arguments = normalized.input;
+    delete normalized.input;
+  }
+  return normalized;
+}
+
 function hydrateStateFromTerminalResponseOutput(
   state: OpenAiResponsesAggregateState,
   responsePayload: Record<string, unknown> | null | undefined,
 ): void {
   if (!isRecord(responsePayload) || !Array.isArray(responsePayload.output)) return;
 
+  const claimedIndices = new Set<number>();
   for (let index = 0; index < responsePayload.output.length; index += 1) {
     const item = responsePayload.output[index];
     if (!isRecord(item)) continue;
     const itemType = asTrimmedString(item.type).toLowerCase();
     if (!itemType) continue;
-    const resolvedIndex = resolveCompatibleOutputIndex(
+    const resolvedIndex = findTerminalOutputIndex({
       state,
+      item,
       itemType,
-      index,
-      item.id,
-      item.call_id,
+      terminalIndex: index,
+      claimedIndices,
+    });
+    claimedIndices.add(resolvedIndex);
+    const existing = state.outputItems[resolvedIndex];
+    if (isRecord(existing) && hasTerminalMarker(existing, outputItemDoneMarker)) continue;
+    setOutputItem(
+      state,
+      resolvedIndex,
+      normalizeTerminalItemForExisting(existing, cloneJson(item)),
     );
-    setOutputItem(state, resolvedIndex, cloneJson(item));
   }
 }
 

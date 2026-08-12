@@ -125,7 +125,7 @@ describe('/v1/completions site api endpoint rotation', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('cools down a retryable failed endpoint and retries the next endpoint within the same site', async () => {
+  it('cools down a transport-failed endpoint and retries the next endpoint within the same site', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'nihao-panel',
       url: 'https://console.example.com',
@@ -169,7 +169,7 @@ describe('/v1/completions site api endpoint rotation', () => {
     selectNextChannelMock.mockResolvedValue(null);
 
     fetchMock
-      .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNREFUSED'))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         id: 'cmpl-ok',
         object: 'text_completion',
@@ -214,7 +214,7 @@ describe('/v1/completions site api endpoint rotation', () => {
       .all();
     expect(storedEndpoints[0]).toMatchObject({
       url: 'https://api-a.example.com',
-      lastFailureReason: 'HTTP 502: bad gateway',
+      lastFailureReason: 'fetch failed: ECONNREFUSED',
     });
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();
     expect(storedEndpoints[1]).toMatchObject({

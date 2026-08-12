@@ -19,6 +19,7 @@ import {
 } from '../../services/upstreamEndpointRuntimeMemory.js';
 import {
   ensureModelAllowedForDownstreamKey,
+  ensureDownstreamPolicySnapshotActive,
   getDownstreamRoutingPolicy,
   recordDownstreamCostUsage,
 } from '../../routes/proxy/downstreamPolicy.js';
@@ -48,10 +49,14 @@ import {
 } from '../../transformers/gemini/generate-content/cliBridge.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getObservedResponseMeta } from '../firstByteTimeout.js';
+import { formatStreamServerTiming, getStreamTimingSnapshot } from '../streamTiming.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../downstreamClientContext.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
+import { createRetryBudget } from '../../services/proxyRetryContract.js';
+import { resolveApiChannelRetryPolicy } from '../../services/proxyRetryOwnership.js';
+import { startProxyAttemptLedgerSession } from '../../services/proxyAttemptLedgerRuntime.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
 import {
@@ -67,7 +72,11 @@ import {
   selectSurfaceChannelForAttempt,
   trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  getSiteApiEndpointIdFromError,
+  runWithSiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
@@ -125,6 +134,7 @@ export async function handleChatSurfaceRequest(
   reply: FastifyReply,
   downstreamFormat: DownstreamFormat,
 ) {
+  const requestReceivedAtMs = Date.now();
   const downstreamTransformer = downstreamFormat === 'claude'
     ? anthropicMessagesTransformer
     : openAiChatTransformer;
@@ -189,12 +199,29 @@ export async function handleChatSurfaceRequest(
   });
   const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
   const maxRetries = getProxyMaxChannelRetries();
+  const attemptLedger = await startProxyAttemptLedgerSession({
+    requestedModel,
+    downstreamPath,
+    clientKind: clientContext.clientKind,
+    sessionId: clientContext.sessionId || null,
+    downstreamApiKeyId,
+    policy: {
+      retryOwner: 'cooperative',
+      replaySafety: 'safe_only',
+      retryBudget: createRetryBudget({ maxAttempts: maxRetries + 1 }),
+    },
+  });
+  if (attemptLedger) {
+    reply.header('x-metapi-request-id', attemptLedger.requestId);
+  }
   const failureToolkit = createSurfaceFailureToolkit({
     warningScope: 'chat',
     downstreamPath,
     maxRetries,
     clientContext,
     downstreamApiKeyId,
+    requestId: attemptLedger?.requestId ?? null,
+    getAttemptId: () => attemptLedger?.getLatestAttemptId() ?? null,
   });
   const stickySessionKey = buildSurfaceStickySessionKey({
     clientContext,
@@ -207,12 +234,21 @@ export async function handleChatSurfaceRequest(
     clientKind: clientContext.clientKind,
     sessionId: clientContext.sessionId || null,
     traceHint: clientContext.traceHint || null,
+    requestId: attemptLedger?.requestId ?? null,
     requestedModel,
     downstreamApiKeyId,
     requestHeaders: request.headers as Record<string, unknown>,
     requestBody: request.body,
   });
+  let pendingEndpointSuccessHooks: Promise<void> | null = null;
+  const settlePendingEndpointSuccessHooks = async () => {
+    const pending = pendingEndpointSuccessHooks;
+    pendingEndpointSuccessHooks = null;
+    if (pending) await pending;
+  };
   const finalizeDebugFailure = async (status: number, payload: unknown, upstreamPath: string | null = null) => {
+    await settlePendingEndpointSuccessHooks();
+    await attemptLedger?.finishRequest('failed');
     await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
       finalStatus: 'failed',
       finalHttpStatus: status,
@@ -224,6 +260,8 @@ export async function handleChatSurfaceRequest(
     });
   };
   const finalizeDebugSuccess = async (status: number, upstreamPath: string | null, responseHeaders: unknown, responseBody: unknown) => {
+    await settlePendingEndpointSuccessHooks();
+    await attemptLedger?.finishRequest('succeeded');
     await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
       finalStatus: 'success',
       finalHttpStatus: status,
@@ -237,6 +275,8 @@ export async function handleChatSurfaceRequest(
   let retryCount = 0;
 
   while (retryCount <= maxRetries) {
+    await settlePendingEndpointSuccessHooks();
+    if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
     const stickyPreferredChannelId = retryCount === 0
       ? getSurfaceStickyPreferredChannelId(stickySessionKey)
       : null;
@@ -265,6 +305,12 @@ export async function handleChatSurfaceRequest(
     }
 
     excludeChannelIds.push(selected.channel.id);
+    await attemptLedger?.setRetryOwner(resolveApiChannelRetryPolicy(selected.channel).retryOwner);
+    attemptLedger?.setSelection({
+      channelId: selected.channel.id,
+      accountId: selected.account.id,
+      tokenId: selected.token?.id ?? null,
+    });
     await safeUpdateSurfaceProxyDebugSelection(debugTrace, {
       stickySessionKey,
       stickyHitChannelId: (
@@ -317,6 +363,7 @@ export async function handleChatSurfaceRequest(
       endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
       decisionSummary: {
         retryCount,
+        requestLedgerId: attemptLedger?.requestId ?? null,
         downstreamFormat,
         stickySessionKey,
         stickyPreferredChannelId,
@@ -373,6 +420,7 @@ export async function handleChatSurfaceRequest(
           oauthProjectId: oauth?.projectId,
           sitePlatform: selected.site.platform,
           siteUrl: siteApiBaseUrl,
+          codexFingerprintEnabled: selected.site.codexFingerprintEnabled === true,
           openaiBody: bodyForEndpoint,
           downstreamFormat,
           claudeOriginalBody,
@@ -430,12 +478,17 @@ export async function handleChatSurfaceRequest(
         endpointCandidates,
         buildRequest: (endpoint) => buildEndpointRequest(endpoint),
         dispatchRequest,
+        deferSuccessHooks: isStream && !debugTrace,
+        createAttemptIdentity: attemptLedger?.createAttemptIdentity,
+        onAttemptStart: attemptLedger?.onAttemptStart,
+        onAttemptCommitState: attemptLedger?.onAttemptCommitState,
         tryRecover,
         shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
           ctx.response.status,
           ctx.rawErrText || ctx.errText,
         ),
         onAttemptFailure: async (ctx) => {
+          await attemptLedger?.onAttemptFailure(ctx);
           const memoryWrite = recordUpstreamEndpointFailure({
             ...endpointRuntimeContext,
             endpoint: ctx.request.endpoint,
@@ -444,6 +497,7 @@ export async function handleChatSurfaceRequest(
           });
           await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
             attemptIndex: debugAttemptBase + ctx.endpointIndex,
+            attemptId: ctx.attemptId,
             endpoint: ctx.request.endpoint,
             requestPath: ctx.request.path,
             targetUrl: ctx.targetUrl,
@@ -461,6 +515,7 @@ export async function handleChatSurfaceRequest(
           });
         },
         onAttemptSuccess: async (ctx) => {
+          await attemptLedger?.onAttemptSuccess(ctx);
           const memoryWrite = recordUpstreamEndpointSuccess({
             ...endpointRuntimeContext,
             endpoint: ctx.request.endpoint,
@@ -468,6 +523,7 @@ export async function handleChatSurfaceRequest(
           const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
           await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
             attemptIndex: debugAttemptBase + ctx.endpointIndex,
+            attemptId: ctx.attemptId,
             endpoint: ctx.request.endpoint,
             requestPath: ctx.request.path,
             targetUrl: ctx.targetUrl,
@@ -562,6 +618,7 @@ export async function handleChatSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
+      pendingEndpointSuccessHooks = endpointResult.successHooksCompletion ?? null;
       const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
 
       if (isStream) {
@@ -570,12 +627,32 @@ export async function handleChatSurfaceRequest(
         const startSseResponse = () => {
           if (streamStarted) return;
           streamStarted = true;
+          const timingSnapshot = getStreamTimingSnapshot({
+            upstream,
+            requestReceivedAtMs,
+            downstreamStartedAtMs: Date.now(),
+          });
+          const serverTiming = formatStreamServerTiming(timingSnapshot);
           reply.hijack();
           reply.raw.statusCode = 200;
           reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
           reply.raw.setHeader('Connection', 'keep-alive');
           reply.raw.setHeader('X-Accel-Buffering', 'no');
+          if (serverTiming) {
+            reply.raw.setHeader('Server-Timing', serverTiming);
+          }
+          reply.raw.flushHeaders();
+          if ((timingSnapshot.upstreamFirstByteLatencyMs || 0) >= 2_500) {
+            console.info('[proxy/ttft]', JSON.stringify({
+              surface: downstreamFormat,
+              requestId: attemptLedger?.requestId ?? null,
+              requestedModel,
+              actualModel: modelName,
+              platform: selected.site.platform,
+              ...timingSnapshot,
+            }));
+          }
         };
 
         let parsedUsage: ReturnType<typeof parseProxyUsage> = {
@@ -1021,6 +1098,7 @@ export async function handleChatSurfaceRequest(
           status: endpointFailureStatus || 502,
           errText: err.message || 'unknown error',
           rawErrText: err.rawErrText || err.message || 'unknown error',
+          endpointId: getSiteApiEndpointIdFromError(err),
           isStream,
           latencyMs: Date.now() - startTime,
           retryCount,
@@ -1179,6 +1257,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
   let retryCount = 0;
 
   while (retryCount <= maxRetries) {
+    if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
     const stickyPreferredChannelId = retryCount === 0
       ? getSurfaceStickyPreferredChannelId(stickySessionKey)
       : null;
@@ -1469,6 +1548,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
           status: endpointFailureStatus || 502,
           errText: error.message || 'unknown error',
           rawErrText: error.rawErrText || error.message || 'unknown error',
+          endpointId: getSiteApiEndpointIdFromError(error),
           isStream: false,
           latencyMs: Date.now() - startTime,
           retryCount,

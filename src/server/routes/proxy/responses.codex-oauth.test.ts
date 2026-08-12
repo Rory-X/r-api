@@ -22,6 +22,7 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
 const recordOauthQuotaHeadersSnapshotMock = vi.fn<(input: unknown) => Promise<void>>(async (_input) => undefined);
 const recordOauthQuotaResetHintMock = vi.fn<(input: unknown) => Promise<void>>(async (_input) => undefined);
+const shouldRetryProxyRequestMock = vi.fn();
 const insertedProxyLogs: Record<string, unknown>[] = [];
 const originalProxyEmptyContentFailEnabled = config.proxyEmptyContentFailEnabled;
 const originalProxyStickySessionEnabled = config.proxyStickySessionEnabled;
@@ -76,7 +77,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
-  shouldRetryProxyRequest: () => false,
+  shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
   shouldAbortSameSiteEndpointFallback: () => false,
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
@@ -204,6 +205,8 @@ describe('responses proxy codex oauth refresh', () => {
     refreshOauthAccessTokenSingleflightMock.mockReset();
     recordOauthQuotaHeadersSnapshotMock.mockClear();
     recordOauthQuotaResetHintMock.mockClear();
+    shouldRetryProxyRequestMock.mockReset();
+    shouldRetryProxyRequestMock.mockReturnValue(false);
     dbInsertMock.mockClear();
     insertedProxyLogs.length = 0;
 
@@ -281,7 +284,10 @@ describe('responses proxy codex oauth refresh', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33, expect.objectContaining({
+      reason: 'unauthorized',
+      failedAccessToken: 'expired-access-token',
+    }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, any];
@@ -334,7 +340,10 @@ describe('responses proxy codex oauth refresh', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33, expect.objectContaining({
+      reason: 'unauthorized',
+      failedAccessToken: 'expired-access-token',
+    }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
     expect(secondOptions.headers.Authorization).toBe('Bearer fresh-access-token');
@@ -481,7 +490,10 @@ describe('responses proxy codex oauth refresh', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33, expect.objectContaining({
+      reason: 'unauthorized',
+      failedAccessToken: 'expired-access-token',
+    }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, any];
@@ -1494,6 +1506,284 @@ describe('responses proxy codex oauth refresh', () => {
       httpStatus: 200,
     });
     expect(String(insertedProxyLogs.at(-1)?.errorMessage || '')).toContain('tool execution failed');
+  });
+
+  it('switches to the next channel when the first channel only returns a generic HTTP 400', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 44, name: 'codex-fallback', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 34,
+        username: 'fallback@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-fallback',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'fallback',
+      tokenValue: 'fallback-access-token',
+      actualModel: 'gpt-5.2-codex',
+    });
+    fetchMock.mockImplementation((_url: string, options: any) => {
+      if (options?.headers?.Authorization === 'Bearer fallback-access-token') {
+        return Promise.resolve(createSseResponse([
+          'event: response.created\n',
+          'data: {"type":"response.created","response":{"id":"resp_generic_400_fallback","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+          'event: response.output_text.delta\n',
+          'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_generic_400_fallback","delta":"fallback after generic 400"}\n\n',
+          'event: response.completed\n',
+          'data: {"type":"response.completed","response":{"id":"resp_generic_400_fallback","model":"gpt-5.2-codex","status":"completed","usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}}\n\n',
+          'data: [DONE]\n\n',
+        ]));
+      }
+      return Promise.resolve(new Response('400 Bad Request', {
+        status: 400,
+        headers: { 'content-type': 'text/plain' },
+      }));
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('fallback after generic 400');
+    expect(selectNextChannelMock).toHaveBeenCalledTimes(1);
+    expect(recordFailureMock).toHaveBeenCalledWith(11, expect.objectContaining({
+      status: 400,
+      errorText: '400 Bad Request',
+    }));
+    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails over before downstream stream commit when upstream reports overload without output', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 44, name: 'codex-fallback', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 34,
+        username: 'fallback@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-fallback',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'fallback',
+      tokenValue: 'fallback-access-token',
+      actualModel: 'gpt-5.2-codex',
+    });
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.created\n',
+        'data: {"type":"response.created","response":{"id":"resp_overloaded","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+        'event: response.failed\n',
+        'data: {"type":"response.failed","response":{"id":"resp_overloaded","model":"gpt-5.2-codex","status":"failed","error":{"message":"Our servers are currently overloaded. Please try again later."}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.created\n',
+        'data: {"type":"response.created","response":{"id":"resp_fallback_ok","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+        'event: response.output_item.added\n',
+        'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_fallback_ok","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+        'event: response.output_text.delta\n',
+        'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_fallback_ok","delta":"fallback succeeded"}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_fallback_ok","model":"gpt-5.2-codex","status":"completed","usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('fallback succeeded');
+    expect(response.body).not.toContain('resp_overloaded');
+    expect(response.body).not.toContain('response.failed');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(selectNextChannelMock).toHaveBeenCalledTimes(1);
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+    expect(insertedProxyLogs.some((entry) => (
+      entry.status === 'failed'
+      && String(entry.errorMessage || '').includes('currently overloaded')
+    ))).toBe(true);
+    expect(insertedProxyLogs.at(-1)).toMatchObject({
+      status: 'success',
+      retryCount: 1,
+    });
+  });
+
+  it('fails over a pre-output overload when continuity is fully carried inside the request', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    selectChannelMock.mockReturnValue({
+      channel: { id: 87, routeId: 22 },
+      site: { id: 8, name: 'aihub', url: 'https://aihub.top', platform: 'sub2api' },
+      account: { id: 11, username: 'primary@example.com', extraConfig: '{}' },
+      tokenName: 'primary',
+      tokenValue: 'primary-token',
+      actualModel: 'gpt-5.2-codex',
+    });
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 66, routeId: 22 },
+      site: { id: 8, name: 'aihub', url: 'https://aihub.top', platform: 'sub2api' },
+      account: { id: 9, username: 'fallback@example.com', extraConfig: '{}' },
+      tokenName: 'fallback',
+      tokenValue: 'fallback-token',
+      actualModel: 'gpt-5.2-codex',
+    });
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.created\n',
+        'data: {"type":"response.created","response":{"id":"resp_continuity_overload","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+        'event: response.failed\n',
+        'data: {"type":"response.failed","response":{"id":"resp_continuity_overload","model":"gpt-5.2-codex","status":"failed","error":{"message":"Our servers are currently overloaded. Please try again later."}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.created\n',
+        'data: {"type":"response.created","response":{"id":"resp_reasoning_fallback","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+        'event: response.output_text.delta\n',
+        'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_reasoning_fallback","delta":"reasoning fallback succeeded"}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_reasoning_fallback","model":"gpt-5.2-codex","status":"completed","usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: [
+          {
+            type: 'reasoning',
+            id: 'rs_continuity_1',
+            encrypted_content: 'encrypted-reasoning-context',
+            summary: [],
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'continue' }],
+          },
+        ],
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('reasoning fallback succeeded');
+    expect(response.body).not.toContain('resp_continuity_overload');
+    expect(response.body).not.toContain('response.failed');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(selectNextChannelMock).toHaveBeenCalledTimes(1);
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not replay a pre-output overload when previous_response_id binds the request upstream', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 44, name: 'unused-fallback', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: { id: 34, username: 'unused@example.com', extraConfig: '{}' },
+      tokenName: 'unused',
+      tokenValue: 'unused-token',
+      actualModel: 'gpt-5.2-codex',
+    });
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_bound_overload","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+      'event: response.failed\n',
+      'data: {"type":"response.failed","response":{"id":"resp_bound_overload","model":"gpt-5.2-codex","status":"failed","error":{"message":"Our servers are currently overloaded. Please try again later."}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'x-metapi-responses-websocket-transport': '1',
+      },
+      payload: {
+        model: 'gpt-5.4',
+        previous_response_id: 'resp_upstream_bound_1',
+        input: 'continue',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('response.failed');
+    expect(response.body).toContain('currently overloaded');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an overloaded stream after meaningful output has started', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 44, name: 'unused-fallback', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: { id: 34, username: 'unused@example.com', extraConfig: '{}' },
+      tokenName: 'unused',
+      tokenValue: 'unused-token',
+      actualModel: 'gpt-5.2-codex',
+    });
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_partial_overload","model":"gpt-5.2-codex","status":"in_progress","output":[]}}\n\n',
+      'event: response.output_item.added\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_partial_overload","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_partial_overload","delta":"partial output"}\n\n',
+      'event: response.failed\n',
+      'data: {"type":"response.failed","response":{"id":"resp_partial_overload","model":"gpt-5.2-codex","status":"failed","error":{"message":"Our servers are currently overloaded. Please try again later."}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('partial output');
+    expect(response.body).toContain('response.failed');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(recordSuccessMock).not.toHaveBeenCalled();
   });
 
   it('does not record success when a native responses stream closes before response.completed', async () => {

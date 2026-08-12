@@ -821,6 +821,90 @@ describe('buildUpstreamEndpointRequest', () => {
     ]);
   });
 
+  it('omits codex fingerprint headers when the site switch is off', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'sub2api',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {
+        'x-codex-window-id': 'window-from-client',
+      },
+      codexFingerprintEnabled: false,
+    });
+
+    expect(request.headers['x-codex-window-id']).toBeUndefined();
+  });
+
+  it('synthesizes an x-codex-window-id for sub2api upstreams when the site switch is on', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'sub2api',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+      codexFingerprintEnabled: true,
+    });
+
+    expect(request.headers['x-codex-window-id']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('forwards downstream x-codex-* headers for codex upstreams when the site switch is on', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: true,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'codex',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello codex' }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {
+        'x-codex-window-id': 'window-from-client',
+      },
+      codexFingerprintEnabled: true,
+    } as any);
+
+    expect(request.headers['x-codex-window-id']).toBe('window-from-client');
+    expect(request.headers.Originator).toBe('codex_cli_rs');
+  });
+
+  it('applies codex fingerprint headers on chat completions when the site switch is on', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'sub2api',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+      codexFingerprintEnabled: true,
+    });
+
+    expect(request.headers['x-codex-window-id']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   it('applies a sub2api-style allowlist to generic passthrough headers', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'chat',

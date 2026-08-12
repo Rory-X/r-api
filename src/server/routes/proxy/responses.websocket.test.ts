@@ -15,9 +15,13 @@ const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
+const acquireDownstreamConcurrencyLeaseMock = vi.fn();
+const releaseDownstreamConcurrencyLeaseMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
+const resolveBridgeProxyRoutePlanMock = vi.fn();
+const startProxyAttemptLedgerSessionMock = vi.fn();
 const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) => ({
   ...usage,
   estimatedCostFromQuota: 0,
@@ -62,6 +66,18 @@ vi.mock('../../services/alertService.js', () => ({
 vi.mock('../../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
+  acquireDownstreamConcurrencyLease: (...args: unknown[]) => acquireDownstreamConcurrencyLeaseMock(...args),
+  resolveDownstreamPolicySnapshot: (auth: any) => auth.snapshot || {
+    capturedAt: '2026-08-03T00:00:00.000Z',
+    source: auth.source,
+    tokenFingerprint: `fingerprint:${auth.token}`,
+    keyId: auth.key?.id ?? null,
+    keyName: auth.key?.name || 'global',
+    policyVersion: auth.key?.policyVersion ?? 1,
+    expiresAt: auth.key?.expiresAt ?? null,
+    maxConcurrency: auth.key?.maxConcurrency ?? null,
+    policy: auth.policy,
+  },
   isModelAllowedByPolicyOrAllowedRoutes: async (
     model: string,
     policy: { supportedModels?: string[]; allowedRouteIds?: number[]; denyAllWhenEmpty?: boolean },
@@ -98,6 +114,14 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
 vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaHeadersSnapshot: async () => undefined,
   recordOauthQuotaResetHint: async () => undefined,
+}));
+
+vi.mock('../../services/bridgeContinuationRouting.js', () => ({
+  resolveBridgeProxyRoutePlan: (...args: unknown[]) => resolveBridgeProxyRoutePlanMock(...args),
+}));
+
+vi.mock('../../services/proxyAttemptLedgerRuntime.js', () => ({
+  startProxyAttemptLedgerSession: (...args: unknown[]) => startProxyAttemptLedgerSessionMock(...args),
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -150,6 +174,10 @@ function createSseResponse(chunks: string[], status = 200) {
 }
 
 function createSelectedChannel(options?: {
+  channelId?: number;
+  siteId?: number;
+  accountId?: number;
+  tokenId?: number | null;
   siteName?: string;
   siteUrl?: string;
   sitePlatform?: string;
@@ -161,15 +189,15 @@ function createSelectedChannel(options?: {
   const sitePlatform = options?.sitePlatform ?? 'codex';
   const isCodex = sitePlatform === 'codex';
   return {
-    channel: { id: 11, routeId: 22 },
+    channel: { id: options?.channelId ?? 11, routeId: 22 },
     site: {
-      id: 44,
+      id: options?.siteId ?? 44,
       name: options?.siteName ?? (isCodex ? 'codex-site' : 'openai-site'),
       url: options?.siteUrl ?? (isCodex ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com'),
       platform: sitePlatform,
     },
     account: {
-      id: 33,
+      id: options?.accountId ?? 33,
       username: options?.username ?? (isCodex ? 'codex-user@example.com' : 'openai-user@example.com'),
       extraConfig: options?.extraConfig ?? (isCodex
         ? JSON.stringify({
@@ -182,6 +210,7 @@ function createSelectedChannel(options?: {
         })
         : '{}'),
     },
+    token: options?.tokenId == null ? null : { id: options.tokenId },
     tokenName: 'default',
     tokenValue: options?.tokenValue ?? (isCodex ? 'oauth-access-token' : 'sk-openai-token'),
     actualModel: options?.actualModel ?? (isCodex ? 'gpt-5.4' : 'gpt-4.1'),
@@ -378,9 +407,13 @@ describe('responses websocket transport', () => {
     recordFailureMock.mockReset();
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
+    acquireDownstreamConcurrencyLeaseMock.mockReset();
+    releaseDownstreamConcurrencyLeaseMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
+    resolveBridgeProxyRoutePlanMock.mockReset();
+    startProxyAttemptLedgerSessionMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();
     siteApiEndpointRows = [];
@@ -390,6 +423,11 @@ describe('responses websocket transport', () => {
     selectNextChannelMock.mockReturnValue(null);
     selectPreferredChannelMock.mockReturnValue(null);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    resolveBridgeProxyRoutePlanMock.mockResolvedValue({
+      plan: null,
+      ignoredReason: 'not_bridge_request',
+    });
+    startProxyAttemptLedgerSessionMock.mockResolvedValue(null);
     upstreamConnectionCount = 0;
     upstreamUpgradeHeaders = {};
     upstreamRequests = [];
@@ -409,6 +447,10 @@ describe('responses websocket transport', () => {
         allowedRouteIds: [],
         siteWeightMultipliers: {},
       },
+    });
+    acquireDownstreamConcurrencyLeaseMock.mockResolvedValue({
+      ok: true,
+      lease: { release: releaseDownstreamConcurrencyLeaseMock },
     });
     upstreamMessageHandler = (socket, parsed, requestIndex) => {
       const responseId = `resp_upstream_${requestIndex}`;
@@ -1386,7 +1428,7 @@ describe('responses websocket transport', () => {
     });
     selectChannelMock.mockReturnValue(selectedChannel);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
-    authorizeDownstreamTokenMock.mockResolvedValueOnce({
+    authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
       source: 'global',
       token: 'sk-query-auth',
@@ -1421,7 +1463,7 @@ describe('responses websocket transport', () => {
   });
 
   it('rejects websocket turns whose model is blocked by the downstream key policy before channel selection', async () => {
-    authorizeDownstreamTokenMock.mockResolvedValueOnce({
+    authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
       source: 'managed',
       token: 'sk-managed-denied',
@@ -1453,6 +1495,266 @@ describe('responses websocket transport', () => {
       type: 'error',
       status: 403,
     });
+    expect(selectChannelMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the managed-key policy snapshot for every websocket turn', async () => {
+    const managedAuth = (policyVersion: number) => ({
+      ok: true,
+      source: 'managed',
+      token: 'sk-managed-turns',
+      key: {
+        id: 101,
+        name: 'turn-key',
+        policyVersion,
+        maxConcurrency: 2,
+      },
+      policy: {
+        supportedModels: ['gpt-5.4'],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    authorizeDownstreamTokenMock
+      .mockResolvedValueOnce(managedAuth(1))
+      .mockResolvedValueOnce(managedAuth(1))
+      .mockResolvedValueOnce(managedAuth(2));
+
+    const socket = createClientSocket(baseUrl, { Authorization: 'Bearer sk-managed-turns' });
+    await waitForSocketOpen(socket);
+
+    const firstMessages = waitForSocketMessages(socket, 1, 3_000);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await firstMessages;
+
+    const secondMessages = waitForSocketMessages(socket, 1, 3_000);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [{ type: 'message', role: 'user', content: 'continue' }],
+    }));
+    await secondMessages;
+    socket.close();
+
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(3);
+    expect(acquireDownstreamConcurrencyLeaseMock).toHaveBeenCalledTimes(2);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(2);
+    expect(releaseDownstreamConcurrencyLeaseMock).toHaveBeenCalledTimes(2);
+    expect(selectChannelMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('re-resolves bridge routing for every response.create and records turn metadata in the ledger', async () => {
+    const preservedChannel = createSelectedChannel({
+      channelId: 301,
+      siteId: 401,
+      accountId: 501,
+      tokenId: 701,
+      siteName: 'bridge-preserved-site',
+      siteUrl: upstreamSiteUrl,
+    });
+    const switchedChannel = createSelectedChannel({
+      channelId: 302,
+      siteId: 402,
+      accountId: 502,
+      tokenId: 702,
+      siteName: 'bridge-switched-site',
+      siteUrl: upstreamSiteUrl,
+    });
+    const previousSelection = {
+      requestId: 'request-before-bridge',
+      attemptId: 'attempt-before-bridge',
+      channelId: preservedChannel.channel.id,
+      routeId: preservedChannel.channel.routeId,
+      siteId: preservedChannel.site.id,
+      accountId: preservedChannel.account.id,
+      tokenId: preservedChannel.token?.id ?? null,
+      startedAt: '2026-08-04 08:00:00',
+    };
+    selectPreferredChannelMock.mockResolvedValue(preservedChannel);
+    selectChannelMock.mockResolvedValue(switchedChannel);
+    previewSelectedChannelMock.mockResolvedValue(preservedChannel);
+    resolveBridgeProxyRoutePlanMock.mockImplementation(async ({ directive }: any) => ({
+      plan: {
+        taskId: directive.taskId,
+        requestedAction: directive.routeAction,
+        effectiveAction: directive.routeAction,
+        continuationNumber: directive.continuationNumber,
+        previousSelection,
+        reason: 'directive_applied',
+      },
+      ignoredReason: null,
+    }));
+
+    const buildMetadata = (routeAction: 'preserve' | 'switch_channel', turnId: string, continuationNumber: number) => ({
+      'x-codex-turn-metadata': {
+        session_id: 'session-bridge-ws',
+        thread_id: 'thread-bridge-ws',
+        turn_id: turnId,
+        request_kind: 'turn',
+        metapi_bridge_task_id: 'task-bridge-ws',
+        metapi_bridge_route_action: routeAction,
+        metapi_bridge_continuation_number: continuationNumber,
+      },
+    });
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+
+    const firstResponse = waitForSocketMessageMatching(socket, (message) => message.type === 'response.completed');
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [{ type: 'message', role: 'user', content: 'first turn' }],
+      client_metadata: buildMetadata('preserve', 'turn-bridge-ws-1', 2),
+    }));
+    await firstResponse;
+
+    const secondResponse = waitForSocketMessageMatching(socket, (message) => message.type === 'response.completed');
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [{ type: 'message', role: 'user', content: 'second turn' }],
+      client_metadata: buildMetadata('switch_channel', 'turn-bridge-ws-2', 3),
+    }));
+    await secondResponse;
+    socket.close();
+
+    expect(resolveBridgeProxyRoutePlanMock).toHaveBeenCalledTimes(2);
+    expect(resolveBridgeProxyRoutePlanMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      directive: {
+        taskId: 'task-bridge-ws',
+        routeAction: 'preserve',
+        continuationNumber: 2,
+      },
+      identity: expect.objectContaining({
+        sessionId: 'session-bridge-ws',
+        threadId: 'thread-bridge-ws',
+        turnId: 'turn-bridge-ws-1',
+        requestKind: 'turn',
+      }),
+      hardContinuity: false,
+    }));
+    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.4',
+      preservedChannel.channel.id,
+      expect.any(Object),
+      [],
+      {
+        allowedSiteIds: [preservedChannel.site.id],
+        preferredCredential: {
+          accountId: preservedChannel.account.id,
+          tokenId: preservedChannel.token?.id,
+        },
+      },
+    );
+    expect(selectChannelMock).toHaveBeenCalledWith(
+      'gpt-5.4',
+      expect.any(Object),
+      {
+        excludedSiteIds: [preservedChannel.site.id],
+        excludedCredentials: [],
+      },
+    );
+    expect(upstreamConnectionCount).toBe(2);
+    expect(startProxyAttemptLedgerSessionMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      clientKind: 'codex',
+      sessionId: 'session-bridge-ws',
+      clientThreadId: 'thread-bridge-ws',
+      clientTurnId: 'turn-bridge-ws-1',
+      bridgeTaskId: 'task-bridge-ws',
+      bridgeRouteAction: 'preserve',
+      bridgeContinuationNumber: 2,
+      channelId: preservedChannel.channel.id,
+      accountId: preservedChannel.account.id,
+      tokenId: preservedChannel.token?.id,
+    }));
+    expect(startProxyAttemptLedgerSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      sessionId: 'session-bridge-ws',
+      clientThreadId: 'thread-bridge-ws',
+      clientTurnId: 'turn-bridge-ws-2',
+      bridgeTaskId: 'task-bridge-ws',
+      bridgeRouteAction: 'switch_channel',
+      bridgeContinuationNumber: 3,
+      channelId: switchedChannel.channel.id,
+      accountId: switchedChannel.account.id,
+      tokenId: switchedChannel.token?.id,
+    }));
+  });
+
+  it('rejects a new websocket turn immediately after the downstream key is revoked', async () => {
+    authorizeDownstreamTokenMock
+      .mockResolvedValueOnce({
+        ok: true,
+        source: 'managed',
+        token: 'sk-managed-revoked',
+        key: { id: 102, name: 'revoked-key', policyVersion: 1 },
+        policy: {
+          supportedModels: ['gpt-5.4'],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        statusCode: 403,
+        error: 'API key is disabled',
+        reason: 'disabled',
+      });
+
+    const socket = createClientSocket(baseUrl, { Authorization: 'Bearer sk-managed-revoked' });
+    await waitForSocketOpen(socket);
+    const messagePromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const [message] = await messagePromise;
+    socket.close();
+    expect(message).toMatchObject({ type: 'error', status: 403 });
+    expect(acquireDownstreamConcurrencyLeaseMock).not.toHaveBeenCalled();
+    expect(consumeManagedKeyRequestMock).not.toHaveBeenCalled();
+    expect(selectChannelMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a websocket 429 when the managed-key concurrency limit is exhausted', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'sk-managed-busy',
+      key: { id: 103, name: 'busy-key', policyVersion: 1, maxConcurrency: 1 },
+      policy: {
+        supportedModels: ['gpt-5.4'],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    acquireDownstreamConcurrencyLeaseMock.mockResolvedValueOnce({
+      ok: false,
+      statusCode: 429,
+      error: 'API key concurrency limit reached',
+      reason: 'max_concurrency',
+      retryAfterSeconds: 1,
+    });
+
+    const socket = createClientSocket(baseUrl, { Authorization: 'Bearer sk-managed-busy' });
+    await waitForSocketOpen(socket);
+    const messagePromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const [message] = await messagePromise;
+    socket.close();
+    expect(message).toMatchObject({ type: 'error', status: 429 });
+    expect(consumeManagedKeyRequestMock).not.toHaveBeenCalled();
     expect(selectChannelMock).not.toHaveBeenCalled();
   });
 

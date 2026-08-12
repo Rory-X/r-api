@@ -49,6 +49,29 @@ describe('isCodexResponsesSurface', () => {
 });
 
 describe('detectDownstreamClientContext', () => {
+  it('reads Codex identity from the canonical Responses client_metadata envelope', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/responses',
+      headers: {},
+      body: {
+        client_metadata: {
+          'x-codex-turn-metadata': JSON.stringify({
+            session_id: 'session-canonical',
+            thread_id: 'thread-canonical',
+            turn_id: 'turn-canonical',
+            request_kind: 'turn',
+          }),
+        },
+      },
+    })).toMatchObject({
+      clientKind: 'codex',
+      sessionId: 'session-canonical',
+      threadId: 'thread-canonical',
+      turnId: 'turn-canonical',
+      traceHint: 'session-canonical',
+    });
+  });
+
   it('recognizes Codex requests and attaches Session_id as session and trace hint', () => {
     expect(detectDownstreamClientContext({
       downstreamPath: '/v1/responses',

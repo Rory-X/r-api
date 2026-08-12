@@ -188,6 +188,43 @@ export function buildCodexRuntimeHeaders(input: {
   };
 }
 
+const CODEX_FINGERPRINT_HEADER_PREFIX = 'x-codex-';
+const CODEX_WINDOW_ID_HEADER = 'x-codex-window-id';
+
+// Real Codex clients attach x-codex-* engine fingerprint headers (notably
+// x-codex-window-id); some upstream gateways (e.g. sub2api codex_cli_only)
+// require at least one such header. When a site opts in, forward any
+// downstream x-codex-* headers verbatim and synthesize a window id when the
+// request would otherwise carry no fingerprint at all.
+export function applyCodexEngineFingerprintHeaders(
+  headers: Record<string, string>,
+  input: {
+    downstreamHeaders?: Record<string, unknown>;
+    continuitySeed?: string | null;
+  },
+): Record<string, string> {
+  const next: Record<string, string> = { ...headers };
+  for (const [rawKey, rawValue] of Object.entries(input.downstreamHeaders || {})) {
+    const key = rawKey.trim().toLowerCase();
+    if (!key.startsWith(CODEX_FINGERPRINT_HEADER_PREFIX)) continue;
+    const value = headerValueToString(rawValue);
+    if (!value) continue;
+    if (getInputHeader(next, key)) continue;
+    next[key] = value;
+  }
+
+  const hasFingerprint = Object.keys(next).some(
+    (key) => key.trim().toLowerCase().startsWith(CODEX_FINGERPRINT_HEADER_PREFIX),
+  );
+  if (!hasFingerprint) {
+    const seed = asTrimmedString(input.continuitySeed);
+    next[CODEX_WINDOW_ID_HEADER] = seed
+      ? uuidFromSeed(`metapi:codex-window:${seed}`)
+      : randomUUID();
+  }
+  return next;
+}
+
 export function buildClaudeRuntimeHeaders(input: {
   baseHeaders: Record<string, string>;
   claudeHeaders: Record<string, string>;

@@ -1,12 +1,27 @@
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import type { SiteProxyConfigLike } from '../../services/siteProxy.js';
-import { tokenRouter } from '../../services/tokenRouter.js';
+import {
+  tokenRouter,
+  type TokenRouterCredentialIdentity,
+} from '../../services/tokenRouter.js';
+import type { BridgeProxyRoutePlan } from '../../services/bridgeContinuationRouting.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
+import {
+  canRetryLocally,
+  classifyRetryErrorScope,
+  type AttemptCommitState,
+  type ReplaySafety,
+  type RetryOwner,
+} from '../../services/proxyRetryContract.js';
+import {
+  resolveApiChannelRetryPolicy,
+  upstreamClaimsRetryForFailure,
+} from '../../services/proxyRetryOwnership.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import { resolveProxyLogBilling } from '../../services/proxyBilling.js';
 import type { DownstreamClientContext } from '../downstreamClientContext.js';
@@ -24,7 +39,12 @@ type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 type SurfaceWarningScope = 'chat' | 'responses';
 
 type SurfaceSelectedChannel = {
-  channel: { routeId: number | null; id: number };
+  channel: {
+    routeId: number | null;
+    id: number;
+    retryOwner?: unknown;
+    upstreamRetryMode?: unknown;
+  };
   account: { id: number; username?: string | null };
   site: { name?: string | null };
   actualModel?: string | null;
@@ -108,6 +128,8 @@ export async function selectSurfaceChannelForAttempt(input: {
   retryCount: number;
   stickySessionKey?: string | null;
   forcedChannelId?: number | null;
+  bridgeRoutePlan?: BridgeProxyRoutePlan | null;
+  excludeCredentials?: readonly TokenRouterCredentialIdentity[];
 }): Promise<SelectedChannel> {
   return await selectProxyChannelForAttempt(input);
 }
@@ -158,6 +180,10 @@ export function clearSurfaceStickyChannel(input: {
   );
 }
 
+export function clearSurfaceStickySession(stickySessionKey?: string | null): void {
+  proxyChannelCoordinator.clearStickyChannel(stickySessionKey);
+}
+
 export async function acquireSurfaceChannelLease(input: {
   stickySessionKey?: string | null;
   selected: {
@@ -206,6 +232,8 @@ export async function writeSurfaceProxyLog(input: {
   usageSource?: 'upstream' | 'self-log' | 'unknown' | null;
   clientContext?: DownstreamClientContext | null;
   downstreamApiKeyId?: number | null;
+  requestId?: string | null;
+  attemptId?: string | null;
 }): Promise<void> {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -225,6 +253,8 @@ export async function writeSurfaceProxyLog(input: {
       channelId: input.selected.channel.id,
       accountId: input.selected.account.id,
       downstreamApiKeyId: input.downstreamApiKeyId ?? null,
+      requestId: input.requestId ?? null,
+      attemptId: input.attemptId ?? null,
       modelRequested: input.modelRequested,
       modelActual: input.selected.actualModel ?? null,
       status: input.status,
@@ -292,7 +322,10 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
   targetUrl?: string;
 } | null> {
   try {
-    const refreshed = await refreshOauthAccessTokenSingleflight(input.selected.account.id);
+    const refreshed = await refreshOauthAccessTokenSingleflight(input.selected.account.id, {
+      reason: 'unauthorized',
+      failedAccessToken: input.selected.tokenValue,
+    });
     input.selected.tokenValue = refreshed.accessToken;
     input.selected.account = {
       ...input.selected.account,
@@ -420,6 +453,8 @@ export async function recordSurfaceSuccess(input: {
     input.latencyMs,
     estimatedCost,
     input.modelName,
+    input.selected.account.id,
+    input.firstByteLatencyMs ?? null,
   );
   input.recordDownstreamCost?.(estimatedCost);
   const logTokens = resolvedUsage.usageSource === 'unknown'
@@ -474,6 +509,11 @@ export function createSurfaceFailureToolkit(input: {
   maxRetries: number;
   clientContext?: DownstreamClientContext | null;
   downstreamApiKeyId?: number | null;
+  requestId?: string | null;
+  getAttemptId?: () => string | null;
+  retryOwner?: RetryOwner;
+  replaySafety?: ReplaySafety;
+  explicitReplay?: boolean;
 }) {
   const log = async (args: {
     selected: SurfaceSelectedChannel;
@@ -514,12 +554,47 @@ export function createSurfaceFailureToolkit(input: {
       upstreamPath: args.upstreamPath,
       clientContext: input.clientContext,
       downstreamApiKeyId: input.downstreamApiKeyId,
+      requestId: input.requestId ?? null,
+      attemptId: input.getAttemptId?.() ?? null,
     });
   };
 
   const maybeRetry = (retryCount: number) => retryCount < input.maxRetries
     ? { action: 'retry' as const }
     : null;
+
+  const canRetryFailure = (args: {
+    selected: SurfaceSelectedChannel;
+    status: number;
+    errorText: string;
+    rawErrorText?: string | null;
+    retryCount: number;
+    commitState?: AttemptCommitState;
+    upstreamRetryable?: boolean;
+  }) => {
+    const classificationText = args.rawErrorText || args.errorText;
+    if (!shouldRetryProxyRequest(args.status, classificationText)) return null;
+    const errorScope = classifyRetryErrorScope({
+      status: args.status,
+      rawErrorText: classificationText,
+    });
+    const channelRetryPolicy = resolveApiChannelRetryPolicy(args.selected.channel);
+    if (!canRetryLocally({
+      retryOwner: input.retryOwner ?? channelRetryPolicy.retryOwner,
+      replaySafety: input.replaySafety ?? 'safe_only',
+      commitState: args.commitState ?? 'request_sent',
+      errorScope,
+      upstreamRetryable: upstreamClaimsRetryForFailure({
+        policy: channelRetryPolicy,
+        errorScope,
+        explicitUpstreamRetryable: args.upstreamRetryable,
+      }),
+      explicitReplay: input.explicitReplay,
+    })) {
+      return null;
+    }
+    return maybeRetry(args.retryCount);
+  };
 
   const runBestEffort = (label: string, fn: () => Promise<unknown>) => {
     void Promise.resolve()
@@ -538,16 +613,20 @@ export function createSurfaceFailureToolkit(input: {
       status: number;
       errText: string;
       rawErrText?: string | null;
+      endpointId?: number | null;
       isStream?: boolean | null;
       firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
+      commitState?: AttemptCommitState;
+      upstreamRetryable?: boolean;
     }): Promise<SurfaceFailureOutcome> {
       const rawErrText = args.rawErrText || args.errText;
       await tokenRouter.recordFailure(args.selected.channel.id, {
         status: args.status,
         errorText: rawErrText,
         modelName: args.modelName,
+        ...(args.endpointId ? { endpointId: args.endpointId } : {}),
       });
       await log({
         selected: args.selected,
@@ -575,10 +654,16 @@ export function createSurfaceFailureToolkit(input: {
         }));
       }
 
-      if (shouldRetryProxyRequest(args.status, args.errText)) {
-        const retry = maybeRetry(args.retryCount);
-        if (retry) return retry;
-      }
+      const retry = canRetryFailure({
+        selected: args.selected,
+        status: args.status,
+        errorText: args.errText,
+        rawErrorText: rawErrText,
+        retryCount: args.retryCount,
+        commitState: args.commitState,
+        upstreamRetryable: args.upstreamRetryable,
+      });
+      if (retry) return retry;
 
       runBestEffort('report proxy all failed', () => reportProxyAllFailed({
         model: args.requestedModel,
@@ -610,6 +695,8 @@ export function createSurfaceFailureToolkit(input: {
       completionTokens?: number | null;
       totalTokens?: number | null;
       upstreamPath?: string | null;
+      commitState?: AttemptCommitState;
+      upstreamRetryable?: boolean;
     }): Promise<SurfaceFailureOutcome> {
       await tokenRouter.recordFailure(args.selected.channel.id, {
         status: args.failure.status,
@@ -632,10 +719,15 @@ export function createSurfaceFailureToolkit(input: {
         upstreamPath: args.upstreamPath,
       });
 
-      if (shouldRetryProxyRequest(args.failure.status, args.failure.reason)) {
-        const retry = maybeRetry(args.retryCount);
-        if (retry) return retry;
-      }
+      const retry = canRetryFailure({
+        selected: args.selected,
+        status: args.failure.status,
+        errorText: args.failure.reason,
+        retryCount: args.retryCount,
+        commitState: args.commitState,
+        upstreamRetryable: args.upstreamRetryable,
+      });
+      if (retry) return retry;
 
       runBestEffort('report proxy all failed', () => reportProxyAllFailed({
         model: args.requestedModel,
@@ -663,6 +755,8 @@ export function createSurfaceFailureToolkit(input: {
       firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
+      commitState?: AttemptCommitState;
+      upstreamRetryable?: boolean;
     }): Promise<SurfaceFailureOutcome> {
       await tokenRouter.recordFailure(args.selected.channel.id, {
         errorText: args.errorMessage,
@@ -680,7 +774,14 @@ export function createSurfaceFailureToolkit(input: {
         retryCount: args.retryCount,
       });
 
-      const retry = maybeRetry(args.retryCount);
+      const retry = canRetryFailure({
+        selected: args.selected,
+        status: 0,
+        errorText: args.errorMessage,
+        retryCount: args.retryCount,
+        commitState: args.commitState ?? 'not_started',
+        upstreamRetryable: args.upstreamRetryable,
+      });
       if (retry) return retry;
 
       runBestEffort('report proxy all failed', () => reportProxyAllFailed({

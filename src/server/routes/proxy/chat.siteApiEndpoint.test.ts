@@ -15,6 +15,8 @@ const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
+const shouldRetryProxyRequestMock = vi.fn();
+const shouldAbortSameSiteEndpointFallbackMock = vi.fn();
 const estimateProxyCostMock = vi.fn(async (_arg?: any) => 0);
 const buildProxyBillingDetailsMock = vi.fn(async (_arg?: any) => null);
 const fetchModelPricingCatalogMock = vi.fn(async (_arg?: any): Promise<any> => null);
@@ -62,8 +64,8 @@ vi.mock('../../services/modelPricingService.js', () => ({
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
-  shouldRetryProxyRequest: () => false,
-  shouldAbortSameSiteEndpointFallback: () => false,
+  shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
+  shouldAbortSameSiteEndpointFallback: (...args: unknown[]) => shouldAbortSameSiteEndpointFallbackMock(...args),
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
@@ -106,6 +108,8 @@ describe('chat proxy site api endpoint rotation', () => {
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
+    shouldRetryProxyRequestMock.mockReset();
+    shouldAbortSameSiteEndpointFallbackMock.mockReset();
     estimateProxyCostMock.mockClear();
     buildProxyBillingDetailsMock.mockClear();
     fetchModelPricingCatalogMock.mockReset();
@@ -124,6 +128,8 @@ describe('chat proxy site api endpoint rotation', () => {
     await db.delete(schema.sites).run();
 
     fetchModelPricingCatalogMock.mockResolvedValue(null);
+    shouldRetryProxyRequestMock.mockReturnValue(false);
+    shouldAbortSameSiteEndpointFallbackMock.mockReturnValue(false);
     (config as any).codexHeaderDefaults = {
       userAgent: '',
       betaFeatures: '',
@@ -147,7 +153,7 @@ describe('chat proxy site api endpoint rotation', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('rotates to the next configured ai endpoint for retryable /v1/chat/completions failures', async () => {
+  it('rotates to the next configured ai endpoint for transport failures', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'nihao-panel',
       url: 'https://console.example.com',
@@ -191,9 +197,7 @@ describe('chat proxy site api endpoint rotation', () => {
     selectNextChannelMock.mockReturnValue(null);
 
     fetchMock
-      .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
-      .mockResolvedValueOnce(new Response('bad gateway via responses', { status: 502 }))
-      .mockResolvedValueOnce(new Response('bad gateway via messages', { status: 502 }))
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNREFUSED'))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         id: 'chatcmpl-ok',
         object: 'chat.completion',
@@ -221,11 +225,9 @@ describe('chat proxy site api endpoint rotation', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()?.choices?.[0]?.message?.content).toBe('ok via api-b');
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/responses');
-    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-a.example.com/v1/chat/completions');
-    expect(String(fetchMock.mock.calls[2]?.[0] || '')).toBe('https://api-a.example.com/v1/messages');
-    expect(String(fetchMock.mock.calls[3]?.[0] || '')).toBe('https://api-b.example.com/v1/responses');
+    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-b.example.com/v1/responses');
     expect(selectNextChannelMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).toHaveBeenCalledTimes(1);
@@ -236,9 +238,125 @@ describe('chat proxy site api endpoint rotation', () => {
       .all();
     expect(storedEndpoints[0]).toMatchObject({
       url: 'https://api-a.example.com',
-      lastFailureReason: 'HTTP 502: [upstream:/v1/messages] Upstream returned HTTP 502: bad gateway via messages',
+      lastFailureReason: 'fetch failed: ECONNREFUSED',
     });
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();
     expect(storedEndpoints[1]?.lastSelectedAt).toBeTruthy();
+  });
+
+  it('keeps the shared endpoint available and switches to another key after HTTP 503', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'aihub-panel',
+      url: 'https://aihub.example.com',
+      platform: 'sub2api',
+      status: 'active',
+    }).returning().get();
+
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'aihub-key-a',
+      accessToken: '',
+      apiToken: 'sk-aihub-a',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'aihub-key-b',
+      accessToken: '',
+      apiToken: 'sk-aihub-b',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    const configuredEndpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api.aihub.example.com',
+      enabled: true,
+      sortOrder: 0,
+    }).returning().get();
+
+    const selectedA = {
+      channel: { id: 11, routeId: 22, retryOwner: 'local_proxy' },
+      site,
+      account: accountA,
+      tokenName: 'key-a',
+      tokenValue: 'sk-aihub-a',
+      actualModel: 'gpt-5.4',
+    };
+    const selectedB = {
+      channel: { id: 12, routeId: 22, retryOwner: 'local_proxy' },
+      site,
+      account: accountB,
+      tokenName: 'key-b',
+      tokenValue: 'sk-aihub-b',
+      actualModel: 'gpt-5.4',
+    };
+    let excludedChannelIdsAtRetry: number[] = [];
+    selectChannelMock.mockReturnValue(selectedA);
+    selectNextChannelMock.mockImplementation((_model, excludedChannelIds) => {
+      excludedChannelIdsAtRetry = [...excludedChannelIds];
+      return selectedB;
+    });
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    shouldAbortSameSiteEndpointFallbackMock.mockReturnValue(true);
+
+    fetchMock
+      .mockResolvedValueOnce(new Response('Service temporarily unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'chatcmpl-key-b',
+        object: 'chat.completion',
+        created: 1_706_000_000,
+        model: 'gpt-5.4',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: 'ok via key b' },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()?.choices?.[0]?.message?.content).toBe('ok via key b');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map((call) => String(call[0] || ''))).toEqual([
+      'https://api.aihub.example.com/v1/chat/completions',
+      'https://api.aihub.example.com/v1/chat/completions',
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({ Authorization: 'Bearer sk-aihub-a' }),
+    });
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      headers: expect.objectContaining({ Authorization: 'Bearer sk-aihub-b' }),
+    });
+    expect(selectNextChannelMock).toHaveBeenCalledTimes(1);
+    expect(selectNextChannelMock.mock.calls[0]?.[0]).toBe('gpt-5.4');
+    expect(excludedChannelIdsAtRetry).toEqual([11]);
+    expect(recordFailureMock).toHaveBeenCalledWith(11, expect.objectContaining({
+      status: 503,
+      modelName: 'gpt-5.4',
+      endpointId: configuredEndpoint.id,
+    }));
+
+    const endpoint = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.siteId, site.id))
+      .get();
+    expect(endpoint).toMatchObject({
+      cooldownUntil: null,
+      lastFailureReason: null,
+    });
   });
 });

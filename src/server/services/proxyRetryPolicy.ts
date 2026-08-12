@@ -1,3 +1,13 @@
+import {
+  classifyRetryErrorScope,
+  isChannelLocalFailure,
+  isExplicitRequestFailure,
+  isGenericUpstreamBadRequest,
+  type ReplaySafety,
+  type RetryErrorScope,
+  type RetryOwner,
+} from './proxyRetryContract.js';
+
 const MODEL_UNSUPPORTED_PATTERNS: RegExp[] = [
   /当前\s*api\s*不支持所选模型/i,
   /不支持所选模型/i,
@@ -19,17 +29,7 @@ export const RETRYABLE_TIMEOUT_PATTERNS: RegExp[] = [
   /(request timed out|connection timed out|read timeout|first byte timeout|\btimed out\b)/i,
 ];
 
-const RETRYABLE_CHANNEL_LOCAL_PATTERNS: RegExp[] = [
-  /unsupported\s+legacy\s+protocol/i,
-  /please\s+use\s+\/v1\/responses/i,
-  /please\s+use\s+\/v1\/messages/i,
-  /please\s+use\s+\/v1\/chat\/completions/i,
-  /does\s+not\s+allow\s+\/v1\/[a-z0-9/_:-]+\s+dispatch/i,
-  /unsupported\s+endpoint/i,
-  /unsupported\s+path/i,
-  /unknown\s+endpoint/i,
-  /unrecognized\s+request\s+url/i,
-  /no\s+route\s+matched/i,
+const RETRYABLE_TRANSIENT_PATTERNS: RegExp[] = [
   /invalid\s+api\s+key/i,
   /invalid\s+access\s+token/i,
   /forbidden/i,
@@ -40,19 +40,6 @@ const RETRYABLE_CHANNEL_LOCAL_PATTERNS: RegExp[] = [
   /service\s+unavailable/i,
   /cpu\s+overloaded/i,
   ...RETRYABLE_TIMEOUT_PATTERNS,
-];
-
-const NON_RETRYABLE_REQUEST_PATTERNS: RegExp[] = [
-  /invalid\s+request\s+body/i,
-  /validation/i,
-  /missing\s+required/i,
-  /required\s+parameter/i,
-  /unknown\s+parameter/i,
-  /unrecognized\s+(field|key|parameter)/i,
-  /malformed/i,
-  /invalid\s+json/i,
-  /cannot\s+parse/i,
-  /unsupported\s+media\s+type/i,
 ];
 
 const SAME_SITE_ENDPOINT_ABORT_PATTERNS: RegExp[] = [
@@ -89,10 +76,39 @@ export function shouldRetryProxyRequest(status: number, upstreamErrorText?: stri
   if (status === 408 || status === 409 || status === 425 || status === 429) return true;
   if (status === 401 || status === 403) return true;
   if (isModelUnsupportedErrorMessage(upstreamErrorText)) return true;
-  if (matchesAnyPattern(NON_RETRYABLE_REQUEST_PATTERNS, upstreamErrorText)) return false;
-  if (matchesAnyPattern(RETRYABLE_CHANNEL_LOCAL_PATTERNS, upstreamErrorText)) return true;
+  if (isExplicitRequestFailure(upstreamErrorText)) return false;
+  if (isChannelLocalFailure(upstreamErrorText)) return true;
+  if (matchesAnyPattern(RETRYABLE_TRANSIENT_PATTERNS, upstreamErrorText)) return true;
+  if (isGenericUpstreamBadRequest(status, upstreamErrorText)) return true;
   if (status === 400 || status === 404 || status === 422) return false;
   return false;
+}
+
+export type ProxyRetryClassification = {
+  retryable: boolean;
+  scope: RetryErrorScope;
+  retryOwner: RetryOwner;
+  replaySafety: ReplaySafety;
+};
+
+/**
+ * Keeps the legacy boolean helper stable while exposing the richer contract
+ * to Proxy Core callers that need to coordinate local and upstream retries.
+ */
+export function classifyProxyRetryFailure(
+  status: number,
+  upstreamErrorText?: string | null,
+  options: {
+    retryOwner?: RetryOwner;
+    replaySafety?: ReplaySafety;
+  } = {},
+): ProxyRetryClassification {
+  return {
+    retryable: shouldRetryProxyRequest(status, upstreamErrorText),
+    scope: classifyRetryErrorScope({ status, rawErrorText: upstreamErrorText }),
+    retryOwner: options.retryOwner ?? 'cooperative',
+    replaySafety: options.replaySafety ?? 'safe_only',
+  };
 }
 
 export function shouldAbortSameSiteEndpointFallback(status: number, upstreamErrorText?: string | null): boolean {

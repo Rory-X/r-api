@@ -116,4 +116,32 @@ describe('executeEndpointFlow first-byte timeout', () => {
     }
     expect(attemptedPaths).toEqual(['/v1/responses']);
   });
+
+  it('marks a terminal first-byte timeout as sent_unknown', async () => {
+    const { executeEndpointFlow } = await import('./endpointFlow.js');
+    const states: string[] = [];
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+      dispatchRequest: async (
+        _request: BuiltEndpointRequest,
+        _targetUrl?: string,
+        signal?: AbortSignal,
+      ) => {
+        const response = buildDelayedResponse(JSON.stringify({ ok: false }), 60, 200, signal);
+        return response as unknown as Awaited<ReturnType<typeof import('undici').fetch>>;
+      },
+      firstByteTimeoutMs: 10,
+      onAttemptCommitState: (ctx) => {
+        states.push(`${ctx.event}:${ctx.commitState}`);
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 408, commitState: 'sent_unknown' });
+    expect(states).toEqual([
+      'request_sent:request_sent',
+      'transport_unknown:sent_unknown',
+    ]);
+  });
 });

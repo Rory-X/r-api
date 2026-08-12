@@ -90,6 +90,79 @@ describe('DefaultProxyConductor', () => {
     });
   });
 
+  it('does not multiply retries when a cooperative channel declares upstream internal retry', async () => {
+    const selected = {
+      ...baseSelectedChannel,
+      channel: {
+        ...baseSelectedChannel.channel,
+        retryOwner: 'cooperative',
+        upstreamRetryMode: 'internal_retry',
+      },
+    };
+    const selectNextChannel = vi.fn();
+    const conductor = new DefaultProxyConductor({
+      selectChannel: vi.fn().mockResolvedValue(selected),
+      selectNextChannel,
+      recordSuccess: vi.fn().mockResolvedValue(undefined),
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+    });
+    const attempt = vi.fn().mockResolvedValue({
+      ok: false,
+      action: 'failover',
+      status: 503,
+      rawErrorText: 'upstream gateway unavailable',
+      errorScope: 'upstream_gateway',
+    });
+
+    const result = await conductor.execute({
+      requestedModel: 'gpt-5.4',
+      attempt,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'failed', attempts: 1 });
+    expect(selectNextChannel).not.toHaveBeenCalled();
+  });
+
+  it('keeps credential recovery local for cooperative upstream-HA channels', async () => {
+    const selected = {
+      ...baseSelectedChannel,
+      channel: {
+        ...baseSelectedChannel.channel,
+        retryOwner: 'cooperative',
+        upstreamRetryMode: 'internal_retry',
+      },
+    };
+    const refreshed = { ...selected, tokenValue: 'sk-refreshed' };
+    const refreshAuth = vi.fn().mockResolvedValue(refreshed);
+    const conductor = new DefaultProxyConductor({
+      selectChannel: vi.fn().mockResolvedValue(selected),
+      selectNextChannel: vi.fn(),
+      recordSuccess: vi.fn().mockResolvedValue(undefined),
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+      refreshAuth,
+    });
+    const attempt = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        action: 'refresh_auth',
+        status: 401,
+        rawErrorText: 'expired token',
+        errorScope: 'credential',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        response: new Response('ok', { status: 200 }),
+      });
+
+    const result = await conductor.execute({
+      requestedModel: 'gpt-5.4',
+      attempt,
+    });
+
+    expect(result).toMatchObject({ ok: true, attempts: 2 });
+    expect(refreshAuth).toHaveBeenCalledTimes(1);
+  });
+
   it('fails over to the next channel when the attempt asks for failover', async () => {
     const nextSelectedChannel = {
       ...baseSelectedChannel,
@@ -237,5 +310,59 @@ describe('DefaultProxyConductor', () => {
       status: 502,
       rawErrorText: 'stream disconnected before completion',
     });
+  });
+
+  it('stops on the shared total-attempt budget instead of looping indefinitely', async () => {
+    const conductor = new DefaultProxyConductor({
+      selectChannel: vi.fn().mockResolvedValue(baseSelectedChannel),
+      selectNextChannel: vi.fn(),
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+    });
+    const attempt = vi.fn().mockResolvedValue({
+      ok: false,
+      action: 'retry_same_channel',
+      status: 429,
+      rawErrorText: 'rate limited',
+    });
+
+    const result = await conductor.execute({
+      requestedModel: 'gpt-5.4',
+      retryBudget: { maxAttempts: 2 },
+      attempt,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'budget_exhausted',
+      attempts: 2,
+      retryBudget: { attempts: 2 },
+    });
+    expect(attempt).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replay a request after the transport reports sent_unknown', async () => {
+    const conductor = new DefaultProxyConductor({
+      selectChannel: vi.fn().mockResolvedValue(baseSelectedChannel),
+      selectNextChannel: vi.fn(),
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+    });
+    const attempt = vi.fn().mockResolvedValue({
+      ok: false,
+      action: 'failover',
+      status: 502,
+      rawErrorText: 'connection reset after send',
+      commitState: 'sent_unknown',
+      errorScope: 'transport',
+    });
+
+    const result = await conductor.execute({
+      requestedModel: 'gpt-5.4',
+      attempt,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'failed', attempts: 1 });
+    expect(attempt).toHaveBeenCalledTimes(1);
   });
 });

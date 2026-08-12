@@ -16,6 +16,7 @@ import {
   buildGeminiGenerateContentRequestFromOpenAi,
 } from '../transformers/gemini/generate-content/requestBridge.js';
 import {
+  applyCodexEngineFingerprintHeaders,
   buildClaudeRuntimeHeaders,
   getInputHeader,
   headerValueToString,
@@ -419,6 +420,7 @@ export function buildUpstreamEndpointRequest(input: {
   providerHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
   codexExplicitSessionId?: string | null;
+  codexFingerprintEnabled?: boolean;
 }): {
   path: string;
   headers: Record<string, string>;
@@ -531,6 +533,14 @@ export function buildUpstreamEndpointRequest(input: {
     stream: input.stream,
     oauthProjectId: asTrimmedString(input.oauthProjectId) || null,
   };
+  const applySiteCodexFingerprint = (headers: Record<string, string>): Record<string, string> => (
+    input.codexFingerprintEnabled === true
+      ? applyCodexEngineFingerprintHeaders(headers, {
+        downstreamHeaders: input.downstreamHeaders,
+        continuitySeed: asTrimmedString(input.codexExplicitSessionId) || asTrimmedString(input.codexSessionCacheKey) || null,
+      })
+      : headers
+  );
   const requestedModelForPayloadRules = resolveRequestedModelForPayloadRules(input);
   const applyConfiguredPayloadRules = <T extends Record<string, unknown>>(body: T): T => (
     applyPayloadRules({
@@ -681,7 +691,7 @@ export function buildUpstreamEndpointRequest(input: {
       if (providerProfile?.id !== 'codex') {
         throw new Error(`missing codex provider profile for platform: ${sitePlatform}`);
       }
-      return providerProfile.prepareRequest({
+      const prepared = providerProfile.prepareRequest({
         endpoint: 'responses',
         modelName: input.modelName,
         stream: input.stream,
@@ -699,6 +709,10 @@ export function buildUpstreamEndpointRequest(input: {
         responsesWebsocketTransport,
         body: configuredResponsesBody,
       });
+      return {
+        ...prepared,
+        headers: applySiteCodexFingerprint(prepared.headers),
+      };
     }
 
     const headers = ensureResponsesAcceptHeader({
@@ -710,7 +724,7 @@ export function buildUpstreamEndpointRequest(input: {
     });
     return {
       path: resolveEndpointPath('responses'),
-      headers,
+      headers: applySiteCodexFingerprint(headers),
       body: configuredResponsesBody,
       runtime,
     };
@@ -729,7 +743,7 @@ export function buildUpstreamEndpointRequest(input: {
   );
   return {
     path: resolveEndpointPath('chat'),
-    headers,
+    headers: applySiteCodexFingerprint(headers),
     body: configuredChatBody,
     runtime,
   };

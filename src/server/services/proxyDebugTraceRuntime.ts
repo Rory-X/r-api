@@ -31,6 +31,7 @@ export async function startSurfaceProxyDebugTrace(input: {
   clientKind?: string | null;
   sessionId?: string | null;
   traceHint?: string | null;
+  requestId?: string | null;
   requestedModel?: string | null;
   downstreamApiKeyId?: number | null;
   requestHeaders?: Record<string, unknown>;

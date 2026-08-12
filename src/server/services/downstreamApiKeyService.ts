@@ -1,4 +1,5 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
@@ -24,6 +25,8 @@ export type DownstreamApiKeyPolicyView = {
   usedCost: number;
   maxRequests: number | null;
   usedRequests: number;
+  maxConcurrency: number | null;
+  policyVersion: number;
   supportedModels: string[];
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
@@ -34,12 +37,25 @@ export type DownstreamApiKeyPolicyView = {
   updatedAt: string | null;
 };
 
+export type DownstreamPolicySnapshot = Readonly<{
+  capturedAt: string;
+  source: 'managed' | 'global';
+  tokenFingerprint: string;
+  keyId: number | null;
+  keyName: string;
+  policyVersion: number;
+  expiresAt: string | null;
+  maxConcurrency: number | null;
+  policy: DownstreamRoutingPolicy;
+}>;
+
 export type DownstreamTokenAuthSuccess = {
   ok: true;
   source: 'managed' | 'global';
   token: string;
   key: DownstreamApiKeyPolicyView | null;
   policy: DownstreamRoutingPolicy;
+  snapshot: DownstreamPolicySnapshot;
 };
 
 export type DownstreamTokenAuthFailure = {
@@ -50,6 +66,39 @@ export type DownstreamTokenAuthFailure = {
 };
 
 export type DownstreamTokenAuthResult = DownstreamTokenAuthSuccess | DownstreamTokenAuthFailure;
+
+export type DownstreamPolicyActiveFailure = {
+  ok: false;
+  statusCode: 403;
+  error: string;
+  reason: 'deleted' | 'disabled' | 'expired' | 'rotated';
+};
+
+export type DownstreamPolicyActiveResult = { ok: true } | DownstreamPolicyActiveFailure;
+
+export interface DownstreamConcurrencyLease {
+  readonly keyId: number;
+  readonly leaseToken: string;
+  readonly slot: number;
+  readonly expiresAt: string;
+  renew(): Promise<void>;
+  release(): Promise<void>;
+}
+
+export type DownstreamConcurrencyAcquireResult =
+  | { ok: true; lease: DownstreamConcurrencyLease | null }
+  | DownstreamPolicyActiveFailure
+  | {
+    ok: false;
+    statusCode: 429;
+    error: string;
+    reason: 'max_concurrency';
+    retryAfterSeconds: number;
+  };
+
+const MAX_DOWNSTREAM_CONCURRENCY = 10_000;
+const DEFAULT_CONCURRENCY_LEASE_TTL_MS = 90_000;
+const DEFAULT_CONCURRENCY_LEASE_HEARTBEAT_MS = 30_000;
 
 function isRegexModelPattern(pattern: string): boolean {
   return pattern.trim().toLowerCase().startsWith('re:');
@@ -94,6 +143,98 @@ function normalizePositiveIntegerOrNull(value: unknown): number | null {
   const normalized = Math.trunc(n);
   if (normalized < 0) return null;
   return normalized;
+}
+
+function normalizeMaxConcurrencyOrNull(value: unknown): number | null {
+  const normalized = normalizePositiveIntegerOrNull(value);
+  if (normalized === null) return null;
+  if (normalized > MAX_DOWNSTREAM_CONCURRENCY) {
+    throw new Error(`maxConcurrency 不能大于 ${MAX_DOWNSTREAM_CONCURRENCY}`);
+  }
+  return normalized;
+}
+
+function normalizePolicyVersion(value: unknown): number {
+  const normalized = Math.trunc(Number(value));
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : 1;
+}
+
+function fingerprintToken(token: string): string {
+  return createHash('sha256').update(normalizeToken(token)).digest('hex');
+}
+
+function tokenFingerprintMatches(token: string, expectedFingerprint: string): boolean {
+  const actual = Buffer.from(fingerprintToken(token), 'hex');
+  const expected = Buffer.from(expectedFingerprint, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function freezeRoutingPolicy(policy: DownstreamRoutingPolicy): DownstreamRoutingPolicy {
+  const supportedModels = Object.freeze([...normalizeSupportedModelsInput(policy.supportedModels)]);
+  const allowedRouteIds = Object.freeze([...normalizeAllowedRouteIdsInput(policy.allowedRouteIds)]);
+  const siteWeightMultipliers = Object.freeze({
+    ...normalizeSiteWeightMultipliersInput(policy.siteWeightMultipliers),
+  });
+  const excludedSiteIds = Object.freeze([...normalizeExcludedSiteIdsInput(policy.excludedSiteIds)]);
+  const excludedCredentialRefs = Object.freeze(
+    normalizeExcludedCredentialRefsInput(policy.excludedCredentialRefs)
+      .map((ref) => Object.freeze({ ...ref })),
+  );
+
+  return Object.freeze({
+    supportedModels,
+    allowedRouteIds,
+    siteWeightMultipliers,
+    excludedSiteIds,
+    excludedCredentialRefs,
+    ...(policy.denyAllWhenEmpty === true ? { denyAllWhenEmpty: true } : {}),
+  }) as DownstreamRoutingPolicy;
+}
+
+function createPolicySnapshot(input: {
+  source: 'managed' | 'global';
+  token: string;
+  key: ({
+    id: number;
+    name: string;
+    policyVersion?: number;
+    expiresAt?: string | null;
+    maxConcurrency?: number | null;
+  }) | null;
+  policy: DownstreamRoutingPolicy;
+}): DownstreamPolicySnapshot {
+  return Object.freeze({
+    capturedAt: new Date().toISOString(),
+    source: input.source,
+    tokenFingerprint: fingerprintToken(input.token),
+    keyId: input.key?.id ?? null,
+    keyName: input.key?.name || 'global',
+    policyVersion: normalizePolicyVersion(input.key?.policyVersion),
+    expiresAt: input.key?.expiresAt ?? null,
+    maxConcurrency: input.key?.maxConcurrency ?? null,
+    policy: freezeRoutingPolicy(input.policy),
+  });
+}
+
+export function resolveDownstreamPolicySnapshot(auth: {
+  source: 'managed' | 'global';
+  token: string;
+  key: ({
+    id: number;
+    name: string;
+    policyVersion?: number;
+    expiresAt?: string | null;
+    maxConcurrency?: number | null;
+  }) | null;
+  policy: DownstreamRoutingPolicy;
+  snapshot?: DownstreamPolicySnapshot;
+}): DownstreamPolicySnapshot {
+  return auth.snapshot || createPolicySnapshot({
+    source: auth.source,
+    token: auth.token,
+    key: auth.key,
+    policy: auth.policy,
+  });
 }
 
 function parseJson(value: unknown): unknown {
@@ -362,6 +503,8 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
     usedCost: Number(row.usedCost || 0),
     maxRequests: row.maxRequests ?? null,
     usedRequests: Number(row.usedRequests || 0),
+    maxConcurrency: row.maxConcurrency ?? null,
+    policyVersion: normalizePolicyVersion(row.policyVersion),
     supportedModels,
     allowedRouteIds,
     siteWeightMultipliers,
@@ -467,22 +610,36 @@ export async function authorizeDownstreamToken(token: string): Promise<Downstrea
       };
     }
 
+    const policy = freezeRoutingPolicy(toPolicyFromView(managed));
     return {
       ok: true,
       source: 'managed',
       token: normalizedToken,
       key: managed,
-      policy: toPolicyFromView(managed),
+      policy,
+      snapshot: createPolicySnapshot({
+        source: 'managed',
+        token: normalizedToken,
+        key: managed,
+        policy,
+      }),
     };
   }
 
   if (normalizedToken === config.proxyToken) {
+    const policy = freezeRoutingPolicy(getDefaultGlobalPolicy());
     return {
       ok: true,
       source: 'global',
       token: normalizedToken,
       key: null,
-      policy: getDefaultGlobalPolicy(),
+      policy,
+      snapshot: createPolicySnapshot({
+        source: 'global',
+        token: normalizedToken,
+        key: null,
+        policy,
+      }),
     };
   }
 
@@ -491,6 +648,234 @@ export async function authorizeDownstreamToken(token: string): Promise<Downstrea
     statusCode: 403,
     error: 'Invalid API key',
     reason: 'invalid',
+  };
+}
+
+export async function verifyDownstreamPolicySnapshotActive(
+  snapshot: DownstreamPolicySnapshot,
+): Promise<DownstreamPolicyActiveResult> {
+  if (snapshot.source === 'global') {
+    if (tokenFingerprintMatches(config.proxyToken, snapshot.tokenFingerprint)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      statusCode: 403,
+      error: 'Proxy API key was rotated',
+      reason: 'rotated',
+    };
+  }
+
+  if (snapshot.keyId === null) {
+    return {
+      ok: false,
+      statusCode: 403,
+      error: 'API key was revoked',
+      reason: 'deleted',
+    };
+  }
+
+  const current = await getDownstreamApiKeyById(snapshot.keyId);
+  if (!current) {
+    return {
+      ok: false,
+      statusCode: 403,
+      error: 'API key was revoked',
+      reason: 'deleted',
+    };
+  }
+  if (!current.enabled) {
+    return {
+      ok: false,
+      statusCode: 403,
+      error: 'API key is disabled',
+      reason: 'disabled',
+    };
+  }
+  if (!tokenFingerprintMatches(current.key, snapshot.tokenFingerprint)) {
+    return {
+      ok: false,
+      statusCode: 403,
+      error: 'API key was rotated',
+      reason: 'rotated',
+    };
+  }
+  if (current.expiresAt) {
+    const expiresAtTs = Date.parse(current.expiresAt);
+    if (Number.isFinite(expiresAtTs) && expiresAtTs <= Date.now()) {
+      return {
+        ok: false,
+        statusCode: 403,
+        error: 'API key is expired',
+        reason: 'expired',
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+function looksLikeConcurrencyLeaseCollision(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const entry = current as { code?: unknown; errno?: unknown; message?: unknown; cause?: unknown };
+    const code = String(entry.code ?? entry.errno ?? '').toUpperCase();
+    const message = String(entry.message || '').toLowerCase();
+    if (
+      code === '23505'
+      || code === '1062'
+      || code === 'ER_DUP_ENTRY'
+      || code === 'SQLITE_CONSTRAINT'
+      || code === 'SQLITE_CONSTRAINT_UNIQUE'
+      || message.includes('unique constraint')
+      || message.includes('duplicate entry')
+      || message.includes('duplicate key')
+    ) {
+      return true;
+    }
+    current = entry.cause;
+  }
+  return false;
+}
+
+class DatabaseDownstreamConcurrencyLease implements DownstreamConcurrencyLease {
+  private released = false;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private currentExpiresAt: string;
+
+  constructor(
+    readonly keyId: number,
+    readonly leaseToken: string,
+    readonly slot: number,
+    private readonly ttlMs: number,
+    heartbeatIntervalMs: number,
+    initialExpiresAt: string,
+  ) {
+    this.currentExpiresAt = initialExpiresAt;
+    if (heartbeatIntervalMs > 0) {
+      this.heartbeat = setInterval(() => {
+        void this.renew().catch((error) => {
+          console.warn('Failed to renew downstream concurrency lease', error);
+        });
+      }, heartbeatIntervalMs);
+      this.heartbeat.unref?.();
+    }
+  }
+
+  get expiresAt(): string {
+    return this.currentExpiresAt;
+  }
+
+  async renew(): Promise<void> {
+    if (this.released) return;
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + this.ttlMs).toISOString();
+    await db.update(schema.downstreamApiKeyLeases).set({
+      expiresAt,
+      updatedAt: nowIso,
+    }).where(eq(schema.downstreamApiKeyLeases.leaseToken, this.leaseToken)).run();
+    this.currentExpiresAt = expiresAt;
+  }
+
+  async release(): Promise<void> {
+    if (this.released) return;
+    this.released = true;
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
+    await db.delete(schema.downstreamApiKeyLeases)
+      .where(eq(schema.downstreamApiKeyLeases.leaseToken, this.leaseToken))
+      .run();
+  }
+}
+
+export async function acquireDownstreamConcurrencyLease(
+  snapshot: DownstreamPolicySnapshot,
+  options: {
+    ttlMs?: number;
+    heartbeatIntervalMs?: number;
+  } = {},
+): Promise<DownstreamConcurrencyAcquireResult> {
+  const active = await verifyDownstreamPolicySnapshotActive(snapshot);
+  if (!active.ok) return active;
+  if (snapshot.source !== 'managed' || snapshot.keyId === null || snapshot.maxConcurrency === null) {
+    return { ok: true, lease: null };
+  }
+
+  const maxConcurrency = Math.max(0, Math.min(
+    MAX_DOWNSTREAM_CONCURRENCY,
+    Math.trunc(snapshot.maxConcurrency),
+  ));
+  if (maxConcurrency === 0) {
+    return {
+      ok: false,
+      statusCode: 429,
+      error: 'API key concurrency limit reached',
+      reason: 'max_concurrency',
+      retryAfterSeconds: 1,
+    };
+  }
+
+  const ttlMs = Math.max(1_000, Math.trunc(options.ttlMs ?? DEFAULT_CONCURRENCY_LEASE_TTL_MS));
+  const heartbeatIntervalMs = Math.max(
+    0,
+    Math.trunc(options.heartbeatIntervalMs ?? DEFAULT_CONCURRENCY_LEASE_HEARTBEAT_MS),
+  );
+  const nowIso = new Date().toISOString();
+  await db.delete(schema.downstreamApiKeyLeases)
+    .where(and(
+      eq(schema.downstreamApiKeyLeases.downstreamApiKeyId, snapshot.keyId),
+      lte(schema.downstreamApiKeyLeases.expiresAt, nowIso),
+    ))
+    .run();
+
+  for (let slot = 1; slot <= maxConcurrency; slot += 1) {
+    const leaseToken = randomUUID();
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    try {
+      await db.insert(schema.downstreamApiKeyLeases).values({
+        downstreamApiKeyId: snapshot.keyId,
+        leaseToken,
+        slot,
+        expiresAt,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }).run();
+
+      const stillActive = await verifyDownstreamPolicySnapshotActive(snapshot);
+      if (!stillActive.ok) {
+        await db.delete(schema.downstreamApiKeyLeases)
+          .where(eq(schema.downstreamApiKeyLeases.leaseToken, leaseToken))
+          .run();
+        return stillActive;
+      }
+
+      return {
+        ok: true,
+        lease: new DatabaseDownstreamConcurrencyLease(
+          snapshot.keyId,
+          leaseToken,
+          slot,
+          ttlMs,
+          heartbeatIntervalMs,
+          expiresAt,
+        ),
+      };
+    } catch (error) {
+      if (looksLikeConcurrencyLeaseCollision(error)) continue;
+      throw error;
+    }
+  }
+
+  return {
+    ok: false,
+    statusCode: 429,
+    error: 'API key concurrency limit reached',
+    reason: 'max_concurrency',
+    retryAfterSeconds: 1,
   };
 }
 
@@ -526,6 +911,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   expiresAt?: unknown;
   maxCost?: unknown;
   maxRequests?: unknown;
+  maxConcurrency?: unknown;
   supportedModels?: unknown;
   allowedRouteIds?: unknown;
   siteWeightMultipliers?: unknown;
@@ -555,6 +941,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
 
   const maxCost = normalizePositiveNumberOrNull(input.maxCost);
   const maxRequests = normalizePositiveIntegerOrNull(input.maxRequests);
+  const maxConcurrency = normalizeMaxConcurrencyOrNull(input.maxConcurrency);
   const supportedModels = normalizeSupportedModelsInput(input.supportedModels);
   const allowedRouteIds = normalizeAllowedRouteIdsInput(input.allowedRouteIds);
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(input.siteWeightMultipliers);
@@ -571,6 +958,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
     expiresAt,
     maxCost,
     maxRequests,
+    maxConcurrency,
     supportedModels,
     allowedRouteIds,
     siteWeightMultipliers,

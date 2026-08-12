@@ -3,6 +3,7 @@ import type {
   CliProfileClientConfidence,
   CliProfileId,
 } from './cliProfiles/types.js';
+import { parseCodexTurnMetadata } from './codexTurnMetadata.js';
 
 export type DownstreamClientKind = CliProfileId;
 export type DownstreamClientConfidence = CliProfileClientConfidence;
@@ -10,6 +11,8 @@ export type DownstreamClientConfidence = CliProfileClientConfidence;
 export type DownstreamClientContext = {
   clientKind: DownstreamClientKind;
   sessionId?: string;
+  threadId?: string;
+  turnId?: string;
   traceHint?: string;
   clientAppId?: string;
   clientAppName?: string;
@@ -263,6 +266,12 @@ export function detectDownstreamClientContext(input: {
   body?: unknown;
 }): DownstreamClientContext {
   const detected = detectCliProfile(input);
+  const codexTurnMetadata = detected.id === 'codex'
+    ? parseCodexTurnMetadata(input)
+    : null;
+  const sessionId = detected.sessionId || codexTurnMetadata?.identity.sessionId || undefined;
+  const threadId = codexTurnMetadata?.identity.threadId || undefined;
+  const turnId = codexTurnMetadata?.identity.turnId || undefined;
   const normalizedHeaders = normalizeHeaders(input.headers);
   const explicitSelfReport = detectExplicitClientSelfReport(normalizedHeaders);
   const fingerprint = detectDownstreamClientFingerprint(input);
@@ -279,8 +288,10 @@ export function detectDownstreamClientContext(input: {
     );
   return {
     clientKind: detected.id,
-    ...(detected.sessionId ? { sessionId: detected.sessionId } : {}),
-    ...(detected.traceHint ? { traceHint: detected.traceHint } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(threadId ? { threadId } : {}),
+    ...(turnId ? { turnId } : {}),
+    ...(detected.traceHint || sessionId ? { traceHint: detected.traceHint || sessionId } : {}),
     ...(explicitSelfReport || fingerprint || profileClientApp || {}),
   };
 }

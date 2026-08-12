@@ -5,7 +5,7 @@ import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertSe
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
+import { ensureDownstreamPolicySnapshotActive, ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from './multipart.js';
@@ -20,11 +20,15 @@ import {
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
   buildForcedChannelUnavailableMessage,
-  canRetryChannelSelection,
+  canRetryChannelSelectionForFailure,
   getTesterForcedChannelId,
   selectProxyChannelForAttempt,
 } from '../../proxy-core/channelSelection.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  getSiteApiEndpointIdFromError,
+  runWithSiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
   if (!payload || typeof payload !== 'object') return payload;
@@ -62,6 +66,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
+      if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
       const selected = await selectProxyChannelForAttempt({
         requestedModel,
         downstreamPolicy,
@@ -170,6 +175,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           status,
           errorText,
           modelName: upstreamModel,
+          endpointId: getSiteApiEndpointIdFromError(error),
         }));
         if (status > 0 && isTokenExpiredError({ status, message: errorText })) {
           await reportTokenExpired({
@@ -179,7 +185,17 @@ export async function videosProxyRoute(app: FastifyInstance) {
             detail: `HTTP ${status}`,
           });
         }
-        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (
+          (status > 0 ? shouldRetryProxyRequest(status, errorText) : true)
+          && canRetryChannelSelectionForFailure({
+            retryCount,
+            forcedChannelId,
+            selected,
+            status,
+            errorText,
+            ...(status > 0 ? {} : { errorScope: 'transport' as const }),
+          })
+        ) {
           retryCount += 1;
           continue;
         }

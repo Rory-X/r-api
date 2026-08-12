@@ -1,6 +1,10 @@
 import { Headers, Response } from 'undici';
 
-type ObservedResponseMeta = {
+export type ObservedResponseMeta = {
+  dispatchStartedAtMs: number;
+  responseHeadersAtMs: number | null;
+  firstByteAtMs: number | null;
+  responseHeaderLatencyMs: number | null;
   firstByteLatencyMs: number | null;
   timedOutBeforeFirstByte: boolean;
 };
@@ -22,11 +26,24 @@ function buildFirstByteTimeoutMessage(timeoutMs: number): string {
   return `first byte timeout (${seconds}s)`;
 }
 
-function buildObservedTimeoutResponse(timeoutMs: number): Response {
+function buildObservedTimeoutResponse(
+  timeoutMs: number,
+  input: {
+    dispatchStartedAtMs: number;
+    responseHeadersAtMs?: number | null;
+  },
+): Response {
+  const responseHeadersAtMs = input.responseHeadersAtMs ?? null;
   return setObservedResponseMeta(new Response(buildFirstByteTimeoutMessage(timeoutMs), {
     status: 408,
     headers: { 'content-type': 'text/plain; charset=utf-8' },
   }), {
+    dispatchStartedAtMs: input.dispatchStartedAtMs,
+    responseHeadersAtMs,
+    firstByteAtMs: null,
+    responseHeaderLatencyMs: responseHeadersAtMs === null
+      ? null
+      : Math.max(0, responseHeadersAtMs - input.dispatchStartedAtMs),
     firstByteLatencyMs: null,
     timedOutBeforeFirstByte: true,
   });
@@ -134,13 +151,20 @@ export async function fetchWithObservedFirstByte<T extends Response>(
       ? await Promise.race([dispatch(controller?.signal), timeoutPromise])
       : await dispatch(controller?.signal);
     if (dispatched === timeoutSentinel) {
-      return buildObservedTimeoutResponse(timeoutMs) as T;
+      return buildObservedTimeoutResponse(timeoutMs, {
+        dispatchStartedAtMs: startedAtMs,
+      }) as T;
     }
     const response = dispatched as T;
+    const responseHeadersAtMs = Date.now();
     if (!response.body) {
       clearTimer(timer);
       return setObservedResponseMeta(response, {
-        firstByteLatencyMs: Math.max(0, Date.now() - startedAtMs),
+        dispatchStartedAtMs: startedAtMs,
+        responseHeadersAtMs,
+        firstByteAtMs: responseHeadersAtMs,
+        responseHeaderLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs),
+        firstByteLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs),
         timedOutBeforeFirstByte: false,
       });
     }
@@ -151,17 +175,27 @@ export async function fetchWithObservedFirstByte<T extends Response>(
       : await reader.read();
     if (firstChunk === timeoutSentinel) {
       await cancelReaderQuietly(reader);
-      return buildObservedTimeoutResponse(timeoutMs) as T;
+      return buildObservedTimeoutResponse(timeoutMs, {
+        dispatchStartedAtMs: startedAtMs,
+        responseHeadersAtMs,
+      }) as T;
     }
     clearTimer(timer);
+    const firstByteAtMs = Date.now();
     return setObservedResponseMeta(buildReplayResponse(response, reader, firstChunk), {
-      firstByteLatencyMs: Math.max(0, Date.now() - startedAtMs),
+      dispatchStartedAtMs: startedAtMs,
+      responseHeadersAtMs,
+      firstByteAtMs,
+      responseHeaderLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs),
+      firstByteLatencyMs: Math.max(0, firstByteAtMs - startedAtMs),
       timedOutBeforeFirstByte: false,
     });
   } catch (error) {
     clearTimer(timer);
     if (timedOutBeforeFirstByte && timeoutMs > 0) {
-      return buildObservedTimeoutResponse(timeoutMs) as T;
+      return buildObservedTimeoutResponse(timeoutMs, {
+        dispatchStartedAtMs: startedAtMs,
+      }) as T;
     }
     throw error;
   } finally {

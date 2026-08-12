@@ -522,6 +522,8 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
           usedCost: 0,
           maxRequests: normalized.maxRequests,
           usedRequests: 0,
+          maxConcurrency: normalized.maxConcurrency,
+          policyVersion: 1,
           supportedModels: toPersistenceJson(normalized.supportedModels),
           allowedRouteIds: toPersistenceJson(normalized.allowedRouteIds),
           siteWeightMultipliers: toPersistenceJson(normalized.siteWeightMultipliers),
@@ -580,6 +582,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         expiresAt: hasOwn('expiresAt') ? body.expiresAt : existing.expiresAt,
         maxCost: hasOwn('maxCost') ? body.maxCost : existing.maxCost,
         maxRequests: hasOwn('maxRequests') ? body.maxRequests : existing.maxRequests,
+        maxConcurrency: hasOwn('maxConcurrency') ? body.maxConcurrency : existing.maxConcurrency,
         supportedModels: hasOwn('supportedModels') ? body.supportedModels : existingView.supportedModels,
         allowedRouteIds: hasOwn('allowedRouteIds') ? body.allowedRouteIds : existingView.allowedRouteIds,
         siteWeightMultipliers: hasOwn('siteWeightMultipliers') ? body.siteWeightMultipliers : existingView.siteWeightMultipliers,
@@ -621,6 +624,8 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         expiresAt: normalized.expiresAt,
         maxCost: normalized.maxCost,
         maxRequests: normalized.maxRequests,
+        maxConcurrency: normalized.maxConcurrency,
+        policyVersion: sql`coalesce(${schema.downstreamApiKeys.policyVersion}, 1) + 1`,
         supportedModels: toPersistenceJson(normalized.supportedModels),
         allowedRouteIds: toPersistenceJson(normalized.allowedRouteIds),
         siteWeightMultipliers: toPersistenceJson(normalized.siteWeightMultipliers),
@@ -628,6 +633,12 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         excludedCredentialRefs: toPersistenceJson(normalized.excludedCredentialRefs),
         updatedAt: nowIso,
       }).where(eq(schema.downstreamApiKeys.id, id)).run();
+
+      if (normalized.key !== existing.key || (!normalized.enabled && !!existing.enabled)) {
+        await db.delete(schema.downstreamApiKeyLeases)
+          .where(eq(schema.downstreamApiKeyLeases.downstreamApiKeyId, id))
+          .run();
+      }
 
       const updated = await getDownstreamApiKeyById(id);
       return {
@@ -755,8 +766,14 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         } else {
           await db.update(schema.downstreamApiKeys).set({
             enabled: action === 'enable',
+            policyVersion: sql`coalesce(${schema.downstreamApiKeys.policyVersion}, 1) + 1`,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.downstreamApiKeys.id, id)).run();
+          if (action === 'disable') {
+            await db.delete(schema.downstreamApiKeyLeases)
+              .where(eq(schema.downstreamApiKeyLeases.downstreamApiKeyId, id))
+              .run();
+          }
         }
 
         successIds.push(id);

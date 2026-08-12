@@ -1392,6 +1392,127 @@ describe('serializeConvertedResponsesEvents', () => {
     ]);
   });
 
+  it('does not duplicate native items when terminal output is compacted and strips item ids', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+    };
+    const forwardCompletedItem = (outputIndex: number, item: Record<string, unknown>) => {
+      serializeConvertedResponsesEvents({
+        state,
+        streamContext,
+        usage,
+        event: {
+          responsesEventType: 'response.output_item.added',
+          responsesPayload: {
+            type: 'response.output_item.added',
+            output_index: outputIndex,
+            item: {
+              ...item,
+              status: 'in_progress',
+            },
+          },
+        },
+      });
+      serializeConvertedResponsesEvents({
+        state,
+        streamContext,
+        usage,
+        event: {
+          responsesEventType: 'response.output_item.done',
+          responsesPayload: {
+            type: 'response.output_item.done',
+            output_index: outputIndex,
+            item: {
+              ...item,
+              status: 'completed',
+            },
+          },
+        },
+      });
+    };
+
+    forwardCompletedItem(0, {
+      id: 'rs_early',
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: 'early reasoning' }],
+    });
+    forwardCompletedItem(1, {
+      id: 'ws_1',
+      type: 'web_search_call',
+    });
+    forwardCompletedItem(2, {
+      id: 'rs_final',
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: 'final reasoning' }],
+    });
+    forwardCompletedItem(3, {
+      id: 'msg_native',
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'visible answer' }],
+    });
+    forwardCompletedItem(4, {
+      id: 'ctc_native',
+      type: 'custom_tool_call',
+      call_id: 'call_native',
+      name: 'exec',
+      input: '{"cmd":"pwd"}',
+    });
+
+    const lines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.completed',
+        responsesPayload: {
+          type: 'response.completed',
+          response: {
+            id: 'resp_compacted',
+            model: 'gpt-5',
+            status: 'completed',
+            output: [
+              {
+                type: 'reasoning',
+                summary: [{ type: 'summary_text', text: 'final reasoning' }],
+              },
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'visible answer' }],
+              },
+              {
+                type: 'function_call',
+                call_id: 'call_native',
+                name: 'exec',
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const events = parseSseEvents(lines);
+    expect(events.map((entry) => entry.event)).toEqual(['response.completed']);
+
+    const completed = events[0]?.payload as any;
+    const output = completed.response.output as Array<Record<string, unknown>>;
+    expect(output).toHaveLength(5);
+    expect(output.filter((item) => item.type === 'message')).toHaveLength(1);
+    expect(output.filter((item) => item.call_id === 'call_native')).toHaveLength(1);
+    expect(output.find((item) => item.id === 'rs_early')).toMatchObject({
+      summary: [{ type: 'summary_text', text: 'early reasoning' }],
+    });
+    expect(output.find((item) => item.id === 'rs_final')).toMatchObject({
+      summary: [{ type: 'summary_text', text: 'final reasoning' }],
+    });
+    expect(completed.response.output_text).toBe('visible answer');
+  });
+
   it('closes reasoning summary parts before forwarding an upstream response.completed event', () => {
     const state = createOpenAiResponsesAggregateState('gpt-5');
     const streamContext = createStreamTransformContext('gpt-5');

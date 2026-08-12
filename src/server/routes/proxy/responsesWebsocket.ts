@@ -6,11 +6,18 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { createCodexWebsocketRuntime, CodexWebsocketRuntimeError } from '../../proxy-core/runtime/codexWebsocketRuntime.js';
 import { buildCodexSessionResponseStoreKey } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 import {
+  acquireDownstreamConcurrencyLease,
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
   isModelAllowedByPolicyOrAllowedRoutes,
+  resolveDownstreamPolicySnapshot,
+  type DownstreamConcurrencyLease,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
+import {
+  createProxyAuthHandoffHeaders,
+  type ProxyAuthContext,
+} from '../../middleware/auth.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
@@ -19,6 +26,17 @@ import { openAiResponsesTransformer } from '../../transformers/openai/responses/
 import { buildUpstreamEndpointRequest } from './upstreamEndpoint.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../../proxy-core/serviceTierPolicy.js';
+import {
+  classifyRetryErrorScope,
+  createRetryBudget,
+} from '../../services/proxyRetryContract.js';
+import { resolveApiChannelRetryPolicy } from '../../services/proxyRetryOwnership.js';
+import { startProxyAttemptLedgerSession } from '../../services/proxyAttemptLedgerRuntime.js';
+import { parseCodexTurnMetadata } from '../../proxy-core/codexTurnMetadata.js';
+import { detectDownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
+import { resolveBridgeProxyRoutePlan } from '../../services/bridgeContinuationRouting.js';
+import { selectProxyChannelForAttempt } from '../../proxy-core/channelSelection.js';
+import { carriesHardResponsesContinuity } from '../../proxy-core/surfaces/openAiResponsesSurface.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
@@ -28,6 +46,7 @@ const codexWebsocketRuntime = createCodexWebsocketRuntime();
 
 type SelectedChannel = NonNullable<Awaited<ReturnType<typeof tokenRouter.selectChannel>>>;
 type ResponsesWebsocketAuthContext = DownstreamTokenAuthSuccess;
+type BridgeRouteResolution = Awaited<ReturnType<typeof resolveBridgeProxyRoutePlan>>;
 
 type NormalizedResponsesWebsocketRequest =
   | {
@@ -158,6 +177,27 @@ function shouldReuseSelectedChannel(
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
+}
+
+function buildBridgeRouteResolutionIdentity(
+  metadata: ReturnType<typeof parseCodexTurnMetadata>,
+  resolution: BridgeRouteResolution,
+): string {
+  const directive = metadata?.bridgeRouteDirective;
+  if (!directive) return 'none';
+  const plan = resolution.plan;
+  return [
+    directive.taskId,
+    directive.routeAction,
+    directive.continuationNumber,
+    plan?.effectiveAction || 'ignored',
+    plan?.previousSelection.requestId || '',
+    plan?.previousSelection.attemptId || '',
+    plan?.previousSelection.channelId || '',
+    plan?.previousSelection.accountId || '',
+    plan?.previousSelection.tokenId ?? '',
+    resolution.ignoredReason || '',
+  ].join(':');
 }
 
 function deriveCodexExplicitSessionId(body: Record<string, unknown>, sessionId: string): string {
@@ -412,10 +452,11 @@ async function forwardResponsesRequestViaHttp(input: {
   request: IncomingMessage;
   payload: Record<string, unknown>;
   preserveIncrementalMode: boolean;
-  authToken: string;
+  authContext: ProxyAuthContext;
 }): Promise<unknown[] | null> {
   const injectHeaders: Record<string, string | string[]> = {
     ...buildInjectHeaders(input.request),
+    ...createProxyAuthHandoffHeaders(input.authContext),
     [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
     ...(input.preserveIncrementalMode ? { [RESPONSES_WEBSOCKET_MODE_HEADER]: 'incremental' } : {}),
   };
@@ -424,7 +465,7 @@ async function forwardResponsesRequestViaHttp(input: {
     && !headerValueToTrimmedString(injectHeaders['x-api-key'])
     && !headerValueToTrimmedString(injectHeaders['x-goog-api-key'])
   ) {
-    injectHeaders.authorization = `Bearer ${input.authToken}`;
+    injectHeaders.authorization = `Bearer ${input.authContext.token}`;
   }
 
   const response = await input.app.inject({
@@ -567,9 +608,20 @@ async function handleResponsesWebsocketConnection(
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
   let selectedChannel: SelectedChannel | null = null;
+  let selectedPolicyIdentity = '';
+  let activeTurnMetadata: ReturnType<typeof parseCodexTurnMetadata> = null;
+  let activeTurnClientContext: ReturnType<typeof detectDownstreamClientContext> | null = null;
+  let activeBridgeRouteResolution: BridgeRouteResolution = {
+    plan: null,
+    ignoredReason: 'not_bridge_request',
+  };
+  let activeBridgeRouteIdentity = 'none';
+  let activeTurnLease: DownstreamConcurrencyLease | null = null;
   let messageQueue = Promise.resolve();
 
   socket.once('close', () => {
+    void activeTurnLease?.release();
+    activeTurnLease = null;
     const sessionKeys = runtimeSessionKeys.size > 0
       ? Array.from(runtimeSessionKeys)
       : [websocketSessionId];
@@ -586,6 +638,7 @@ async function handleResponsesWebsocketConnection(
     messageQueue = messageQueue
       .catch(() => undefined)
       .then(async () => {
+        let turnLease: DownstreamConcurrencyLease | null = null;
         try {
           const parsed = parseJsonObject(raw);
           if (!parsed) {
@@ -593,8 +646,89 @@ async function handleResponsesWebsocketConnection(
             return;
           }
 
+          const turnAuthResult = await authorizeDownstreamToken(authContext.token);
+          if (!turnAuthResult.ok) {
+            writeResponsesWebsocketError(socket, turnAuthResult.statusCode, turnAuthResult.error);
+            return;
+          }
+          const turnSnapshot = resolveDownstreamPolicySnapshot(turnAuthResult);
+          const leaseResult = await acquireDownstreamConcurrencyLease(turnSnapshot);
+          if (!leaseResult.ok) {
+            writeResponsesWebsocketError(socket, leaseResult.statusCode, leaseResult.error);
+            return;
+          }
+          turnLease = leaseResult.lease;
+          activeTurnLease = turnLease;
+          const turnAuthContext: ResponsesWebsocketAuthContext = {
+            ...turnAuthResult,
+            policy: turnSnapshot.policy,
+            snapshot: turnSnapshot,
+          };
+          const proxyAuthContext: ProxyAuthContext = {
+            token: turnAuthContext.token,
+            source: turnAuthContext.source,
+            keyId: turnAuthContext.key?.id ?? null,
+            keyName: turnAuthContext.key?.name || 'global',
+            policy: turnSnapshot.policy,
+            snapshot: turnSnapshot,
+          };
+          const turnPolicyIdentity = [
+            turnSnapshot.source,
+            turnSnapshot.keyId ?? 'global',
+            turnSnapshot.policyVersion,
+            turnSnapshot.tokenFingerprint,
+          ].join(':');
+          if (selectedPolicyIdentity && selectedPolicyIdentity !== turnPolicyIdentity) {
+            selectedChannel = null;
+          }
+          selectedPolicyIdentity = turnPolicyIdentity;
+
+          const requestType = asTrimmedString(parsed.type);
+          let turnMetadata = activeTurnMetadata;
+          let turnClientContext = activeTurnClientContext;
+          let bridgeRouteResolution = activeBridgeRouteResolution;
+          if (requestType === 'response.create') {
+            turnMetadata = parseCodexTurnMetadata({
+              headers: request.headers as Record<string, unknown>,
+              body: parsed,
+            });
+            turnClientContext = detectDownstreamClientContext({
+              downstreamPath: '/v1/responses',
+              headers: request.headers as Record<string, unknown>,
+              body: parsed,
+            });
+            bridgeRouteResolution = await resolveBridgeProxyRoutePlan({
+              directive: turnMetadata?.bridgeRouteDirective || null,
+              identity: turnMetadata?.identity || {
+                sessionId: turnClientContext.sessionId || websocketSessionId,
+                threadId: turnClientContext.threadId || null,
+                turnId: turnClientContext.turnId || null,
+                requestKind: null,
+              },
+              downstreamApiKeyId: turnAuthContext.key?.id ?? null,
+              hardContinuity: carriesHardResponsesContinuity(parsed),
+            });
+            const bridgeRouteIdentity = buildBridgeRouteResolutionIdentity(
+              turnMetadata,
+              bridgeRouteResolution,
+            );
+            if (bridgeRouteIdentity !== activeBridgeRouteIdentity) {
+              selectedChannel = null;
+            }
+            activeTurnMetadata = turnMetadata;
+            activeTurnClientContext = turnClientContext;
+            activeBridgeRouteResolution = bridgeRouteResolution;
+            activeBridgeRouteIdentity = bridgeRouteIdentity;
+          } else if (!turnClientContext) {
+            turnClientContext = detectDownstreamClientContext({
+              downstreamPath: '/v1/responses',
+              headers: request.headers as Record<string, unknown>,
+              body: parsed,
+            });
+          }
+
           const requestModel = asTrimmedString(parsed.model) || asTrimmedString(lastRequest?.model);
-          if (requestModel && !await isModelAllowedByPolicyOrAllowedRoutes(requestModel, authContext.policy)) {
+          if (requestModel && !await isModelAllowedByPolicyOrAllowedRoutes(requestModel, turnAuthContext.policy)) {
             writeResponsesWebsocketError(socket, 403, 'model is not allowed for this downstream key');
             return;
           }
@@ -616,8 +750,26 @@ async function handleResponsesWebsocketConnection(
           }
           parsed.service_tier = serviceTierPolicy.body.service_tier;
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
+          if (
+            bridgeRouteResolution.plan
+            && !shouldReuseSelectedChannel(selectedChannel, requestModel)
+          ) {
+            selectedChannel = requestModel
+              ? await selectProxyChannelForAttempt({
+                requestedModel: requestModel,
+                downstreamPolicy: turnAuthContext.policy,
+                excludeChannelIds: [],
+                retryCount: 0,
+                bridgeRoutePlan: bridgeRouteResolution.plan,
+                excludeCredentials: [],
+              })
+              : null;
+          }
           const supportsIncrementalInput = selectedChannelSupportsIncrementalInput(selectedChannel, requestModel)
-            || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, authContext);
+            || (
+              !bridgeRouteResolution.plan
+              && await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, turnAuthContext)
+            );
           const shouldHandleLocalPrewarm = shouldHandleResponsesWebsocketPrewarmLocally(
             parsed,
             lastRequest,
@@ -634,8 +786,8 @@ async function handleResponsesWebsocketConnection(
             return;
           }
 
-          if (authContext.source === 'managed' && authContext.key?.id) {
-            await consumeManagedKeyRequest(authContext.key.id);
+          if (turnAuthContext.source === 'managed' && turnAuthContext.key?.id) {
+            await consumeManagedKeyRequest(turnAuthContext.key.id);
           }
 
           if (shouldHandleLocalPrewarm) {
@@ -649,7 +801,14 @@ async function handleResponsesWebsocketConnection(
 
           if (!shouldReuseSelectedChannel(selectedChannel, requestModel)) {
             selectedChannel = requestModel
-              ? await tokenRouter.selectChannel(requestModel, authContext.policy)
+              ? await selectProxyChannelForAttempt({
+                requestedModel: requestModel,
+                downstreamPolicy: turnAuthContext.policy,
+                excludeChannelIds: [],
+                retryCount: 0,
+                bridgeRoutePlan: bridgeRouteResolution.plan,
+                excludeCredentials: [],
+              })
               : null;
           }
 
@@ -687,6 +846,9 @@ async function handleResponsesWebsocketConnection(
             : null;
 
           if (codexWebsocketChannel) {
+            const turnSessionId = turnClientContext?.sessionId
+              || turnMetadata?.identity.sessionId
+              || websocketSessionId;
             const downstreamHeaders: Record<string, unknown> = {
               ...(request.headers as Record<string, unknown>),
               [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
@@ -698,12 +860,107 @@ async function handleResponsesWebsocketConnection(
             });
 
             const websocketRuntimeSessionKey = buildCodexSessionResponseStoreKey({
-              sessionId: websocketSessionId,
+              sessionId: turnSessionId,
               siteId: codexWebsocketChannel.site.id,
               accountId: codexWebsocketChannel.account.id,
               channelId: codexWebsocketChannel.channel.id,
             }) || websocketSessionId;
             runtimeSessionKeys.add(websocketRuntimeSessionKey);
+
+            const websocketAttemptLedger = await startProxyAttemptLedgerSession({
+              requestedModel: requestModel || asTrimmedString(codexWebsocketChannel.actualModel) || 'unknown',
+              downstreamPath: '/v1/responses',
+              clientKind: turnClientContext?.clientKind || 'responses-websocket',
+              sessionId: turnSessionId,
+              clientThreadId: turnClientContext?.threadId || turnMetadata?.identity.threadId || null,
+              clientTurnId: turnClientContext?.turnId || turnMetadata?.identity.turnId || null,
+              bridgeTaskId: turnMetadata?.bridgeRouteDirective?.taskId || null,
+              bridgeRouteAction: turnMetadata?.bridgeRouteDirective?.routeAction || null,
+              bridgeContinuationNumber: turnMetadata?.bridgeRouteDirective?.continuationNumber ?? null,
+              downstreamApiKeyId: turnAuthContext.key?.id ?? null,
+              channelId: codexWebsocketChannel.channel.id,
+              accountId: codexWebsocketChannel.account.id,
+              tokenId: codexWebsocketChannel.token?.id ?? null,
+              policy: {
+                retryOwner: resolveApiChannelRetryPolicy(codexWebsocketChannel.channel).retryOwner,
+                replaySafety: 'safe_only',
+                retryBudget: createRetryBudget({ maxAttempts: 2 }),
+              },
+            });
+            const websocketAttemptIdentities = new Map<number, { attemptId: string; attemptIndex: number }>();
+            let websocketRequestFinished = false;
+            let websocketSawUnknownAttempt = false;
+            let websocketSawKnownFailure = false;
+            const finishWebsocketRequest = async (status: 'succeeded' | 'failed' | 'unknown') => {
+              if (websocketRequestFinished) return;
+              websocketRequestFinished = true;
+              await websocketAttemptLedger?.finishRequest(status);
+            };
+            const observeWebsocketAttempt = async (event: Parameters<NonNullable<Parameters<typeof codexWebsocketRuntime.sendRequest>[0]['onAttemptEvent']>>[0]) => {
+              if (!websocketAttemptLedger) return;
+              if (event.type === 'attempt_started') {
+                const identity = await websocketAttemptLedger.beginAttempt({
+                  endpoint: 'responses-websocket',
+                  requestPath: event.requestPath,
+                  targetUrl: event.requestUrl,
+                });
+                websocketAttemptIdentities.set(event.attemptIndex, identity);
+                return;
+              }
+              const identity = websocketAttemptIdentities.get(event.attemptIndex);
+              if (!identity) return;
+              if (event.type === 'request_sent') {
+                await websocketAttemptLedger.markAttemptCommit({
+                  attemptId: identity.attemptId,
+                  event: 'request_sent',
+                });
+                return;
+              }
+              if (event.type === 'response_started') {
+                await websocketAttemptLedger.markAttemptCommit({
+                  attemptId: identity.attemptId,
+                  event: 'response_started',
+                  statusCode: event.status ?? null,
+                });
+                return;
+              }
+              if (event.type === 'completed') {
+                await websocketAttemptLedger.finishAttempt({
+                  attemptId: identity.attemptId,
+                  status: 'succeeded',
+                  commitState: 'completed',
+                  statusCode: event.status ?? 200,
+                });
+                return;
+              }
+              if (event.type === 'failed') {
+                const terminal = event.terminal === true;
+                await websocketAttemptLedger.finishAttempt({
+                  attemptId: identity.attemptId,
+                  status: 'failed',
+                  commitState: terminal
+                    ? 'completed'
+                    : (event.responseStarted ? 'response_started' : 'request_sent'),
+                  errorScope: classifyRetryErrorScope({
+                    status: event.status ?? 0,
+                    rawErrorText: event.message || '',
+                  }),
+                  statusCode: event.status ?? null,
+                  errorSummary: event.message || null,
+                });
+                if (!event.recoverable) websocketSawKnownFailure = true;
+                return;
+              }
+              if (event.type === 'transport_unknown') {
+                await websocketAttemptLedger.markAttemptCommit({
+                  attemptId: identity.attemptId,
+                  event: 'transport_unknown',
+                  statusCode: event.status ?? 408,
+                  errorSummary: event.message || 'upstream websocket closed before terminal response',
+                });
+                websocketSawUnknownAttempt = true;
+              }
+            };
 
             try {
               const runtimeResult = await runWithSiteApiEndpointPool(
@@ -716,12 +973,13 @@ async function handleResponsesWebsocketConnection(
                     tokenValue: codexWebsocketChannel.tokenValue,
                     sitePlatform: codexWebsocketChannel.site.platform,
                     siteUrl: target.baseUrl,
+                    codexFingerprintEnabled: (codexWebsocketChannel.site as { codexFingerprintEnabled?: boolean }).codexFingerprintEnabled === true,
                     openaiBody: normalized.request,
                     downstreamFormat: 'responses',
                     responsesOriginalBody: normalized.request,
                     downstreamHeaders,
                     providerHeaders,
-                    codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
+                    codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, turnSessionId),
                   });
                   const requestUrl = `${target.baseUrl.replace(/\/+$/, '')}${prepared.path}`;
 
@@ -731,6 +989,7 @@ async function handleResponsesWebsocketConnection(
                       requestUrl,
                       headers: prepared.headers,
                       body: prepared.body,
+                      onAttemptEvent: observeWebsocketAttempt,
                     });
                   } catch (error) {
                     const runtimeError = error instanceof CodexWebsocketRuntimeError
@@ -747,8 +1006,25 @@ async function handleResponsesWebsocketConnection(
               for (const payload of runtimeResult.events) {
                 socket.send(JSON.stringify(payload));
               }
+              const terminalType = runtimeResult.events
+                .map((payload) => asTrimmedString(payload.type))
+                .find((type) => type === 'response.completed' || type === 'response.failed' || type === 'response.incomplete');
+              await finishWebsocketRequest(
+                websocketSawUnknownAttempt
+                  ? 'unknown'
+                  : terminalType === 'response.completed'
+                    ? 'succeeded'
+                    : 'failed',
+              );
             } catch (error) {
               const runtimeError = unwrapCodexWebsocketRuntimeError(error);
+              if (!websocketRequestFinished) {
+                await finishWebsocketRequest(
+                  websocketSawUnknownAttempt
+                    ? 'unknown'
+                    : 'failed',
+                );
+              }
               if (runtimeError.status && runtimeError.events.length === 0) {
                 const forwarded = await forwardResponsesRequestViaHttp({
                   app,
@@ -756,7 +1032,7 @@ async function handleResponsesWebsocketConnection(
                   request,
                   payload: normalized.request,
                   preserveIncrementalMode: supportsIncrementalInput,
-                  authToken: authContext.token,
+                  authContext: proxyAuthContext,
                 });
                 if (forwarded) {
                   lastResponseOutput = forwarded;
@@ -790,13 +1066,18 @@ async function handleResponsesWebsocketConnection(
             request,
             payload: normalized.request,
             preserveIncrementalMode: supportsIncrementalInput,
-            authToken: authContext.token,
+            authContext: proxyAuthContext,
           });
           if (forwarded) {
             lastResponseOutput = forwarded;
           }
         } catch {
           writeResponsesWebsocketError(socket, 500, 'internal websocket proxy error');
+        } finally {
+          if (activeTurnLease === turnLease) {
+            activeTurnLease = null;
+          }
+          await turnLease?.release();
         }
       });
   });

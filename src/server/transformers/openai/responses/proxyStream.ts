@@ -38,6 +38,7 @@ type ResponsesProxyStreamSessionInput = {
     promptTokensIncludeCache: boolean | null;
   };
   onParsedPayload?: (payload: unknown) => void;
+  onMeaningfulOutput?: () => void;
   writeLines: (lines: string[]) => void;
   writeRaw: (chunk: string) => void;
 };
@@ -99,6 +100,20 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
     status: 'completed',
     errorMessage: null,
   };
+  let meaningfulOutputSeen = false;
+
+  const markMeaningfulOutput = () => {
+    if (meaningfulOutputSeen) return;
+    meaningfulOutputSeen = true;
+    input.onMeaningfulOutput?.();
+  };
+
+  const failureCarriesMeaningfulOutput = (payload: unknown): boolean => {
+    if (hasMeaningfulAggregateOutput(responsesState)) return true;
+    if (!isRecord(payload)) return false;
+    return isRecord(payload.response)
+      && hasMeaningfulResponsesPayloadOutput(payload.response);
+  };
 
   const finalize = () => {
     if (finalized) return;
@@ -112,6 +127,9 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
 
   const fail = (payload: unknown, fallbackMessage?: string) => {
     if (finalized) return;
+    if (failureCarriesMeaningfulOutput(payload)) {
+      markMeaningfulOutput();
+    }
     finalized = true;
     terminalResult = {
       status: 'failed',
@@ -206,6 +224,15 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         }, 'Upstream returned empty content');
         return true;
       }
+      if (
+        hasMeaningfulAggregateOutput(responsesState)
+        || (
+          isRecord(parsedPayload.response)
+          && hasMeaningfulResponsesPayloadOutput(parsedPayload.response)
+        )
+      ) {
+        markMeaningfulOutput();
+      }
       input.writeLines(convertedLines);
       if (eventBlock.event === 'response.completed' || payloadType === 'response.completed' || isIncompleteEvent) {
         terminalEventSeen = true;
@@ -214,6 +241,9 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
       return false;
     }
 
+    if (eventBlock.data.trim()) {
+      markMeaningfulOutput();
+    }
     input.writeLines(serializeConvertedResponsesEvents({
       state: responsesState,
       streamContext,
@@ -268,6 +298,9 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         status: 'completed',
         errorMessage: null,
       };
+      if (hasMeaningfulResponsesPayloadOutput(streamPayload)) {
+        markMeaningfulOutput();
+      }
       input.writeLines(lines);
       response?.end();
       return terminalResult;

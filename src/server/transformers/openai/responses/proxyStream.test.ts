@@ -258,4 +258,111 @@ describe('createResponsesProxyStreamSession', () => {
     expect(output).not.toContain('event: response.completed');
     expect(output).toContain('data: [DONE]');
   });
+
+  it('keeps lifecycle-only response.failed streams eligible for pre-output failover', async () => {
+    const lines: string[] = [];
+    let meaningfulOutputCount = 0;
+    const chunk = [
+      'event: response.created',
+      'data: {"type":"response.created","response":{"id":"resp_overloaded","model":"gpt-5","status":"in_progress","output":[]}}',
+      '',
+      'event: response.failed',
+      'data: {"type":"response.failed","response":{"id":"resp_overloaded","model":"gpt-5","status":"failed","error":{"message":"Our servers are currently overloaded. Please try again later."}}}',
+      '',
+    ].join('\n');
+    const reader = {
+      reads: 0,
+      async read() {
+        if (this.reads > 0) return { done: true };
+        this.reads += 1;
+        return { done: false, value: new TextEncoder().encode(chunk) };
+      },
+      async cancel() {
+        return undefined;
+      },
+      releaseLock() {},
+    };
+
+    const session = createResponsesProxyStreamSession({
+      modelName: 'gpt-5',
+      successfulUpstreamPath: '/v1/responses',
+      getUsage: () => ({
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
+      }),
+      onMeaningfulOutput: () => {
+        meaningfulOutputCount += 1;
+      },
+      writeLines: (nextLines) => {
+        lines.push(...nextLines);
+      },
+      writeRaw: () => {},
+    });
+
+    const result = await session.run(reader as any, { end() {} });
+
+    expect(result).toEqual({
+      status: 'failed',
+      errorMessage: 'Our servers are currently overloaded. Please try again later.',
+    });
+    expect(meaningfulOutputCount).toBe(0);
+    expect(lines.join('')).toContain('event: response.failed');
+  });
+
+  it('marks text output before a later stream failure can be considered for replay', async () => {
+    let meaningfulOutputCount = 0;
+    const chunk = [
+      'event: response.created',
+      'data: {"type":"response.created","response":{"id":"resp_partial","model":"gpt-5","status":"in_progress","output":[]}}',
+      '',
+      'event: response.output_item.added',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_partial","type":"message","role":"assistant","status":"in_progress","content":[]}}',
+      '',
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_partial","delta":"partial"}',
+      '',
+      'event: response.failed',
+      'data: {"type":"response.failed","response":{"id":"resp_partial","model":"gpt-5","status":"failed","error":{"message":"Our servers are currently overloaded. Please try again later."}}}',
+      '',
+    ].join('\n');
+    const reader = {
+      reads: 0,
+      async read() {
+        if (this.reads > 0) return { done: true };
+        this.reads += 1;
+        return { done: false, value: new TextEncoder().encode(chunk) };
+      },
+      async cancel() {
+        return undefined;
+      },
+      releaseLock() {},
+    };
+
+    const session = createResponsesProxyStreamSession({
+      modelName: 'gpt-5',
+      successfulUpstreamPath: '/v1/responses',
+      getUsage: () => ({
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
+      }),
+      onMeaningfulOutput: () => {
+        meaningfulOutputCount += 1;
+      },
+      writeLines: () => {},
+      writeRaw: () => {},
+    });
+
+    const result = await session.run(reader as any, { end() {} });
+
+    expect(result.status).toBe('failed');
+    expect(meaningfulOutputCount).toBe(1);
+  });
 });

@@ -125,4 +125,67 @@ describe('provider header utils', () => {
     expect(headers['User-Agent']).toBe('GeminiCLI/0.55.0/gemini-2.5-flash (darwin; arm64)');
     expect(headers.Accept).toBe('text/event-stream');
   });
+
+  it('forwards downstream x-codex-* headers verbatim when fingerprint is applied', async () => {
+    const { applyCodexEngineFingerprintHeaders } = await import('./headerUtils.js');
+
+    const headers = applyCodexEngineFingerprintHeaders(
+      { Authorization: 'Bearer test', 'User-Agent': 'codex_cli_rs/0.101.0' },
+      {
+        downstreamHeaders: {
+          'X-Codex-Window-Id': 'window-from-client',
+          'x-codex-installation-id': 'install-1',
+          'x-unrelated-header': 'nope',
+        },
+      },
+    );
+
+    expect(headers['x-codex-window-id']).toBe('window-from-client');
+    expect(headers['x-codex-installation-id']).toBe('install-1');
+    expect(headers['x-unrelated-header']).toBeUndefined();
+  });
+
+  it('synthesizes a stable x-codex-window-id when no fingerprint header exists', async () => {
+    const { applyCodexEngineFingerprintHeaders } = await import('./headerUtils.js');
+
+    const first = applyCodexEngineFingerprintHeaders(
+      { Authorization: 'Bearer test' },
+      { downstreamHeaders: {}, continuitySeed: 'session-abc' },
+    );
+    const second = applyCodexEngineFingerprintHeaders(
+      { Authorization: 'Bearer test' },
+      { downstreamHeaders: {}, continuitySeed: 'session-abc' },
+    );
+    const other = applyCodexEngineFingerprintHeaders(
+      { Authorization: 'Bearer test' },
+      { downstreamHeaders: {}, continuitySeed: 'session-def' },
+    );
+
+    expect(first['x-codex-window-id']).toMatch(/^[0-9a-f-]{36}$/);
+    expect(first['x-codex-window-id']).toBe(second['x-codex-window-id']);
+    expect(first['x-codex-window-id']).not.toBe(other['x-codex-window-id']);
+  });
+
+  it('does not synthesize a window id when an x-codex-* header already exists', async () => {
+    const { applyCodexEngineFingerprintHeaders } = await import('./headerUtils.js');
+
+    const headers = applyCodexEngineFingerprintHeaders(
+      { 'x-codex-beta-features': 'multi_agent' },
+      { downstreamHeaders: {}, continuitySeed: 'session-abc' },
+    );
+
+    expect(headers['x-codex-beta-features']).toBe('multi_agent');
+    expect(headers['x-codex-window-id']).toBeUndefined();
+  });
+
+  it('does not overwrite an existing header with the downstream value', async () => {
+    const { applyCodexEngineFingerprintHeaders } = await import('./headerUtils.js');
+
+    const headers = applyCodexEngineFingerprintHeaders(
+      { 'x-codex-beta-features': 'configured-beta' },
+      { downstreamHeaders: { 'x-codex-beta-features': 'client-beta' } },
+    );
+
+    expect(headers['x-codex-beta-features']).toBe('configured-beta');
+  });
 });

@@ -5,6 +5,22 @@ export type CodexWebsocketRuntimeSendInput = {
   requestUrl: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  onAttemptEvent?: (event: CodexWebsocketRuntimeAttemptEvent) => void | Promise<void>;
+};
+
+export type CodexWebsocketRuntimeAttemptEvent = {
+  type: 'attempt_started' | 'request_sent' | 'response_started' | 'completed' | 'failed' | 'transport_unknown';
+  attemptIndex: number;
+  requestUrl: string;
+  requestPath: string;
+  body: Record<string, unknown>;
+  reusedSession?: boolean;
+  payload?: Record<string, unknown>;
+  status?: number;
+  message?: string;
+  responseStarted?: boolean;
+  terminal?: boolean;
+  recoverable?: boolean;
 };
 
 export type CodexWebsocketRuntimeResult = {

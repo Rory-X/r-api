@@ -3,6 +3,7 @@ import {
   detectCodexOfficialClientApp as detectCodexOfficialClientAppFromHeaders,
   isCodexOfficialClientHeaders,
 } from '../../shared/codexClientFamily.js';
+import { parseCodexTurnMetadata } from '../codexTurnMetadata.js';
 
 type CodexOfficialClientApp = {
   clientAppId: string;
@@ -83,23 +84,28 @@ export function isCodexResponsesSurface(headers?: Record<string, unknown>): bool
   });
 }
 
-export function getCodexSessionId(headers?: Record<string, unknown>): string | null {
+export function getCodexSessionId(
+  headers?: Record<string, unknown>,
+  body?: unknown,
+): string | null {
   return getHeaderValue(headers, 'session_id')
     || getHeaderValue(headers, 'session-id')
     || getHeaderValue(headers, 'conversation_id')
-    || getHeaderValue(headers, 'conversation-id');
+    || getHeaderValue(headers, 'conversation-id')
+    || parseCodexTurnMetadata({ headers, body })?.identity.sessionId
+    || null;
 }
 
 export function isCodexRequest(input: DetectCliProfileInput): boolean {
   if (!isCodexPath(input.downstreamPath)) return false;
   const headers = input.headers;
-  if (!headers) return false;
 
   if (isCodexOfficialClientHeaders(headers)) return true;
   if (getHeaderValue(headers, 'openai-beta')) return true;
   if (hasHeaderPrefix(headers, 'x-stainless-')) return true;
-  if (getCodexSessionId(headers)) return true;
+  if (getCodexSessionId(headers, input.body)) return true;
   if (getHeaderValue(headers, 'x-codex-turn-state')) return true;
+  if (parseCodexTurnMetadata({ headers, body: input.body })) return true;
   return false;
 }
 
@@ -115,7 +121,7 @@ export const codexCliProfile: CliProfileDefinition = {
   detect(input) {
     if (!isCodexRequest(input)) return null;
 
-    const sessionId = getCodexSessionId(input.headers) || undefined;
+    const sessionId = getCodexSessionId(input.headers, input.body) || undefined;
     const clientApp = detectCodexOfficialClientApp(input.headers);
     return {
       id: 'codex',

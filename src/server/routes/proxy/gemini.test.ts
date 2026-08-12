@@ -83,6 +83,19 @@ vi.mock('../../services/tokenRouter.js', () => ({
 vi.mock('../../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
+  acquireDownstreamConcurrencyLease: async () => ({ ok: true, lease: null }),
+  resolveDownstreamPolicySnapshot: (auth: any) => auth.snapshot || {
+    capturedAt: '2026-08-03T00:00:00.000Z',
+    source: auth.source,
+    tokenFingerprint: `fingerprint:${auth.token}`,
+    keyId: auth.key?.id ?? null,
+    keyName: auth.key?.name || 'global',
+    policyVersion: auth.key?.policyVersion ?? 1,
+    expiresAt: auth.key?.expiresAt ?? null,
+    maxConcurrency: auth.key?.maxConcurrency ?? null,
+    policy: auth.policy,
+  },
+  verifyDownstreamPolicySnapshotActive: async () => ({ ok: true }),
   isModelAllowedByPolicyOrAllowedRoutes: (...args: unknown[]) => isModelAllowedByPolicyOrAllowedRoutesMock(...args),
 }));
 
@@ -697,7 +710,10 @@ describe('gemini native proxy routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(36);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(36, {
+      reason: 'unauthorized',
+      failedAccessToken: 'oauth-access-token',
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(selectNextChannelMock).not.toHaveBeenCalled();
 

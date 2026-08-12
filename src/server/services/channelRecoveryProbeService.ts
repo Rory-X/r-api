@@ -1,13 +1,21 @@
 import { and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { proxyChannelCoordinator } from './proxyChannelCoordinator.js';
 import { probeRuntimeModel } from './runtimeModelProbe.js';
-import { tokenRouter } from './tokenRouter.js';
+import {
+  claimSiteRuntimeRecoveryProbe,
+  listDueSiteRuntimeRecoveryTargets,
+  recordSiteRuntimeRecoveryProbeFailure,
+  releaseSiteRuntimeRecoveryProbe,
+  tokenRouter,
+  type SiteRuntimeRecoveryTarget,
+} from './tokenRouter.js';
 import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
 
-type RecoveryProbeSource = 'cooldown' | 'active';
+type RecoveryProbeSource = 'runtime_breaker' | 'cooldown' | 'active';
 
 type RecoveryProbeCandidate = {
   source: RecoveryProbeSource;
@@ -42,9 +50,8 @@ function buildRecoveryProbeKey(channelId: number, modelName: string): string {
 }
 
 function resolveRecoveryProbeWindowMs(source: RecoveryProbeSource): number {
-  return source === 'cooldown'
-    ? CHANNEL_RECOVERY_COOLDOWN_RECHECK_MS
-    : CHANNEL_RECOVERY_ACTIVE_RECHECK_MS;
+  if (source === 'runtime_breaker') return 0;
+  return source === 'cooldown' ? CHANNEL_RECOVERY_COOLDOWN_RECHECK_MS : CHANNEL_RECOVERY_ACTIVE_RECHECK_MS;
 }
 
 function resolveProbeModelName(row: {
@@ -169,11 +176,60 @@ async function loadActiveProbeCandidates(activeChannelIds: number[]): Promise<Re
   });
 }
 
+async function loadRuntimeBreakerProbeCandidates(
+  targets: SiteRuntimeRecoveryTarget[],
+): Promise<RecoveryProbeCandidate[]> {
+  const siteIds = Array.from(new Set(targets.map((target) => target.siteId)));
+  if (siteIds.length <= 0) return [];
+
+  const rows = await db.select()
+    .from(schema.routeChannels)
+    .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .innerJoin(schema.tokenRoutes, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
+    .leftJoin(schema.accountTokens, eq(schema.routeChannels.tokenId, schema.accountTokens.id))
+    .where(and(
+      eq(schema.routeChannels.enabled, true),
+      eq(schema.accounts.status, 'active'),
+      eq(schema.sites.status, 'active'),
+      inArray(schema.sites.id, siteIds),
+    ))
+    .all();
+
+  const candidates: RecoveryProbeCandidate[] = [];
+  for (const target of targets) {
+    const targetModelName = String(target.modelName || '').trim().toLowerCase();
+    for (const row of rows) {
+      if (row.sites.id !== target.siteId) continue;
+      const modelName = resolveProbeModelName(row);
+      if (!modelName) continue;
+      if (targetModelName && modelName.trim().toLowerCase() !== targetModelName) continue;
+      const tokenValue = resolveProbeTokenValue(row);
+      if (!tokenValue) continue;
+      candidates.push({
+        source: 'runtime_breaker',
+        channelId: row.route_channels.id,
+        modelName,
+        tokenValue,
+        account: row.accounts,
+        site: row.sites,
+      });
+      break;
+    }
+  }
+  return candidates;
+}
+
 function mergeRecoveryProbeCandidates(candidates: RecoveryProbeCandidate[]): RecoveryProbeCandidate[] {
   const merged = new Map<number, RecoveryProbeCandidate>();
+  const sourcePriority: Record<RecoveryProbeSource, number> = {
+    runtime_breaker: 0,
+    cooldown: 1,
+    active: 2,
+  };
   for (const candidate of candidates) {
     const existing = merged.get(candidate.channelId);
-    if (!existing || (existing.source === 'active' && candidate.source === 'cooldown')) {
+    if (!existing || sourcePriority[candidate.source] < sourcePriority[existing.source]) {
       merged.set(candidate.channelId, candidate);
     }
   }
@@ -208,7 +264,17 @@ async function runRecoveryProbeCandidate(candidate: RecoveryProbeCandidate, nowM
   const key = buildRecoveryProbeKey(candidate.channelId, candidate.modelName);
   recoveryProbeInFlightKeys.add(key);
   recoveryProbeLastStartedAtByKey.set(key, nowMs);
+  let claimedRuntimeRecovery = false;
   try {
+    if (candidate.source === 'runtime_breaker') {
+      claimedRuntimeRecovery = await claimSiteRuntimeRecoveryProbe({
+        siteId: candidate.site.id,
+        modelName: candidate.modelName,
+        channelId: candidate.channelId,
+        nowMs,
+      });
+      if (!claimedRuntimeRecovery) return;
+    }
     const result = await probeRuntimeModel({
       site: candidate.site,
       account: candidate.account,
@@ -222,15 +288,41 @@ async function runRecoveryProbeCandidate(candidate: RecoveryProbeCandidate, nowM
         result.latencyMs ?? 0,
         candidate.modelName,
       );
+    } else if (claimedRuntimeRecovery) {
+      await recordSiteRuntimeRecoveryProbeFailure({
+        siteId: candidate.site.id,
+        modelName: candidate.modelName,
+        channelId: candidate.channelId,
+        errorText: result.reason,
+        nowMs,
+      });
     }
   } catch (error) {
+    if (claimedRuntimeRecovery) {
+      await recordSiteRuntimeRecoveryProbeFailure({
+        siteId: candidate.site.id,
+        modelName: candidate.modelName,
+        channelId: candidate.channelId,
+        errorText: error instanceof Error ? error.message : 'recovery probe failed',
+        nowMs,
+      });
+    }
     console.warn(`[channel-recovery-probe] channel ${candidate.channelId} probe failed`, error);
   } finally {
+    if (claimedRuntimeRecovery) {
+      releaseSiteRuntimeRecoveryProbe({
+        siteId: candidate.site.id,
+        modelName: candidate.modelName,
+        channelId: candidate.channelId,
+      });
+    }
     recoveryProbeInFlightKeys.delete(key);
   }
 }
 
 export async function runChannelRecoveryProbeSweep(nowMs = Date.now()): Promise<void> {
+  if (!config.channelRecoveryProbeEnabled) return;
+
   if (recoveryProbeSweepInFlight) {
     await recoveryProbeSweepInFlight;
     return;
@@ -239,12 +331,15 @@ export async function runChannelRecoveryProbeSweep(nowMs = Date.now()): Promise<
   recoveryProbeSweepInFlight = (async () => {
     const nowIso = new Date(nowMs).toISOString();
     const activeChannelIds = proxyChannelCoordinator.getActiveChannelIds();
-    const [coolingCandidates, activeCandidates] = await Promise.all([
+    const runtimeTargets = await listDueSiteRuntimeRecoveryTargets(nowMs);
+    const [runtimeBreakerCandidates, coolingCandidates, activeCandidates] = await Promise.all([
+      loadRuntimeBreakerProbeCandidates(runtimeTargets),
       loadCoolingProbeCandidates(nowIso),
       loadActiveProbeCandidates(activeChannelIds),
     ]);
 
     const merged = mergeRecoveryProbeCandidates([
+      ...runtimeBreakerCandidates,
       ...coolingCandidates,
       ...activeCandidates,
     ]);
@@ -268,6 +363,13 @@ export async function runChannelRecoveryProbeSweep(nowMs = Date.now()): Promise<
 
 export function startChannelRecoveryProbeScheduler(intervalMs = CHANNEL_RECOVERY_SWEEP_INTERVAL_MS) {
   stopChannelRecoveryProbeScheduler();
+  if (!config.channelRecoveryProbeEnabled) {
+    return {
+      enabled: false,
+      intervalMs: 0,
+    };
+  }
+
   const safeIntervalMs = Math.max(10_000, Math.trunc(intervalMs || 0));
   recoveryProbeSchedulerTimer = setInterval(() => {
     void runChannelRecoveryProbeSweep().catch((error) => {

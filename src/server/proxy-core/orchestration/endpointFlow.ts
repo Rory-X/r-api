@@ -7,6 +7,11 @@ import {
   summarizeUpstreamError,
   type UpstreamEndpoint,
 } from './upstreamRequest.js';
+import {
+  advanceAttemptCommitState,
+  type AttemptCommitEvent,
+  type AttemptCommitState,
+} from '../../services/proxyRetryContract.js';
 
 export type BuiltEndpointRequest = {
   endpoint: UpstreamEndpoint;
@@ -25,20 +30,50 @@ export type BuiltEndpointRequest = {
 export type EndpointAttemptContext = {
   endpointIndex: number;
   endpointCount: number;
+  attemptId: string;
+  attemptIndex: number;
   request: BuiltEndpointRequest;
   targetUrl: string;
   response: Awaited<ReturnType<typeof fetch>>;
   rawErrText: string;
+  commitState: AttemptCommitState;
   recoverApplied?: boolean;
 };
 
 export type EndpointAttemptSuccessContext = {
   endpointIndex: number;
   endpointCount: number;
+  attemptId: string;
+  attemptIndex: number;
   request: BuiltEndpointRequest;
   targetUrl: string;
   response: Awaited<ReturnType<typeof fetch>>;
+  commitState: AttemptCommitState;
   recoverApplied?: boolean;
+};
+
+export type EndpointAttemptCommitStateContext = {
+  endpointIndex: number;
+  endpointCount: number;
+  attemptId: string;
+  attemptIndex: number;
+  request: BuiltEndpointRequest;
+  targetUrl: string;
+  commitState: AttemptCommitState;
+  event: AttemptCommitEvent;
+  response?: Awaited<ReturnType<typeof fetch>>;
+};
+
+export type EndpointAttemptStartContext = {
+  endpointIndex: number;
+  endpointCount: number;
+  request: BuiltEndpointRequest;
+  targetUrl: string;
+};
+
+export type EndpointAttemptIdentity = {
+  attemptId: string;
+  attemptIndex: number;
 };
 
 export type EndpointRecoverResult = {
@@ -53,12 +88,14 @@ export type EndpointFlowResult =
     ok: true;
     upstream: Awaited<ReturnType<typeof fetch>>;
     upstreamPath: string;
+    successHooksCompletion?: Promise<void>;
   }
   | {
     ok: false;
     status: number;
     errText: string;
     rawErrText?: string;
+    commitState?: AttemptCommitState;
   };
 
 export type ExecuteEndpointFlowInput = {
@@ -79,6 +116,14 @@ export type ExecuteEndpointFlowInput = {
   onDowngrade?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
   onAttemptFailure?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
   onAttemptSuccess?: (ctx: EndpointAttemptSuccessContext) => void | Promise<void>;
+  deferSuccessHooks?: boolean;
+  onAttemptCommitState?: (ctx: EndpointAttemptCommitStateContext) => void | Promise<void>;
+  createAttemptIdentity?: (
+    ctx: EndpointAttemptStartContext,
+  ) => EndpointAttemptIdentity | Promise<EndpointAttemptIdentity>;
+  onAttemptStart?: (
+    ctx: EndpointAttemptStartContext & EndpointAttemptIdentity,
+  ) => void | Promise<void>;
 };
 
 export function withUpstreamPath(path: string, message: string): string {
@@ -111,6 +156,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   let finalStatus = 0;
   let finalErrText = 'unknown error';
   let finalRawErrText: string | undefined;
+  let finalCommitState: AttemptCommitState | undefined;
 
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
@@ -120,53 +166,131 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       ? buildUpstreamUrl(input.proxyUrl, request.path)
       : defaultTarget;
 
-    const attemptStartedAtMs = Date.now();
-    let response = await fetchWithObservedFirstByte(
-      async (signal) => (
-        input.dispatchRequest
-          ? await input.dispatchRequest(request, targetUrl, signal)
-          : await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-            method: 'POST',
-            headers: request.headers,
-            body: JSON.stringify(request.body),
-            signal,
-          }))
-      ),
-      {
-        firstByteTimeoutMs: input.firstByteTimeoutMs,
-        startedAtMs: attemptStartedAtMs,
-      },
-    );
+    const defaultAttemptIdentity: EndpointAttemptIdentity = {
+      attemptId: `endpoint-${endpointIndex}`,
+      attemptIndex: endpointIndex,
+    };
+    let attemptIdentity = defaultAttemptIdentity;
+    if (input.createAttemptIdentity) {
+      try {
+        const created = await input.createAttemptIdentity({
+          endpointIndex,
+          endpointCount,
+          request,
+          targetUrl,
+        });
+        if (created && typeof created.attemptId === 'string' && created.attemptId.trim()) {
+          attemptIdentity = {
+            attemptId: created.attemptId,
+            attemptIndex: Number.isFinite(created.attemptIndex)
+              ? Math.max(0, Math.trunc(created.attemptIndex))
+              : defaultAttemptIdentity.attemptIndex,
+          };
+        }
+      } catch (error) {
+        console.warn('endpointFlow createAttemptIdentity hook failed', error);
+      }
+    }
+    await runEndpointFlowHook(input.onAttemptStart, {
+      endpointIndex,
+      endpointCount,
+      request,
+      targetUrl,
+      ...attemptIdentity,
+    }, 'onAttemptStart');
 
-    if (response.ok) {
-      await runEndpointFlowHook(input.onAttemptSuccess, {
+    const attemptStartedAtMs = Date.now();
+    let commitState: AttemptCommitState = 'not_started';
+    const emitCommitState = async (
+      event: AttemptCommitEvent,
+      response?: Awaited<ReturnType<typeof fetch>>,
+    ): Promise<void> => {
+      const nextState = advanceAttemptCommitState(commitState, event);
+      if (nextState === commitState) return;
+      commitState = nextState;
+      await runEndpointFlowHook(input.onAttemptCommitState, {
         endpointIndex,
         endpointCount,
         request,
         targetUrl,
+        ...attemptIdentity,
+        commitState,
+        event,
         response,
-        recoverApplied: false,
-      }, 'onAttemptSuccess');
+      }, 'onAttemptCommitState');
+    };
+
+    let response: Awaited<ReturnType<typeof fetch>>;
+    try {
+      response = await fetchWithObservedFirstByte(
+        async (signal) => (
+          input.dispatchRequest
+            ? await input.dispatchRequest(request, targetUrl, signal)
+            : await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
+              method: 'POST',
+              headers: request.headers,
+              body: JSON.stringify(request.body),
+              signal,
+            }))
+        ),
+        {
+          firstByteTimeoutMs: input.firstByteTimeoutMs,
+          startedAtMs: attemptStartedAtMs,
+        },
+      );
+    } catch (error) {
+      await emitCommitState('transport_unknown');
+      throw error;
+    }
+
+    if (response.ok) {
+      const successHooksCompletion = (async () => {
+        await emitCommitState('request_sent', response);
+        await emitCommitState('response_started', response);
+        await runEndpointFlowHook(input.onAttemptSuccess, {
+          endpointIndex,
+          endpointCount,
+          ...attemptIdentity,
+          request,
+          targetUrl,
+          response,
+          commitState,
+          recoverApplied: false,
+        }, 'onAttemptSuccess');
+      })();
+      if (!input.deferSuccessHooks) {
+        await successHooksCompletion;
+      }
       return {
         ok: true,
         upstream: response,
         upstreamPath: request.path,
+        ...(input.deferSuccessHooks ? { successHooksCompletion } : {}),
       };
     }
+
+    await emitCommitState('request_sent', response);
 
     let rawErrText = await readRuntimeResponseText(response).catch(() => 'unknown error');
     const baseContext: EndpointAttemptContext = {
       endpointIndex,
       endpointCount,
+      ...attemptIdentity,
       request,
       targetUrl,
       response,
       rawErrText,
+      commitState,
       recoverApplied: false,
     };
     const isLastEndpoint = endpointIndex >= endpointCount - 1;
+    const observedFirstByteTimeout = isObservedFirstByteTimeoutResponse(response);
+    if (observedFirstByteTimeout) {
+      await emitCommitState('transport_unknown', response);
+      baseContext.commitState = commitState;
+    }
 
-    if (isObservedFirstByteTimeoutResponse(response) && !isLastEndpoint) {
+    if (observedFirstByteTimeout && !isLastEndpoint) {
       const errText = rawErrText.trim() || 'first byte timeout';
       const timeoutContext = {
         ...baseContext,
@@ -176,6 +300,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status || 408;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      finalCommitState = commitState;
       if (input.disableCrossProtocolFallback) {
         break;
       }
@@ -195,18 +320,27 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
             ? buildUpstreamUrl(input.proxyUrl, recovered.upstreamPath)
             : buildUpstreamUrl(input.siteUrl, recovered.upstreamPath)
         );
-        await runEndpointFlowHook(input.onAttemptSuccess, {
-          endpointIndex,
-          endpointCount,
-          request: recoveredRequest,
-          targetUrl: recoveredTargetUrl,
-          response: recovered.upstream,
-          recoverApplied: true,
-        }, 'onAttemptSuccess');
+        const successHooksCompletion = (async () => {
+          await emitCommitState('response_started', recovered.upstream);
+          await runEndpointFlowHook(input.onAttemptSuccess, {
+            endpointIndex,
+            endpointCount,
+            ...attemptIdentity,
+            request: recoveredRequest,
+            targetUrl: recoveredTargetUrl,
+            response: recovered.upstream,
+            commitState,
+            recoverApplied: true,
+          }, 'onAttemptSuccess');
+        })();
+        if (!input.deferSuccessHooks) {
+          await successHooksCompletion;
+        }
         return {
           ok: true,
           upstream: recovered.upstream,
           upstreamPath: recovered.upstreamPath,
+          ...(input.deferSuccessHooks ? { successHooksCompletion } : {}),
         };
       }
     }
@@ -226,6 +360,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      finalCommitState = commitState;
       break;
     }
     const shouldAbortRemainingEndpoints = !isLastEndpoint && !!input.shouldAbortRemainingEndpoints?.({
@@ -236,6 +371,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      finalCommitState = commitState;
       break;
     }
     const shouldDowngrade = !isLastEndpoint && !!input.shouldDowngrade?.(baseContext);
@@ -250,6 +386,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     finalStatus = response.status;
     finalErrText = errText;
     finalRawErrText = rawErrText;
+    finalCommitState = commitState;
     break;
   }
 
@@ -258,5 +395,6 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     status: finalStatus || 502,
     errText: finalErrText || 'unknown error',
     rawErrText: finalRawErrText,
+    commitState: finalCommitState,
   };
 }

@@ -25,10 +25,13 @@ describe('channelRecoveryProbeService', () => {
   let resetProxyChannelCoordinatorState: CoordinatorModule['resetProxyChannelCoordinatorState'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
+  let tokenRouter: TokenRouterModule['tokenRouter'];
+  let listDueSiteRuntimeRecoveryTargets: TokenRouterModule['listDueSiteRuntimeRecoveryTargets'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let originalDataDir: string | undefined;
   let originalConcurrencyLimit = 0;
+  let originalRecoveryProbeEnabled = false;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-channel-recovery-probe-'));
@@ -50,8 +53,11 @@ describe('channelRecoveryProbeService', () => {
     resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
+    tokenRouter = tokenRouterModule.tokenRouter;
+    listDueSiteRuntimeRecoveryTargets = tokenRouterModule.listDueSiteRuntimeRecoveryTargets;
     config = configModule.config;
     originalConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
+    originalRecoveryProbeEnabled = config.channelRecoveryProbeEnabled;
   });
 
   beforeEach(async () => {
@@ -62,6 +68,7 @@ describe('channelRecoveryProbeService', () => {
       reason: 'probe succeeded',
     });
     config.proxySessionChannelConcurrencyLimit = 1;
+    config.channelRecoveryProbeEnabled = true;
     resetChannelRecoveryProbeState();
     resetProxyChannelCoordinatorState();
     invalidateTokenRouterCache();
@@ -77,6 +84,7 @@ describe('channelRecoveryProbeService', () => {
 
   afterAll(() => {
     config.proxySessionChannelConcurrencyLimit = originalConcurrencyLimit;
+    config.channelRecoveryProbeEnabled = originalRecoveryProbeEnabled;
     resetChannelRecoveryProbeState();
     resetProxyChannelCoordinatorState();
     invalidateTokenRouterCache();
@@ -87,6 +95,14 @@ describe('channelRecoveryProbeService', () => {
     } else {
       process.env.DATA_DIR = originalDataDir;
     }
+  });
+
+  it('does not issue recovery probes while the explicit opt-in is disabled', async () => {
+    config.channelRecoveryProbeEnabled = false;
+
+    await runChannelRecoveryProbeSweep();
+
+    expect(probeRuntimeModelMock).not.toHaveBeenCalled();
   });
 
   it('clears cooldown markers when a background probe succeeds', async () => {
@@ -144,6 +160,120 @@ describe('channelRecoveryProbeService', () => {
     expect(refreshed?.lastFailAt).toBeNull();
     expect(refreshed?.consecutiveFailCount).toBe(0);
     expect(refreshed?.cooldownLevel).toBe(0);
+  });
+
+  it('actively recovers a Site runtime breaker after two successful probes', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'runtime-breaker-site',
+      url: 'https://runtime-breaker.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'runtime-breaker-user',
+      accessToken: 'runtime-breaker-access',
+      apiToken: 'runtime-breaker-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'runtime-breaker-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      enabled: true,
+    }).returning().get();
+
+    const openedAtMs = Date.now();
+    await tokenRouter.recordFailure(channel.id, {
+      errorText: 'fetch failed: ENOTFOUND runtime-breaker.example.com',
+      modelName: 'gpt-5.4',
+    });
+
+    const firstProbeAtMs = openedAtMs + 61_000;
+    await runChannelRecoveryProbeSweep(firstProbeAtMs);
+    expect(probeRuntimeModelMock).toHaveBeenCalledTimes(1);
+    expect(await listDueSiteRuntimeRecoveryTargets(firstProbeAtMs + 31_000))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          siteId: site.id,
+          recoveryState: 'recovering',
+          recoverySuccessCount: 1,
+        }),
+      ]));
+
+    await runChannelRecoveryProbeSweep(firstProbeAtMs + 31_000);
+    expect(probeRuntimeModelMock).toHaveBeenCalledTimes(2);
+    expect(await listDueSiteRuntimeRecoveryTargets(firstProbeAtMs + 10 * 60_000))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ siteId: site.id })]));
+  });
+
+  it('escalates the breaker cooldown when a half-open probe fails', async () => {
+    probeRuntimeModelMock.mockResolvedValue({
+      status: 'inconclusive',
+      latencyMs: 480,
+      reason: 'connect ECONNREFUSED',
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'probe-failure-site',
+      url: 'https://probe-failure.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'probe-failure-user',
+      accessToken: 'probe-failure-access',
+      apiToken: 'probe-failure-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'probe-failure-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      enabled: true,
+    }).returning().get();
+
+    const openedAtMs = Date.now();
+    await tokenRouter.recordFailure(channel.id, {
+      errorText: 'fetch failed: ECONNREFUSED probe-failure.example.com',
+      modelName: 'gpt-5.4',
+    });
+    const halfOpenAtMs = openedAtMs + 61_000;
+    await runChannelRecoveryProbeSweep(halfOpenAtMs);
+
+    expect(probeRuntimeModelMock).toHaveBeenCalledTimes(1);
+    expect(await listDueSiteRuntimeRecoveryTargets(halfOpenAtMs + 2 * 60_000))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ siteId: site.id })]));
+    expect(await listDueSiteRuntimeRecoveryTargets(halfOpenAtMs + 5 * 60_000 + 1))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          siteId: site.id,
+          recoveryState: 'open',
+          breakerLevel: 2,
+        }),
+      ]));
   });
 
   it('also probes active leased channels in the background', async () => {

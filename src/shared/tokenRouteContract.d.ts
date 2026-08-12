@@ -7,6 +7,7 @@ export type RouteDecisionCandidate = {
     siteName: string;
     tokenName: string;
     priority: number;
+    sortOrder: number;
     weight: number;
     eligible: boolean;
     recentlyFailed: boolean;

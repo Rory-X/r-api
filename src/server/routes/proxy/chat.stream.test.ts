@@ -570,6 +570,8 @@ describe('chat proxy stream behavior', () => {
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.headers['cache-control']).toContain('no-transform');
     expect(response.headers['x-accel-buffering']).toBe('no');
+    expect(response.headers['server-timing']).toContain('upstream_first_byte;dur=');
+    expect(response.headers['server-timing']).toContain('metapi_stream_start;dur=');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('"delta":{"role":"assistant","content":"hello"}');
     expect(response.body).toContain('data: [DONE]');

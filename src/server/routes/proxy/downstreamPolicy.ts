@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { getProxyAuthContext } from '../../middleware/auth.js';
+import { getProxyAuthContext, verifyProxyAuthContextActive } from '../../middleware/auth.js';
 import { isModelAllowedByPolicyOrAllowedRoutes, recordManagedKeyCostUsage } from '../../services/downstreamApiKeyService.js';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY, type DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 
@@ -7,6 +7,16 @@ export function getDownstreamRoutingPolicy(request: FastifyRequest): DownstreamR
   const authContext = getProxyAuthContext(request);
   if (!authContext) return EMPTY_DOWNSTREAM_ROUTING_POLICY;
   return authContext.policy;
+}
+
+export async function ensureDownstreamPolicySnapshotActive(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<boolean> {
+  const active = await verifyProxyAuthContextActive(request);
+  if (active.ok) return true;
+  reply.code(active.statusCode).send({ error: active.error });
+  return false;
 }
 
 export async function ensureModelAllowedForDownstreamKey(

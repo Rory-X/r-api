@@ -367,6 +367,8 @@ describe('selectSurfaceChannelForAttempt', () => {
         traceHint: 'trace-1',
       },
       downstreamApiKeyId: 44,
+      requestId: 'req-log-1',
+      attemptId: 'req-log-1:attempt:0',
     });
 
     expect(composeProxyLogMessageMock).toHaveBeenCalledWith({
@@ -383,6 +385,8 @@ describe('selectSurfaceChannelForAttempt', () => {
       channelId: 11,
       accountId: 33,
       downstreamApiKeyId: 44,
+      requestId: 'req-log-1',
+      attemptId: 'req-log-1:attempt:0',
       modelRequested: 'gpt-5.2',
       modelActual: 'upstream-model',
       status: 'failed',
@@ -485,6 +489,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       status: 429,
       errText: 'quota exceeded',
       rawErrText: '{"error":"quota exceeded"}',
+      endpointId: 77,
       latencyMs: 1200,
       retryCount: 0,
     });
@@ -494,6 +499,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       status: 429,
       errorText: '{"error":"quota exceeded"}',
       modelName: 'upstream-model',
+      endpointId: 77,
     });
     expect(recordOauthQuotaResetHintMock).toHaveBeenCalledWith({
       accountId: 33,
@@ -513,6 +519,160 @@ describe('selectSurfaceChannelForAttempt', () => {
       errorMessage: 'normalized error',
       retryCount: 0,
     }));
+  });
+
+  it('allows a generic upstream 400 to switch channels before downstream output starts', async () => {
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    isTokenExpiredErrorMock.mockReturnValue(false);
+    recordOauthQuotaResetHintMock.mockResolvedValue(null);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedSurface.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+      maxRetries: 2,
+      clientContext: null,
+      downstreamApiKeyId: null,
+    });
+
+    const result = await toolkit.handleUpstreamFailure({
+      selected: {
+        channel: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'gateway-user' },
+        site: { name: 'compatibility-gateway' },
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      status: 400,
+      errText: '[upstream:/v1/responses] Upstream returned HTTP 400: 400 Bad Request',
+      rawErrText: '400 Bad Request',
+      latencyMs: 200,
+      retryCount: 0,
+      commitState: 'request_sent',
+    });
+
+    expect(result).toEqual({ action: 'retry' });
+  });
+
+  it('keeps an explicit invalid request terminal even if a caller asks to retry it', async () => {
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    isTokenExpiredErrorMock.mockReturnValue(false);
+    recordOauthQuotaResetHintMock.mockResolvedValue(null);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedSurface.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+      maxRetries: 2,
+      clientContext: null,
+      downstreamApiKeyId: null,
+    });
+
+    const result = await toolkit.handleUpstreamFailure({
+      selected: {
+        channel: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'gateway-user' },
+        site: { name: 'compatibility-gateway' },
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      status: 400,
+      errText: '[upstream:/v1/responses] Upstream returned HTTP 400: invalid request body',
+      rawErrText: '{"error":{"message":"invalid request body","type":"invalid_request_error"}}',
+      latencyMs: 200,
+      retryCount: 0,
+      commitState: 'request_sent',
+    });
+
+    expect(result).toMatchObject({ action: 'respond', status: 400 });
+  });
+
+  it('defers transient gateway retries for cooperative channels with upstream internal retry', async () => {
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    isTokenExpiredErrorMock.mockReturnValue(false);
+    recordOauthQuotaResetHintMock.mockResolvedValue(null);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedSurface.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+      maxRetries: 2,
+      clientContext: null,
+      downstreamApiKeyId: null,
+    });
+
+    const result = await toolkit.handleUpstreamFailure({
+      selected: {
+        channel: {
+          id: 11,
+          routeId: 22,
+          retryOwner: 'cooperative',
+          upstreamRetryMode: 'internal_retry',
+        },
+        account: { id: 33, username: 'gateway-user' },
+        site: { name: 'Sub2API gateway' },
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      status: 503,
+      errText: 'service unavailable',
+      latencyMs: 800,
+      retryCount: 0,
+    });
+
+    expect(result).toMatchObject({ action: 'respond', status: 503 });
+  });
+
+  it('still retries locally when the channel explicitly assigns ownership to the local proxy', async () => {
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    isTokenExpiredErrorMock.mockReturnValue(false);
+    recordOauthQuotaResetHintMock.mockResolvedValue(null);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedSurface.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+      maxRetries: 2,
+      clientContext: null,
+      downstreamApiKeyId: null,
+    });
+
+    const result = await toolkit.handleUpstreamFailure({
+      selected: {
+        channel: {
+          id: 11,
+          routeId: 22,
+          retryOwner: 'local_proxy',
+          upstreamRetryMode: 'internal_retry',
+        },
+        account: { id: 33, username: 'gateway-user' },
+        site: { name: 'Sub2API gateway' },
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      status: 503,
+      errText: 'service unavailable',
+      latencyMs: 800,
+      retryCount: 0,
+    });
+
+    expect(result).toEqual({ action: 'retry' });
   });
 
   it('keeps retryable failures on the retry path even when quota hint recording fails', async () => {
@@ -547,6 +707,43 @@ describe('selectSurfaceChannelForAttempt', () => {
       latencyMs: 1200,
       retryCount: 0,
     })).resolves.toEqual({ action: 'retry' });
+  });
+
+  it('does not retry an upstream failure whose request delivery is sent_unknown', async () => {
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    isTokenExpiredErrorMock.mockReturnValue(false);
+    recordOauthQuotaResetHintMock.mockResolvedValue(null);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedSurface.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+      maxRetries: 2,
+      clientContext: null,
+      downstreamApiKeyId: null,
+    });
+
+    const result = await toolkit.handleUpstreamFailure({
+      selected: {
+        channel: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'oauth-user' },
+        site: { name: 'Codex OAuth' },
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      status: 502,
+      errText: 'connection reset after send',
+      rawErrText: 'connection reset after send',
+      latencyMs: 1200,
+      retryCount: 0,
+      commitState: 'sent_unknown',
+    });
+
+    expect(result).toMatchObject({ action: 'respond', status: 502 });
   });
 
   it('returns a terminal upstream error response and reports token expiration when retries stop', async () => {
@@ -836,7 +1033,10 @@ describe('selectSurfaceChannelForAttempt', () => {
       dispatchRequest,
     });
 
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33, {
+      reason: 'unauthorized',
+      failedAccessToken: 'old-access-token',
+    });
     expect(selected.tokenValue).toBe('new-access-token');
     expect(selected.account.accessToken).toBe('new-access-token');
     expect(selected.account.extraConfig).toBe('{"oauth":{"refreshToken":"refresh-next"}}');
@@ -986,7 +1186,7 @@ describe('selectSurfaceChannelForAttempt', () => {
         usageSource: 'self-log',
       },
     });
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.42, 'upstream-model');
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.42, 'upstream-model', 33, null);
     expect(recordDownstreamCost).toHaveBeenCalledWith(0.42);
     expect(logSuccess).toHaveBeenCalledWith({
       selected: {
@@ -1169,7 +1369,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       '[proxy/chat] failed to record success metrics',
       expect.any(Error),
     );
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0, 'upstream-model');
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0, 'upstream-model', 33, null);
     expect(recordDownstreamCost).toHaveBeenCalledWith(0);
     expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
       promptTokens: 10,

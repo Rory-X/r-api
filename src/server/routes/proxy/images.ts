@@ -6,7 +6,7 @@ import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertSe
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
+import { ensureDownstreamPolicySnapshotActive, ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
@@ -18,10 +18,14 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  getSiteApiEndpointIdFromError,
+  runWithSiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
 import {
   buildForcedChannelUnavailableMessage,
-  canRetryChannelSelection,
+  canRetryChannelSelectionForFailure,
   getTesterForcedChannelId,
   selectProxyChannelForAttempt,
 } from '../../proxy-core/channelSelection.js';
@@ -50,6 +54,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
+      if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
       const selected = await selectProxyChannelForAttempt({
         requestedModel,
         downstreamPolicy,
@@ -131,7 +136,13 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             false,
             firstByteLatencyMs,
           );
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          if (canRetryChannelSelectionForFailure({
+            retryCount,
+            forcedChannelId,
+            selected,
+            status: 502,
+            errorText: data.message,
+          })) {
             retryCount++;
             continue;
           }
@@ -157,7 +168,14 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           });
         });
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+          tokenRouter.recordSuccess(
+            selected.channel.id,
+            latency,
+            estimatedCost,
+            upstreamModel,
+            selected.account.id,
+            firstByteLatencyMs,
+          )
         ));
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
           recordDownstreamCostUsage(request, estimatedCost)
@@ -186,6 +204,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           status,
           errorText,
           modelName: upstreamModel,
+          endpointId: getSiteApiEndpointIdFromError(err),
         }));
         logProxy(
           selected,
@@ -210,7 +229,17 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             detail: `HTTP ${status}`,
           });
         }
-        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (
+          (status > 0 ? shouldRetryProxyRequest(status, errorText) : true)
+          && canRetryChannelSelectionForFailure({
+            retryCount,
+            forcedChannelId,
+            selected,
+            status,
+            errorText,
+            ...(status > 0 ? {} : { errorScope: 'transport' as const }),
+          })
+        ) {
           retryCount++;
           continue;
         }
@@ -255,6 +284,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
+      if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
       const selected = await selectProxyChannelForAttempt({
         requestedModel,
         downstreamPolicy,
@@ -351,7 +381,13 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             false,
             firstByteLatencyMs,
           );
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          if (canRetryChannelSelectionForFailure({
+            retryCount,
+            forcedChannelId,
+            selected,
+            status: 502,
+            errorText: data.message,
+          })) {
             retryCount++;
             continue;
           }
@@ -377,7 +413,14 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           });
         });
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+          tokenRouter.recordSuccess(
+            selected.channel.id,
+            latency,
+            estimatedCost,
+            upstreamModel,
+            selected.account.id,
+            firstByteLatencyMs,
+          )
         ));
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
           recordDownstreamCostUsage(request, estimatedCost)
@@ -406,6 +449,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           status,
           errorText,
           modelName: upstreamModel,
+          endpointId: getSiteApiEndpointIdFromError(err),
         }));
         logProxy(
           selected,
@@ -430,7 +474,17 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             detail: `HTTP ${status}`,
           });
         }
-        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (
+          (status > 0 ? shouldRetryProxyRequest(status, errorText) : true)
+          && canRetryChannelSelectionForFailure({
+            retryCount,
+            forcedChannelId,
+            selected,
+            status,
+            errorText,
+            ...(status > 0 ? {} : { errorScope: 'transport' as const }),
+          })
+        ) {
           retryCount++;
           continue;
         }

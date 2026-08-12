@@ -88,6 +88,32 @@ function isExplicitGroupRoute(route: Pick<RouteRow, 'routeMode'> | Pick<typeof s
   return normalizeRouteMode(route.routeMode) === 'explicit_group';
 }
 
+function isManualRouteScheduling(route: Pick<typeof schema.tokenRoutes.$inferSelect, 'routingStrategy'>): boolean {
+  return normalizeRouteRoutingStrategy(route.routingStrategy) === 'manual';
+}
+
+async function canEditChannelScheduling(
+  sourceRoutes: Array<Pick<typeof schema.tokenRoutes.$inferSelect, 'id' | 'routingStrategy'>>,
+  schedulingRouteId?: number,
+): Promise<boolean> {
+  if (sourceRoutes.length === 0) return false;
+  if (!schedulingRouteId) {
+    return sourceRoutes.every((route) => isManualRouteScheduling(route));
+  }
+
+  const schedulingRoute = await getRouteWithSources(schedulingRouteId);
+  if (!schedulingRoute || !isManualRouteScheduling(schedulingRoute)) {
+    return false;
+  }
+
+  if (!isExplicitGroupRoute(schedulingRoute)) {
+    return sourceRoutes.every((route) => route.id === schedulingRoute.id);
+  }
+
+  const sourceRouteIdSet = new Set(schedulingRoute.sourceRouteIds);
+  return sourceRoutes.every((route) => sourceRouteIdSet.has(route.id));
+}
+
 function normalizeSourceRouteIdsInput(input: unknown): number[] {
   const rawValues = Array.isArray(input) ? input : [];
   const normalized: number[] = [];
@@ -401,6 +427,14 @@ async function populateRouteChannelsByModelPattern(routeId: number, modelPattern
   const existingChannels = await db.select().from(schema.routeChannels)
     .where(eq(schema.routeChannels.routeId, routeId))
     .all();
+  const nextSortOrderByPriority = new Map<number, number>();
+  for (const channel of existingChannels) {
+    const priority = channel.priority ?? 0;
+    nextSortOrderByPriority.set(
+      priority,
+      Math.max(nextSortOrderByPriority.get(priority) ?? 0, (channel.sortOrder ?? 0) + 1),
+    );
+  }
   const existingPairs = new Set<string>(
     existingChannels
       .map((channel) => {
@@ -415,17 +449,21 @@ async function populateRouteChannelsByModelPattern(routeId: number, modelPattern
     const tokenId = typeof candidate.tokenId === 'number' && Number.isFinite(candidate.tokenId) ? candidate.tokenId : 0;
     const pairKey = `${candidate.accountId}::${tokenId}::${candidate.sourceModel.trim().toLowerCase()}`;
     if (existingPairs.has(pairKey)) continue;
+    const priority = candidate.priority ?? 0;
+    const sortOrder = nextSortOrderByPriority.get(priority) ?? 0;
     await db.insert(schema.routeChannels).values({
       routeId,
       accountId: candidate.accountId,
       tokenId: candidate.tokenId,
       sourceModel: candidate.sourceModel,
-      priority: candidate.priority,
+      priority,
+      sortOrder,
       weight: candidate.weight,
       enabled: candidate.enabled,
       manualOverride: candidate.manualOverride,
     }).run();
     existingPairs.add(pairKey);
+    nextSortOrderByPriority.set(priority, sortOrder + 1);
     created += 1;
   }
 
@@ -456,9 +494,15 @@ async function rebuildAutomaticRouteChannelsByModelPattern(routeId: number, mode
   };
 }
 
-type BatchChannelPriorityUpdate = {
+type BatchChannelScheduleUpdate = {
   id: number;
   priority: number;
+  sortOrder: number;
+};
+
+type BatchChannelScheduleUpdates = {
+  updates: BatchChannelScheduleUpdate[];
+  schedulingRouteId?: number;
 };
 
 type BatchRouteDecisionModels = {
@@ -482,29 +526,42 @@ type BatchRouteWideDecisionRouteIds = {
   persistSnapshots?: boolean;
 };
 
-function parseBatchChannelUpdates(input: unknown): { ok: true; updates: BatchChannelPriorityUpdate[] } | { ok: false; message: string } {
+function parseBatchChannelUpdates(input: unknown): { ok: true; data: BatchChannelScheduleUpdates } | { ok: false; message: string } {
   if (!input || typeof input !== 'object') {
     return { ok: false, message: '请求体必须是对象' };
   }
 
-  const updates = (input as { updates?: unknown }).updates;
+  const { updates, schedulingRouteId } = input as { updates?: unknown; schedulingRouteId?: unknown };
   if (!Array.isArray(updates) || updates.length === 0) {
     return { ok: false, message: 'updates 必须是非空数组' };
   }
+  if (
+    schedulingRouteId !== undefined
+    && (
+      typeof schedulingRouteId !== 'number'
+      || !Number.isSafeInteger(schedulingRouteId)
+      || schedulingRouteId <= 0
+    )
+  ) {
+    return { ok: false, message: 'schedulingRouteId 必须是正整数' };
+  }
 
-  const normalized: BatchChannelPriorityUpdate[] = [];
+  const normalized: BatchChannelScheduleUpdate[] = [];
   for (let index = 0; index < updates.length; index += 1) {
     const item = updates[index];
     if (!item || typeof item !== 'object') {
       return { ok: false, message: `updates[${index}] 必须是对象` };
     }
 
-    const { id, priority } = item as { id?: unknown; priority?: unknown };
+    const { id, priority, sortOrder } = item as { id?: unknown; priority?: unknown; sortOrder?: unknown };
     if (typeof id !== 'number' || !Number.isFinite(id)) {
       return { ok: false, message: `updates[${index}].id 必须是有限数字` };
     }
     if (typeof priority !== 'number' || !Number.isFinite(priority)) {
       return { ok: false, message: `updates[${index}].priority 必须是有限数字` };
+    }
+    if (typeof sortOrder !== 'number' || !Number.isFinite(sortOrder)) {
+      return { ok: false, message: `updates[${index}].sortOrder 必须是有限数字` };
     }
 
     const normalizedId = Math.trunc(id);
@@ -515,10 +572,17 @@ function parseBatchChannelUpdates(input: unknown): { ok: true; updates: BatchCha
     normalized.push({
       id: normalizedId,
       priority: Math.max(0, Math.trunc(priority)),
+      sortOrder: Math.max(0, Math.trunc(sortOrder)),
     });
   }
 
-  return { ok: true, updates: normalized };
+  return {
+    ok: true,
+    data: {
+      updates: normalized,
+      ...(schedulingRouteId === undefined ? {} : { schedulingRouteId }),
+    },
+  };
 }
 
 function parseBatchRouteDecisionModels(
@@ -872,10 +936,13 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (isExplicitGroupRoute(route)) {
       return reply.code(400).send({ success: false, message: '显式群组不支持直接维护通道' });
     }
-
     const existingChannels = await db.select().from(schema.routeChannels)
       .where(eq(schema.routeChannels.routeId, routeId))
       .all();
+    let nextSortOrder = existingChannels.reduce(
+      (max, channel) => (channel.priority ?? 0) === 0 ? Math.max(max, (channel.sortOrder ?? 0) + 1) : max,
+      0,
+    );
     const existingPairs = new Set<string>(
       existingChannels.map((channel) => {
         const tokenId = typeof channel.tokenId === 'number' && Number.isFinite(channel.tokenId) ? channel.tokenId : 0;
@@ -913,9 +980,13 @@ export async function tokensRoutes(app: FastifyInstance) {
           tokenId: effectiveTokenId,
           sourceModel: sourceModel || null,
           priority: 0,
+          sortOrder: nextSortOrder,
           weight: 10,
           manualOverride: true,
+          retryOwner: item.retryOwner ?? 'cooperative',
+          upstreamRetryMode: item.upstreamRetryMode ?? 'unknown',
         }).run();
+        nextSortOrder += 1;
         existingPairs.add(pairKey);
         created += 1;
       } catch (e: any) {
@@ -1315,6 +1386,15 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (isExplicitGroupRoute(route)) {
       return reply.code(400).send({ success: false, message: '显式群组不支持直接维护通道' });
     }
+    if (
+      (body.priority !== undefined || body.sortOrder !== undefined || body.weight !== undefined)
+      && !isManualRouteScheduling(route)
+    ) {
+      return reply.code(400).send({
+        success: false,
+        message: '当前路由由系统自动调度，请切换到手动调度模式后编辑调度顺序或权重',
+      });
+    }
 
     const sourceModel = typeof body.sourceModel === 'string'
       ? body.sourceModel.trim()
@@ -1329,10 +1409,10 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '该令牌不支持当前模型' });
     }
 
-    const duplicate = (await db.select().from(schema.routeChannels)
+    const existingChannels = await db.select().from(schema.routeChannels)
       .where(eq(schema.routeChannels.routeId, routeId))
-      .all())
-      .some((channel) =>
+      .all();
+    const duplicate = existingChannels.some((channel) =>
         channel.accountId === body.accountId
         && (channel.tokenId ?? null) === (body.tokenId ?? null)
         && (channel.sourceModel || '').trim().toLowerCase() === sourceModel.toLowerCase(),
@@ -1341,13 +1421,23 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '该来源模型的通道已存在' });
     }
 
+    const priority = Math.max(0, Math.trunc(body.priority ?? 0));
+    const sortOrder = body.sortOrder === undefined
+      ? existingChannels.reduce(
+        (max, channel) => (channel.priority ?? 0) === priority ? Math.max(max, (channel.sortOrder ?? 0) + 1) : max,
+        0,
+      )
+      : Math.max(0, Math.trunc(body.sortOrder));
     const insertedChannel = await db.insert(schema.routeChannels).values({
       routeId,
       accountId: body.accountId,
       tokenId: body.tokenId,
       sourceModel: sourceModel || null,
-      priority: body.priority ?? 0,
+      priority,
+      sortOrder,
       weight: body.weight ?? 10,
+      retryOwner: body.retryOwner ?? 'cooperative',
+      upstreamRetryMode: body.upstreamRetryMode ?? 'unknown',
     }).run();
     const channelId = requireInsertedRowId(insertedChannel, '创建通道失败');
     const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
@@ -1360,14 +1450,14 @@ export async function tokensRoutes(app: FastifyInstance) {
     return created;
   });
 
-  // Batch update channel priorities
-  app.put<{ Body: { updates: Array<{ id: number; priority: number }> } }>('/api/channels/batch', async (request, reply) => {
+  // Batch update channel scheduling order
+  app.put<{ Body: unknown }>('/api/channels/batch', async (request, reply) => {
     const parsed = parseBatchChannelUpdates(request.body);
     if (!parsed.ok) {
       return reply.code(400).send({ success: false, message: parsed.message });
     }
 
-    const channelIds = Array.from(new Set(parsed.updates.map((update) => update.id)));
+    const channelIds = Array.from(new Set(parsed.data.updates.map((update) => update.id)));
     const existingChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, channelIds))
       .all();
@@ -1377,12 +1467,33 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: `通道不存在: ${missingId}` });
     }
 
-    for (const update of parsed.updates) {
-      await db.update(schema.routeChannels).set({
-        priority: update.priority,
-        manualOverride: true,
-      }).where(eq(schema.routeChannels.id, update.id)).run();
+    const routeIds: number[] = Array.from(new Set<number>(
+      existingChannels
+        .map((channel) => Number(channel.routeId))
+        .filter((routeId) => Number.isSafeInteger(routeId) && routeId > 0),
+    ));
+    const routes = await db.select({
+      id: schema.tokenRoutes.id,
+      routingStrategy: schema.tokenRoutes.routingStrategy,
+    }).from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, routeIds))
+      .all();
+    if (!await canEditChannelScheduling(routes, parsed.data.schedulingRouteId)) {
+      return reply.code(400).send({
+        success: false,
+        message: '当前调度路由由系统自动调度，或通道不属于指定群组；请切换到手动调度模式后编辑调度顺序',
+      });
     }
+
+    await db.transaction(async (tx) => {
+      for (const update of parsed.data.updates) {
+        await tx.update(schema.routeChannels).set({
+          priority: update.priority,
+          sortOrder: update.sortOrder,
+          manualOverride: true,
+        }).where(eq(schema.routeChannels.id, update.id)).run();
+      }
+    });
 
     const updatedChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, channelIds))
@@ -1412,6 +1523,15 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (!route) {
       return reply.code(404).send({ success: false, message: '路由不存在' });
     }
+    if (
+      (body.priority !== undefined || body.sortOrder !== undefined || body.weight !== undefined)
+      && !await canEditChannelScheduling([route], body.schedulingRouteId)
+    ) {
+      return reply.code(400).send({
+        success: false,
+        message: '当前调度路由由系统自动调度，或通道不属于指定群组；请切换到手动调度模式后编辑调度顺序或权重',
+      });
+    }
 
     if (body.tokenId !== undefined && body.tokenId !== null) {
       const tokenId = Number(body.tokenId);
@@ -1435,9 +1555,12 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
 
     if (body.priority !== undefined) updates.priority = body.priority;
+    if (body.sortOrder !== undefined) updates.sortOrder = Math.max(0, Math.trunc(body.sortOrder));
     if (body.weight !== undefined) updates.weight = body.weight;
     if (body.enabled !== undefined) updates.enabled = body.enabled;
     if (body.tokenId !== undefined) updates.tokenId = nextTokenId;
+    if (body.retryOwner !== undefined) updates.retryOwner = body.retryOwner;
+    if (body.upstreamRetryMode !== undefined) updates.upstreamRetryMode = body.upstreamRetryMode;
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);

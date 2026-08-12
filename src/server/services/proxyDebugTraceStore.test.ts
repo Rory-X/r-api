@@ -42,6 +42,7 @@ describe('proxyDebugTraceStore', () => {
       clientKind: 'codex',
       sessionId: 'sess-1',
       traceHint: 'trace-abc',
+      requestId: 'req-debug-1',
       requestedModel: 'gpt-4o',
       downstreamApiKeyId: 7,
       requestHeaders: {
@@ -78,6 +79,7 @@ describe('proxyDebugTraceStore', () => {
     const attempt = await store.insertProxyDebugAttempt({
       traceId: trace.id,
       attemptIndex: 0,
+      attemptId: 'req-debug-1:attempt:0',
       endpoint: 'responses',
       requestPath: '/responses',
       targetUrl: 'https://chatgpt.com/backend-api/codex/responses',
@@ -141,11 +143,13 @@ describe('proxyDebugTraceStore', () => {
     expect(detail?.trace.requestHeadersJson || '').toContain('Bearer developer-token');
     expect(detail?.trace.requestBodyJson || '').toContain('"hello"');
     expect(detail?.trace.finalResponseBodyJson || '').toContain('Channel busy');
+    expect(detail?.trace.requestId).toBe('req-debug-1');
     expect(detail?.attempts).toHaveLength(1);
     expect(detail?.attempts[0]?.requestHeadersJson || '').toContain('developer-token');
     expect(detail?.attempts[0]?.responseBodyJson || '').toContain('forbidden');
     expect(detail?.attempts[0]).toMatchObject({
       endpoint: 'responses',
+      attemptId: 'req-debug-1:attempt:0',
       runtimeExecutor: 'codex',
       responseStatus: 403,
       downgradeDecision: true,

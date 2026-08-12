@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { shouldAbortSameSiteEndpointFallback, shouldRetryProxyRequest } from './proxyRetryPolicy.js';
+import {
+  classifyProxyRetryFailure,
+  shouldAbortSameSiteEndpointFallback,
+  shouldRetryProxyRequest,
+} from './proxyRetryPolicy.js';
 
 describe('proxyRetryPolicy', () => {
   it('retries on rate limit and server errors', () => {
@@ -30,6 +34,19 @@ describe('proxyRetryPolicy', () => {
     expect(
       shouldRetryProxyRequest(404, '{"error":{"message":"not found"}}'),
     ).toBe(false);
+  });
+
+  it('retries a generic upstream 400 whose real cause was erased by the channel', () => {
+    expect(shouldRetryProxyRequest(400, '400 Bad Request')).toBe(true);
+    expect(
+      shouldRetryProxyRequest(400, '[upstream:/v1/responses] Upstream returned HTTP 400: 400 Bad Request'),
+    ).toBe(true);
+    expect(
+      shouldRetryProxyRequest(400, '{"error":{"message":"","type":"upstream_error"}}'),
+    ).toBe(true);
+    expect(
+      shouldRetryProxyRequest(400, '{"error":{"message":"Bad Request","type":"upstream_error"}}'),
+    ).toBe(true);
   });
 
   it('keeps retrying channel-local compatibility and auth failures', () => {
@@ -64,4 +81,27 @@ describe('proxyRetryPolicy', () => {
       shouldAbortSameSiteEndpointFallback(429, '{"error":{"message":"too many requests"}}'),
     ).toBe(true);
   });
+
+  it('exposes the shared retry contract without changing the legacy boolean API', () => {
+    expect(classifyProxyRetryFailure(429, 'rate limit')).toEqual({
+      retryable: true,
+      scope: 'upstream_gateway',
+      retryOwner: 'cooperative',
+      replaySafety: 'safe_only',
+    });
+    expect(classifyProxyRetryFailure(400, 'unsupported model', {
+      retryOwner: 'local_proxy',
+      replaySafety: 'allow_explicit',
+    })).toMatchObject({
+      retryable: true,
+      scope: 'model_capability',
+      retryOwner: 'local_proxy',
+      replaySafety: 'allow_explicit',
+    });
+    expect(classifyProxyRetryFailure(400, '400 Bad Request')).toMatchObject({
+      retryable: true,
+      scope: 'unknown',
+    });
+  });
+
 });

@@ -16,6 +16,7 @@ import {
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
+import { isOauthRefreshStateRoutable } from './oauth/refreshCoordinator.js';
 import { parseCodexQuotaResetHint } from './oauth/quota.js';
 import {
   getOauthRouteUnitStrategyLabel,
@@ -35,6 +36,23 @@ import {
   type RouteDecisionCandidate,
   type RouteMode,
 } from '../../shared/tokenRouteContract.js';
+import {
+  getProxyModelCapability,
+  invalidateProxyModelCapabilityCache,
+  peekProxyModelCapability,
+  recordProxyModelCapabilityFailure,
+  recordProxyModelCapabilitySuccess,
+  type ProxyModelCapabilityRef,
+} from './proxyModelCapabilityService.js';
+import {
+  buildProxyHealthMutation,
+  classifyProxyHealthDomain,
+  type ProxyHealthDomain,
+} from './proxyHealthDomain.js';
+import { recordSiteApiEndpointFailure } from './siteApiEndpointService.js';
+import { subscribeTokenRouterCacheInvalidation } from './tokenRouterCacheInvalidation.js';
+import { evaluateBalanceRoutingPolicy, type BalanceRoutingDecision } from './balanceRoutingPolicy.js';
+import { resolveFirstByteRoutingMultiplier } from '../../shared/firstByteRoutingPolicy.js';
 
 interface RouteMatch {
   route: RouteRow;
@@ -65,6 +83,18 @@ interface SelectedChannel {
   actualModel: string;
 }
 
+export type TokenRouterCredentialIdentity = Readonly<{
+  accountId: number;
+  tokenId: number | null;
+}>;
+
+export type TokenRouterSelectionConstraints = Readonly<{
+  allowedSiteIds?: readonly number[];
+  excludedSiteIds?: readonly number[];
+  preferredCredential?: TokenRouterCredentialIdentity | null;
+  excludedCredentials?: readonly TokenRouterCredentialIdentity[];
+}>;
+
 type FailureAwareChannel = {
   failCount?: number | null;
   lastFailAt?: string | null;
@@ -74,11 +104,18 @@ type SiteRuntimeFailureContext = {
   status?: number | null;
   errorText?: string | null;
   modelName?: string | null;
+  domain?: ProxyHealthDomain | null;
+  endpointId?: number | null;
+  channelId?: number | null;
 };
+
+export type SiteRuntimeRecoveryState = 'healthy' | 'open' | 'recovering';
 
 type SiteRuntimeHealthState = {
   penaltyScore: number;
   latencyEmaMs: number | null;
+  firstByteLatencyEmaMs: number | null;
+  firstByteSampleCount: number;
   transientFailureStreak: number;
   lastTransientFailureAtMs: number | null;
   recentSuccessCount: number;
@@ -86,10 +123,51 @@ type SiteRuntimeHealthState = {
   recentWindowUpdatedAtMs: number;
   breakerLevel: number;
   breakerUntilMs: number | null;
+  recoveryState: SiteRuntimeRecoveryState;
+  recoverySuccessCount: number;
+  lastProbeAtMs: number | null;
+  lastProbeSuccessAtMs: number | null;
   lastUpdatedAtMs: number;
   lastFailureAtMs: number | null;
   lastSuccessAtMs: number | null;
+  lastFailureReason: string | null;
+  lastFailureDomain: ProxyHealthDomain | null;
+  lastFailureEndpointId: number | null;
 };
+
+export type SiteRuntimeRecoveryTarget = Readonly<{
+  siteId: number;
+  modelName: string | null;
+  scope: 'site' | 'model';
+  recoveryState: Exclude<SiteRuntimeRecoveryState, 'healthy'>;
+  breakerLevel: number;
+  breakerUntilMs: number | null;
+  recoverySuccessCount: number;
+  lastProbeAtMs: number | null;
+}>;
+
+export type SiteRuntimeHealthSnapshot = Readonly<{
+  siteId: number;
+  scope: 'site' | 'model';
+  modelName: string | null;
+  state: SiteRuntimeRecoveryState;
+  breakerLevel: number;
+  breakerUntilMs: number | null;
+  remainingMs: number;
+  probeInFlight: boolean;
+  recoverySuccessCount: number;
+  recoverySuccessThreshold: number;
+  recoveryTrafficRatio: number;
+  firstByteLatencyEmaMs: number | null;
+  firstByteSampleCount: number;
+  firstByteMultiplier: number;
+  lastFailureAtMs: number | null;
+  lastFailureReason: string | null;
+  lastFailureDomain: ProxyHealthDomain | null;
+  lastFailureEndpointId: number | null;
+  lastProbeAtMs: number | null;
+  lastProbeSuccessAtMs: number | null;
+}>;
 
 const FAILURE_BACKOFF_BASE_SEC = 15;
 const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -107,6 +185,10 @@ const SITE_RUNTIME_MAX_LATENCY_PENALTY = 0.35;
 const SITE_RUNTIME_LATENCY_EMA_ALPHA = 0.3;
 const SITE_RUNTIME_BREAKER_STREAK_THRESHOLD = 3;
 const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 60_000, 5 * 60_000, 30 * 60 * 1000] as const;
+const SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD = 2;
+const SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO = 0.1;
+const SITE_RUNTIME_RECOVERY_PROBE_RECHECK_MS = 30_000;
+const SITE_RUNTIME_RECOVERY_PROBE_LEASE_MS = 30_000;
 const SITE_TRANSIENT_STREAK_WINDOW_MS = 5 * 60 * 1000;
 const SITE_RECENT_OUTCOME_HALF_LIFE_MS = 30 * 60 * 1000;
 const SITE_RECENT_SUCCESS_CONFIDENCE_SAMPLES = 12;
@@ -197,8 +279,15 @@ type SiteRuntimeHealthDetails = {
   globalMultiplier: number;
   modelMultiplier: number;
   combinedMultiplier: number;
+  firstByteMultiplier: number;
+  firstByteLatencyEmaMs: number | null;
+  firstByteSampleCount: number;
   globalBreakerOpen: boolean;
   modelBreakerOpen: boolean;
+  globalHalfOpenEligible: boolean;
+  modelHalfOpenEligible: boolean;
+  globalRecoveryState: SiteRuntimeRecoveryState;
+  modelRecoveryState: SiteRuntimeRecoveryState;
   modelKey: string;
   recentSuccessRate: number;
   recentSampleCount: number;
@@ -243,6 +332,11 @@ type StableFirstObservationProgressState = {
 
 const siteRuntimeHealthStates = new Map<number, SiteRuntimeHealthState>();
 const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHealthState>>();
+type SiteRuntimeRecoveryProbeLease = {
+  channelId: number;
+  expiresAtMs: number;
+};
+const siteRuntimeRecoveryProbeLeases = new Map<string, SiteRuntimeRecoveryProbeLease>();
 const stableFirstLastSelectedSiteByKey = new Map<string, number>();
 const MAX_STABLE_FIRST_ROTATION_KEYS = 1024;
 const stableFirstObservationProgressByKey = new Map<string, StableFirstObservationProgressState>();
@@ -599,19 +693,40 @@ function hydrateSiteRuntimeHealthState(raw: unknown): SiteRuntimeHealthState | n
 
   const lastUpdatedAtMs = readFiniteInteger(raw.lastUpdatedAtMs) ?? Date.now();
   const recentWindowUpdatedAtMs = readFiniteInteger(raw.recentWindowUpdatedAtMs) ?? lastUpdatedAtMs;
+  const breakerLevel = Math.max(0, readFiniteInteger(raw.breakerLevel) ?? 0);
+  const breakerUntilMs = readNullableTimestamp(raw.breakerUntilMs);
+  const persistedRecoveryState = raw.recoveryState;
+  const recoveryState: SiteRuntimeRecoveryState = (
+    persistedRecoveryState === 'open'
+    || persistedRecoveryState === 'recovering'
+    || persistedRecoveryState === 'healthy'
+  )
+    ? persistedRecoveryState
+    : (breakerLevel > 0 && breakerUntilMs != null ? 'open' : 'healthy');
   return {
     penaltyScore: Math.max(0, readFiniteNumber(raw.penaltyScore) ?? 0),
     latencyEmaMs: readFiniteNumber(raw.latencyEmaMs),
+    firstByteLatencyEmaMs: readFiniteNumber(raw.firstByteLatencyEmaMs),
+    firstByteSampleCount: Math.max(0, readFiniteInteger(raw.firstByteSampleCount) ?? 0),
     transientFailureStreak: Math.max(0, readFiniteInteger(raw.transientFailureStreak) ?? 0),
     lastTransientFailureAtMs: readNullableTimestamp(raw.lastTransientFailureAtMs),
     recentSuccessCount: Math.max(0, readFiniteNumber(raw.recentSuccessCount) ?? 0),
     recentFailureCount: Math.max(0, readFiniteNumber(raw.recentFailureCount) ?? 0),
     recentWindowUpdatedAtMs: Math.max(0, recentWindowUpdatedAtMs),
-    breakerLevel: Math.max(0, readFiniteInteger(raw.breakerLevel) ?? 0),
-    breakerUntilMs: readNullableTimestamp(raw.breakerUntilMs),
+    breakerLevel,
+    breakerUntilMs,
+    recoveryState,
+    recoverySuccessCount: Math.max(0, readFiniteInteger(raw.recoverySuccessCount) ?? 0),
+    lastProbeAtMs: readNullableTimestamp(raw.lastProbeAtMs),
+    lastProbeSuccessAtMs: readNullableTimestamp(raw.lastProbeSuccessAtMs),
     lastUpdatedAtMs: Math.max(0, lastUpdatedAtMs),
     lastFailureAtMs: readNullableTimestamp(raw.lastFailureAtMs),
     lastSuccessAtMs: readNullableTimestamp(raw.lastSuccessAtMs),
+    lastFailureReason: typeof raw.lastFailureReason === 'string' ? raw.lastFailureReason : null,
+    lastFailureDomain: typeof raw.lastFailureDomain === 'string'
+      ? raw.lastFailureDomain as ProxyHealthDomain
+      : null,
+    lastFailureEndpointId: readFiniteInteger(raw.lastFailureEndpointId),
   };
 }
 
@@ -619,6 +734,8 @@ function cloneSiteRuntimeHealthState(state: SiteRuntimeHealthState): SiteRuntime
   return {
     penaltyScore: state.penaltyScore,
     latencyEmaMs: state.latencyEmaMs,
+    firstByteLatencyEmaMs: state.firstByteLatencyEmaMs,
+    firstByteSampleCount: state.firstByteSampleCount,
     transientFailureStreak: state.transientFailureStreak,
     lastTransientFailureAtMs: state.lastTransientFailureAtMs,
     recentSuccessCount: state.recentSuccessCount,
@@ -626,9 +743,16 @@ function cloneSiteRuntimeHealthState(state: SiteRuntimeHealthState): SiteRuntime
     recentWindowUpdatedAtMs: state.recentWindowUpdatedAtMs,
     breakerLevel: state.breakerLevel,
     breakerUntilMs: state.breakerUntilMs,
+    recoveryState: state.recoveryState,
+    recoverySuccessCount: state.recoverySuccessCount,
+    lastProbeAtMs: state.lastProbeAtMs,
+    lastProbeSuccessAtMs: state.lastProbeSuccessAtMs,
     lastUpdatedAtMs: state.lastUpdatedAtMs,
     lastFailureAtMs: state.lastFailureAtMs,
     lastSuccessAtMs: state.lastSuccessAtMs,
+    lastFailureReason: state.lastFailureReason,
+    lastFailureDomain: state.lastFailureDomain,
+    lastFailureEndpointId: state.lastFailureEndpointId,
   };
 }
 
@@ -638,6 +762,8 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
     const initial: SiteRuntimeHealthState = {
       penaltyScore: 0,
       latencyEmaMs: null,
+      firstByteLatencyEmaMs: null,
+      firstByteSampleCount: 0,
       transientFailureStreak: 0,
       lastTransientFailureAtMs: null,
       recentSuccessCount: 0,
@@ -645,9 +771,16 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
       recentWindowUpdatedAtMs: nowMs,
       breakerLevel: 0,
       breakerUntilMs: null,
+      recoveryState: 'healthy',
+      recoverySuccessCount: 0,
+      lastProbeAtMs: null,
+      lastProbeSuccessAtMs: null,
       lastUpdatedAtMs: nowMs,
       lastFailureAtMs: null,
       lastSuccessAtMs: null,
+      lastFailureReason: null,
+      lastFailureDomain: null,
+      lastFailureEndpointId: null,
     };
     states.set(key, initial);
     return initial;
@@ -686,15 +819,223 @@ function getOrCreateSiteModelRuntimeHealthState(
   return getOrCreateRuntimeHealthState(modelStates, modelKey, nowMs);
 }
 
+function buildSiteRuntimeRecoveryScopeKey(siteId: number, modelKey?: string | null): string {
+  const normalizedModelKey = normalizeModelAlias(modelKey || '');
+  return normalizedModelKey ? `site:${siteId}:model:${normalizedModelKey}` : `site:${siteId}`;
+}
+
+function getActiveSiteRuntimeRecoveryLease(
+  scopeKey: string,
+  nowMs = Date.now(),
+): SiteRuntimeRecoveryProbeLease | null {
+  const lease = siteRuntimeRecoveryProbeLeases.get(scopeKey);
+  if (!lease) return null;
+  if (lease.expiresAtMs <= nowMs) {
+    siteRuntimeRecoveryProbeLeases.delete(scopeKey);
+    return null;
+  }
+  return lease;
+}
+
+function isRuntimeHealthOpen(state: SiteRuntimeHealthState | null | undefined): boolean {
+  return state?.recoveryState === 'open';
+}
+
+function isRuntimeHealthRecovering(state: SiteRuntimeHealthState | null | undefined): boolean {
+  return state?.recoveryState === 'recovering';
+}
+
+function isRuntimeRecoveryProbeDue(state: SiteRuntimeHealthState, nowMs = Date.now()): boolean {
+  if (state.recoveryState === 'open') {
+    return state.breakerUntilMs == null || state.breakerUntilMs <= nowMs;
+  }
+  if (state.recoveryState === 'recovering') {
+    return state.lastProbeAtMs == null
+      || (nowMs - state.lastProbeAtMs) >= SITE_RUNTIME_RECOVERY_PROBE_RECHECK_MS;
+  }
+  return false;
+}
+
+function getSiteRuntimeRecoveryEntries(siteId: number, modelName?: string | null): Array<{
+  scopeKey: string;
+  state: SiteRuntimeHealthState;
+}> {
+  const entries: Array<{ scopeKey: string; state: SiteRuntimeHealthState }> = [];
+  const globalState = siteRuntimeHealthStates.get(siteId);
+  if (globalState && globalState.recoveryState !== 'healthy') {
+    entries.push({
+      scopeKey: buildSiteRuntimeRecoveryScopeKey(siteId),
+      state: globalState,
+    });
+  }
+  const modelKey = normalizeModelAlias(modelName || '');
+  const modelState = modelKey ? getSiteModelRuntimeHealthState(siteId, modelKey) : null;
+  if (modelState && modelState.recoveryState !== 'healthy') {
+    entries.push({
+      scopeKey: buildSiteRuntimeRecoveryScopeKey(siteId, modelKey),
+      state: modelState,
+    });
+  }
+  return entries;
+}
+
+export async function listDueSiteRuntimeRecoveryTargets(
+  nowMs = Date.now(),
+): Promise<SiteRuntimeRecoveryTarget[]> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  const targets: SiteRuntimeRecoveryTarget[] = [];
+
+  for (const [siteId, state] of siteRuntimeHealthStates.entries()) {
+    const scopeKey = buildSiteRuntimeRecoveryScopeKey(siteId);
+    if (
+      state.recoveryState !== 'healthy'
+      && isRuntimeRecoveryProbeDue(state, nowMs)
+      && !getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs)
+    ) {
+      targets.push({
+        siteId,
+        modelName: null,
+        scope: 'site',
+        recoveryState: state.recoveryState,
+        breakerLevel: state.breakerLevel,
+        breakerUntilMs: state.breakerUntilMs,
+        recoverySuccessCount: state.recoverySuccessCount,
+        lastProbeAtMs: state.lastProbeAtMs,
+      });
+    }
+  }
+
+  for (const [siteId, modelStates] of siteModelRuntimeHealthStates.entries()) {
+    for (const [modelName, state] of modelStates.entries()) {
+      const scopeKey = buildSiteRuntimeRecoveryScopeKey(siteId, modelName);
+      if (
+        state.recoveryState !== 'healthy'
+        && isRuntimeRecoveryProbeDue(state, nowMs)
+        && !getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs)
+      ) {
+        targets.push({
+          siteId,
+          modelName,
+          scope: 'model',
+          recoveryState: state.recoveryState,
+          breakerLevel: state.breakerLevel,
+          breakerUntilMs: state.breakerUntilMs,
+          recoverySuccessCount: state.recoverySuccessCount,
+          lastProbeAtMs: state.lastProbeAtMs,
+        });
+      }
+    }
+  }
+
+  return targets;
+}
+
+export async function listSiteRuntimeHealthSnapshots(
+  nowMs = Date.now(),
+): Promise<SiteRuntimeHealthSnapshot[]> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  const snapshots: SiteRuntimeHealthSnapshot[] = [];
+  const appendSnapshot = (
+    siteId: number,
+    scope: 'site' | 'model',
+    modelName: string | null,
+    state: SiteRuntimeHealthState,
+  ) => {
+    const scopeKey = buildSiteRuntimeRecoveryScopeKey(siteId, modelName);
+    snapshots.push({
+      siteId,
+      scope,
+      modelName,
+      state: state.recoveryState,
+      breakerLevel: state.breakerLevel,
+      breakerUntilMs: state.breakerUntilMs,
+      remainingMs: state.breakerUntilMs == null ? 0 : Math.max(0, state.breakerUntilMs - nowMs),
+      probeInFlight: !!getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs),
+      recoverySuccessCount: state.recoverySuccessCount,
+      recoverySuccessThreshold: SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD,
+      recoveryTrafficRatio: SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO,
+      firstByteLatencyEmaMs: state.firstByteLatencyEmaMs,
+      firstByteSampleCount: state.firstByteSampleCount,
+      firstByteMultiplier: resolveFirstByteRoutingMultiplier({
+        latencyEmaMs: state.firstByteLatencyEmaMs,
+        sampleCount: state.firstByteSampleCount,
+        policy: config.firstByteRoutingPolicy,
+      }),
+      lastFailureAtMs: state.lastFailureAtMs,
+      lastFailureReason: state.lastFailureReason,
+      lastFailureDomain: state.lastFailureDomain,
+      lastFailureEndpointId: state.lastFailureEndpointId,
+      lastProbeAtMs: state.lastProbeAtMs,
+      lastProbeSuccessAtMs: state.lastProbeSuccessAtMs,
+    });
+  };
+
+  for (const [siteId, state] of siteRuntimeHealthStates.entries()) {
+    appendSnapshot(siteId, 'site', null, state);
+  }
+  for (const [siteId, modelStates] of siteModelRuntimeHealthStates.entries()) {
+    for (const [modelName, state] of modelStates.entries()) {
+      appendSnapshot(siteId, 'model', modelName, state);
+    }
+  }
+  return snapshots;
+}
+
+export async function claimSiteRuntimeRecoveryProbe(input: {
+  siteId: number;
+  modelName?: string | null;
+  channelId: number;
+  nowMs?: number;
+}): Promise<boolean> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  const nowMs = input.nowMs ?? Date.now();
+  const entries = getSiteRuntimeRecoveryEntries(input.siteId, input.modelName);
+  if (entries.length <= 0) return false;
+  if (entries.some(({ state }) => !isRuntimeRecoveryProbeDue(state, nowMs))) return false;
+  if (entries.some(({ scopeKey }) => getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs))) return false;
+
+  const lease: SiteRuntimeRecoveryProbeLease = {
+    channelId: input.channelId,
+    expiresAtMs: nowMs + SITE_RUNTIME_RECOVERY_PROBE_LEASE_MS,
+  };
+  for (const { scopeKey, state } of entries) {
+    siteRuntimeRecoveryProbeLeases.set(scopeKey, lease);
+    state.lastProbeAtMs = nowMs;
+    state.lastUpdatedAtMs = nowMs;
+  }
+  scheduleSiteRuntimeHealthPersistence();
+  return true;
+}
+
+export function releaseSiteRuntimeRecoveryProbe(input: {
+  siteId: number;
+  modelName?: string | null;
+  channelId: number;
+}): void {
+  const scopeKeys = [
+    buildSiteRuntimeRecoveryScopeKey(input.siteId),
+    buildSiteRuntimeRecoveryScopeKey(input.siteId, input.modelName),
+  ];
+  for (const scopeKey of scopeKeys) {
+    const lease = siteRuntimeRecoveryProbeLeases.get(scopeKey);
+    if (lease?.channelId === input.channelId) {
+      siteRuntimeRecoveryProbeLeases.delete(scopeKey);
+    }
+  }
+}
+
 function isRuntimeHealthBreakerOpen(state: SiteRuntimeHealthState | null | undefined, nowMs = Date.now()): boolean {
-  if (!state) return false;
-  return typeof state.breakerUntilMs === 'number' && state.breakerUntilMs > nowMs;
+  void nowMs;
+  return isRuntimeHealthOpen(state);
 }
 
 function getRuntimeHealthMultiplier(state: SiteRuntimeHealthState | null | undefined, nowMs = Date.now()): number {
   if (!state) return 1;
   if (isRuntimeHealthBreakerOpen(state, nowMs)) {
     return SITE_RUNTIME_MIN_MULTIPLIER;
+  }
+  if (isRuntimeHealthRecovering(state)) {
+    return SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO;
   }
   const penaltyScore = getDecayedSiteRuntimePenalty(state, nowMs);
   const failurePenaltyFactor = 1 / (1 + penaltyScore);
@@ -718,16 +1059,45 @@ function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, 
   const globalRecentSnapshot = getRecentOutcomeSnapshot(globalState, nowMs);
   const modelRecentSnapshot = modelState ? getRecentOutcomeSnapshot(modelState, nowMs) : null;
   const recentSnapshot = blendRecentOutcomeSnapshots(globalRecentSnapshot, modelRecentSnapshot);
+  const globalRecoveryState = globalState?.recoveryState ?? 'healthy';
+  const modelRecoveryState = modelState?.recoveryState ?? 'healthy';
+  const rawCombinedMultiplier = globalMultiplier * modelMultiplier;
+  const hasRecoveringScope = globalRecoveryState === 'recovering' || modelRecoveryState === 'recovering';
+  const preferredFirstByteState = (
+    modelState && modelState.firstByteSampleCount >= config.firstByteRoutingPolicy.minSamples
+  ) ? modelState : globalState;
+  const firstByteLatencyEmaMs = preferredFirstByteState?.firstByteLatencyEmaMs ?? null;
+  const firstByteSampleCount = preferredFirstByteState?.firstByteSampleCount ?? 0;
+  const firstByteMultiplier = resolveFirstByteRoutingMultiplier({
+    latencyEmaMs: firstByteLatencyEmaMs,
+    sampleCount: firstByteSampleCount,
+    policy: config.firstByteRoutingPolicy,
+  });
   return {
     globalMultiplier,
     modelMultiplier,
-    combinedMultiplier: clampNumber(
-      globalMultiplier * modelMultiplier,
-      SITE_RUNTIME_MIN_MULTIPLIER * SITE_RUNTIME_MIN_MULTIPLIER,
-      1,
-    ),
+    combinedMultiplier: hasRecoveringScope
+      ? SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO
+      : clampNumber(
+        rawCombinedMultiplier * firstByteMultiplier,
+        SITE_RUNTIME_MIN_MULTIPLIER * SITE_RUNTIME_MIN_MULTIPLIER,
+        1,
+      ),
+    firstByteMultiplier,
+    firstByteLatencyEmaMs,
+    firstByteSampleCount,
     globalBreakerOpen: isRuntimeHealthBreakerOpen(globalState, nowMs),
     modelBreakerOpen: isRuntimeHealthBreakerOpen(modelState, nowMs),
+    globalHalfOpenEligible: !!globalState
+      && globalState.recoveryState === 'open'
+      && isRuntimeRecoveryProbeDue(globalState, nowMs)
+      && !getActiveSiteRuntimeRecoveryLease(buildSiteRuntimeRecoveryScopeKey(siteId), nowMs),
+    modelHalfOpenEligible: !!modelState
+      && modelState.recoveryState === 'open'
+      && isRuntimeRecoveryProbeDue(modelState, nowMs)
+      && !getActiveSiteRuntimeRecoveryLease(buildSiteRuntimeRecoveryScopeKey(siteId, modelKey), nowMs),
+    globalRecoveryState,
+    modelRecoveryState,
     modelKey,
     recentSuccessRate: recentSnapshot.successRate,
     recentSampleCount: recentSnapshot.sampleCount,
@@ -735,10 +1105,46 @@ function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, 
   };
 }
 
+function openRuntimeHealthBreaker(
+  state: SiteRuntimeHealthState,
+  nowMs = Date.now(),
+  escalate = true,
+): void {
+  state.breakerLevel = Math.min(
+    Math.max(1, state.breakerLevel + (escalate ? 1 : 0)),
+    SITE_RUNTIME_BREAKER_LEVELS_MS.length - 1,
+  );
+  const breakerMs = resolveSiteRuntimeBreakerMs(state.breakerLevel);
+  state.breakerUntilMs = breakerMs > 0 ? nowMs + breakerMs : null;
+  state.recoveryState = 'open';
+  state.recoverySuccessCount = 0;
+  state.transientFailureStreak = 0;
+  state.lastTransientFailureAtMs = nowMs;
+  state.lastUpdatedAtMs = nowMs;
+}
+
+function recordRuntimeFailureDetails(
+  state: SiteRuntimeHealthState,
+  context: SiteRuntimeFailureContext,
+  nowMs: number,
+): void {
+  state.lastFailureAtMs = nowMs;
+  state.lastFailureReason = String(context.errorText || '').trim() || null;
+  state.lastFailureDomain = context.domain ?? null;
+  state.lastFailureEndpointId = context.endpointId ?? null;
+  state.lastUpdatedAtMs = nowMs;
+}
+
 function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
   refreshRecentOutcomeWindow(state, nowMs);
   state.recentFailureCount += 1;
   state.penaltyScore += resolveSiteRuntimeFailurePenalty(context);
+  const failedDuringRecovery = state.recoveryState !== 'healthy';
+  if (failedDuringRecovery) {
+    openRuntimeHealthBreaker(state, nowMs, true);
+    recordRuntimeFailureDetails(state, context, nowMs);
+    return;
+  }
   if (isTransientSiteRuntimeFailure(context)) {
     const lastTransientFailureAtMs = state.lastTransientFailureAtMs;
     const shouldContinueStreak = (
@@ -750,32 +1156,86 @@ function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteR
       : 1;
     state.lastTransientFailureAtMs = nowMs;
     if (state.transientFailureStreak >= SITE_RUNTIME_BREAKER_STREAK_THRESHOLD) {
-      state.breakerLevel = Math.min(state.breakerLevel + 1, SITE_RUNTIME_BREAKER_LEVELS_MS.length - 1);
-      const breakerMs = resolveSiteRuntimeBreakerMs(state.breakerLevel);
-      state.breakerUntilMs = breakerMs > 0 ? nowMs + breakerMs : null;
-      state.transientFailureStreak = 0;
+      openRuntimeHealthBreaker(state, nowMs, true);
     }
   } else {
     state.transientFailureStreak = 0;
     state.lastTransientFailureAtMs = null;
   }
-  state.lastFailureAtMs = nowMs;
+  recordRuntimeFailureDetails(state, context, nowMs);
 }
 
-function applyRuntimeHealthSuccess(state: SiteRuntimeHealthState, latencyMs: number, nowMs = Date.now()): void {
+function tripRuntimeHealthBreakerImmediately(state: SiteRuntimeHealthState, nowMs = Date.now()): void {
+  if (isRuntimeHealthBreakerOpen(state, nowMs)) return;
+  openRuntimeHealthBreaker(state, nowMs, true);
+}
+
+function applyRuntimeHealthSuccess(
+  state: SiteRuntimeHealthState,
+  latencyMs: number,
+  nowMs = Date.now(),
+  isProbe = false,
+  firstByteLatencyMs?: number | null,
+): void {
   refreshRecentOutcomeWindow(state, nowMs);
   state.recentSuccessCount += 1;
   state.penaltyScore = Math.max(0, state.penaltyScore * 0.2 - 0.3);
   state.transientFailureStreak = 0;
   state.lastTransientFailureAtMs = null;
-  state.breakerLevel = 0;
-  state.breakerUntilMs = null;
+  if (state.recoveryState === 'open') {
+    state.recoveryState = 'recovering';
+    state.recoverySuccessCount = 1;
+    state.breakerUntilMs = null;
+  } else if (state.recoveryState === 'recovering') {
+    state.recoverySuccessCount += 1;
+    if (state.recoverySuccessCount >= SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD) {
+      state.recoveryState = 'healthy';
+      state.recoverySuccessCount = 0;
+      state.breakerLevel = 0;
+      state.breakerUntilMs = null;
+    }
+  } else {
+    state.recoverySuccessCount = 0;
+    state.breakerLevel = 0;
+    state.breakerUntilMs = null;
+  }
   state.lastSuccessAtMs = nowMs;
+  state.lastUpdatedAtMs = nowMs;
+  if (isProbe) {
+    state.lastProbeAtMs = nowMs;
+    state.lastProbeSuccessAtMs = nowMs;
+  }
   const normalizedLatencyMs = Math.max(0, Math.trunc(latencyMs));
   state.latencyEmaMs = state.latencyEmaMs == null
     ? normalizedLatencyMs
     : (state.latencyEmaMs * (1 - SITE_RUNTIME_LATENCY_EMA_ALPHA))
       + (normalizedLatencyMs * SITE_RUNTIME_LATENCY_EMA_ALPHA);
+  if (
+    !isProbe
+    && typeof firstByteLatencyMs === 'number'
+    && Number.isFinite(firstByteLatencyMs)
+    && firstByteLatencyMs >= 0
+  ) {
+    const normalizedFirstByteLatencyMs = Math.max(0, Math.trunc(firstByteLatencyMs));
+    state.firstByteLatencyEmaMs = state.firstByteLatencyEmaMs == null
+      ? normalizedFirstByteLatencyMs
+      : (state.firstByteLatencyEmaMs * (1 - SITE_RUNTIME_LATENCY_EMA_ALPHA))
+        + (normalizedFirstByteLatencyMs * SITE_RUNTIME_LATENCY_EMA_ALPHA);
+    state.firstByteSampleCount += 1;
+  }
+}
+
+function applyRuntimeHealthProbeFailure(
+  state: SiteRuntimeHealthState,
+  context: SiteRuntimeFailureContext,
+  nowMs = Date.now(),
+): void {
+  refreshRecentOutcomeWindow(state, nowMs);
+  state.recentFailureCount += 1;
+  state.penaltyScore += resolveSiteRuntimeFailurePenalty(context);
+  state.lastProbeAtMs = nowMs;
+  openRuntimeHealthBreaker(state, nowMs, true);
+  recordRuntimeFailureDetails(state, context, nowMs);
 }
 
 function shouldPersistSiteRuntimeHealthState(state: SiteRuntimeHealthState, nowMs = Date.now()): boolean {
@@ -792,7 +1252,7 @@ function shouldPersistSiteRuntimeHealthState(state: SiteRuntimeHealthState, nowM
   if (isRuntimeHealthBreakerOpen(state, nowMs)) return true;
   if (getDecayedSiteRuntimePenalty(state, nowMs) >= SITE_RUNTIME_HEALTH_PERSIST_MIN_PENALTY) return true;
   if (getRecentOutcomeSnapshot(state, nowMs).sampleCount > 0.01) return true;
-  if ((state.latencyEmaMs ?? 0) > 0) return true;
+  if ((state.latencyEmaMs ?? 0) > 0 || (state.firstByteLatencyEmaMs ?? 0) > 0) return true;
   return (nowMs - lastTouchedAtMs) <= SITE_RUNTIME_HEALTH_PERSIST_IDLE_TTL_MS;
 }
 
@@ -914,26 +1374,103 @@ async function ensureSiteRuntimeHealthStateLoaded(): Promise<void> {
 }
 
 function recordSiteRuntimeFailure(siteId: number, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
-  applyRuntimeHealthFailure(getOrCreateSiteRuntimeHealthState(siteId, nowMs), context, nowMs);
+  const globalState = getOrCreateSiteRuntimeHealthState(siteId, nowMs);
+  applyRuntimeHealthFailure(globalState, context, nowMs);
   const modelState = getOrCreateSiteModelRuntimeHealthState(siteId, context.modelName, nowMs);
   if (modelState) {
     applyRuntimeHealthFailure(modelState, context, nowMs);
   }
+  // A transport failure without a concrete endpoint ID means the Site primary URL
+  // itself is the failed endpoint. Quarantine the Site immediately so the next
+  // request can use a healthy fallback instead of paying the same timeout again.
+  if (context.domain === 'endpoint' && !context.endpointId) {
+    tripRuntimeHealthBreakerImmediately(globalState, nowMs);
+    if (modelState) tripRuntimeHealthBreakerImmediately(modelState, nowMs);
+  }
+  if (context.channelId) {
+    releaseSiteRuntimeRecoveryProbe({
+      siteId,
+      modelName: context.modelName,
+      channelId: context.channelId,
+    });
+  }
   scheduleSiteRuntimeHealthPersistence();
 }
 
-function recordSiteRuntimeSuccess(siteId: number, latencyMs: number, modelName?: string | null, nowMs = Date.now()): void {
-  applyRuntimeHealthSuccess(getOrCreateSiteRuntimeHealthState(siteId, nowMs), latencyMs, nowMs);
+function recordSiteRuntimeSuccess(
+  siteId: number,
+  latencyMs: number,
+  modelName?: string | null,
+  options: {
+    nowMs?: number;
+    isProbe?: boolean;
+    channelId?: number;
+    firstByteLatencyMs?: number | null;
+  } = {},
+): void {
+  const nowMs = options.nowMs ?? Date.now();
+  applyRuntimeHealthSuccess(
+    getOrCreateSiteRuntimeHealthState(siteId, nowMs),
+    latencyMs,
+    nowMs,
+    options.isProbe,
+    options.firstByteLatencyMs,
+  );
   const modelState = getOrCreateSiteModelRuntimeHealthState(siteId, modelName, nowMs);
   if (modelState) {
-    applyRuntimeHealthSuccess(modelState, latencyMs, nowMs);
+    applyRuntimeHealthSuccess(
+      modelState,
+      latencyMs,
+      nowMs,
+      options.isProbe,
+      options.firstByteLatencyMs,
+    );
+  }
+  if (options.channelId) {
+    releaseSiteRuntimeRecoveryProbe({
+      siteId,
+      modelName,
+      channelId: options.channelId,
+    });
   }
   scheduleSiteRuntimeHealthPersistence();
+}
+
+export async function recordSiteRuntimeRecoveryProbeFailure(input: {
+  siteId: number;
+  modelName?: string | null;
+  channelId: number;
+  errorText?: string | null;
+  status?: number | null;
+  nowMs?: number;
+}): Promise<boolean> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  const nowMs = input.nowMs ?? Date.now();
+  const context: SiteRuntimeFailureContext = {
+    status: input.status,
+    errorText: input.errorText,
+    modelName: input.modelName,
+    domain: classifyProxyHealthDomain({
+      status: input.status ?? undefined,
+      errorText: input.errorText,
+    }),
+  };
+  let recorded = false;
+  for (const { scopeKey, state } of getSiteRuntimeRecoveryEntries(input.siteId, input.modelName)) {
+    const lease = getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs);
+    if (lease?.channelId !== input.channelId) continue;
+    applyRuntimeHealthProbeFailure(state, context, nowMs);
+    recorded = true;
+  }
+  releaseSiteRuntimeRecoveryProbe(input);
+  if (recorded) scheduleSiteRuntimeHealthPersistence();
+  return recorded;
 }
 
 export function resetSiteRuntimeHealthState(): void {
   siteRuntimeHealthStates.clear();
   siteModelRuntimeHealthStates.clear();
+  siteRuntimeRecoveryProbeLeases.clear();
   stableFirstObservationProgressByKey.clear();
   stableFirstObservationSiteCooldownByKey.clear();
   siteRuntimeHealthLoaded = false;
@@ -1016,6 +1553,9 @@ export function filterSiteRuntimeBrokenCandidates<T extends { site: { id: number
 }
 
 function buildRuntimeBreakerReason(details: SiteRuntimeHealthDetails): string {
+  if (details.globalRecoveryState === 'recovering' || details.modelRecoveryState === 'recovering') {
+    return `恢复观察中，仅放行 ${(SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO * 100).toFixed(0)}% 流量`;
+  }
   if (details.globalBreakerOpen && details.modelBreakerOpen) {
     return '站点熔断中，模型熔断中，优先避让';
   }
@@ -1032,42 +1572,65 @@ function filterSiteRuntimeBrokenCandidatesByModel(
   candidates: RouteChannelCandidate[],
   modelName: string | ((candidate: RouteChannelCandidate) => string),
   nowMs = Date.now(),
+  options: {
+    gateRecoveringTraffic?: boolean;
+  } = {},
 ): {
   candidates: RouteChannelCandidate[];
   avoided: Array<{ candidate: RouteChannelCandidate; reason: string }>;
 } {
-  if (candidates.length <= 1) {
-    return {
-      candidates,
-      avoided: [],
-    };
-  }
-
   const resolveModelName = typeof modelName === 'function'
     ? modelName
     : (() => modelName);
   const avoided: Array<{ candidate: RouteChannelCandidate; reason: string }> = [];
-  const healthy = candidates.filter((candidate) => {
+  const recoveryAdmissionByScope = new Map<string, boolean>();
+  const dispatchable = candidates.filter((candidate) => {
     const details = getSiteRuntimeHealthDetails(candidate.site.id, resolveModelName(candidate), nowMs);
-    const blocked = details.globalBreakerOpen || details.modelBreakerOpen;
+    const blocked = (
+      (details.globalBreakerOpen && !details.globalHalfOpenEligible)
+      || (details.modelBreakerOpen && !details.modelHalfOpenEligible)
+    );
     if (blocked) {
       avoided.push({
         candidate,
         reason: buildRuntimeBreakerReason(details),
       });
+      return false;
     }
-    return !blocked;
+    const recovering = details.globalRecoveryState === 'recovering'
+      || details.modelRecoveryState === 'recovering';
+    if (
+      recovering
+      && options.gateRecoveringTraffic
+    ) {
+      const recoveryScopeKey = [
+        details.globalRecoveryState === 'recovering'
+          ? buildSiteRuntimeRecoveryScopeKey(candidate.site.id)
+          : '',
+        details.modelRecoveryState === 'recovering'
+          ? buildSiteRuntimeRecoveryScopeKey(candidate.site.id, details.modelKey)
+          : '',
+      ].filter(Boolean).join('|');
+      let admitted = recoveryAdmissionByScope.get(recoveryScopeKey);
+      if (admitted == null) {
+        admitted = Math.random() < SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO;
+        recoveryAdmissionByScope.set(recoveryScopeKey, admitted);
+      }
+      if (!admitted) {
+        avoided.push({
+          candidate,
+          reason: buildRuntimeBreakerReason(details),
+        });
+        return false;
+      }
+    }
+    return true;
   });
 
-  return healthy.length > 0
-    ? {
-      candidates: healthy,
-      avoided,
-    }
-    : {
-      candidates,
-      avoided: [],
-    };
+  return {
+    candidates: dispatchable,
+    avoided,
+  };
 }
 
 type RouteRow = typeof schema.tokenRoutes.$inferSelect & {
@@ -1255,10 +1818,13 @@ export function invalidateTokenRouterCache(): void {
     routes: [],
   };
   routeMatchCache.clear();
+  invalidateProxyModelCapabilityCache();
   stableFirstLastSelectedSiteByKey.clear();
   stableFirstObservationProgressByKey.clear();
   stableFirstObservationSiteCooldownByKey.clear();
 }
+
+subscribeTokenRouterCacheInvalidation(invalidateTokenRouterCache);
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -1316,10 +1882,12 @@ type PricingReferenceRefreshOptions = {
 
 type CandidateEligibilityOptions = {
   requestedModel: string;
+  capabilityModelName?: string;
   bypassSourceModelCheck?: boolean;
   excludeChannelIds?: number[];
   nowIso?: string;
   downstreamPolicy?: DownstreamRoutingPolicy;
+  selectionConstraints?: TokenRouterSelectionConstraints;
 };
 
 type CostSignal = {
@@ -1532,6 +2100,40 @@ function isOauthRouteUnitCandidate(candidate: RouteChannelCandidate): boolean {
   return !!candidate.routeUnit || !!candidate.channel.oauthRouteUnitId;
 }
 
+function buildProxyModelCapabilityRef(
+  candidate: Pick<RouteChannelCandidate, 'channel' | 'account' | 'token'>,
+  modelName: string,
+): ProxyModelCapabilityRef {
+  return {
+    accountId: candidate.account.id,
+    tokenId: candidate.channel.tokenId ?? candidate.token?.id ?? null,
+    modelName,
+  };
+}
+
+function resolveCapabilityModelName(
+  candidate: RouteChannelCandidate,
+  mappedModel: string,
+  requestedByDisplayName: boolean,
+): string {
+  if (requestedByDisplayName) {
+    return normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel;
+  }
+  return mappedModel;
+}
+
+function shouldRecordSiteRuntimeHealth(domain: ProxyHealthDomain): boolean {
+  return domain === 'gateway' || domain === 'unknown';
+}
+
+async function recordProxyModelCapabilitySuccessBestEffort(ref: ProxyModelCapabilityRef): Promise<void> {
+  try {
+    await recordProxyModelCapabilitySuccess(ref);
+  } catch (error) {
+    console.warn('[tokenRouter] failed to record model capability success', error);
+  }
+}
+
 function isOauthRouteUnitMemberCoolingDown(
   member: typeof schema.oauthRouteUnitMembers.$inferSelect,
   nowIso: string,
@@ -1550,6 +2152,12 @@ function compareStableFirstCandidateOrder(left: RouteChannelCandidate, right: Ro
   if (usedOrder !== 0) return usedOrder;
 
   return (left.channel.id ?? 0) - (right.channel.id ?? 0);
+}
+
+function compareManualChannelOrder(left: RouteChannelCandidate, right: RouteChannelCandidate): number {
+  const sortOrder = (left.channel.sortOrder ?? 0) - (right.channel.sortOrder ?? 0);
+  if (sortOrder !== 0) return sortOrder;
+  return left.channel.id - right.channel.id;
 }
 
 function resolveChannelRuntimeLoadMultiplier(snapshot: ProxyChannelLoadSnapshot): number {
@@ -1835,18 +2443,95 @@ function isExplicitTokenChannel(candidate: RouteChannelCandidate): boolean {
   return typeof candidate.channel.tokenId === 'number' && candidate.channel.tokenId > 0;
 }
 
+function normalizeSelectionIdList(values: readonly number[] | undefined): number[] {
+  return Array.from(new Set((values || [])
+    .map((value) => Math.trunc(Number(value)))
+    .filter((value) => Number.isSafeInteger(value) && value > 0)));
+}
+
+function normalizeCredentialIdentity(
+  value: TokenRouterCredentialIdentity | null | undefined,
+): TokenRouterCredentialIdentity | null {
+  if (!value) return null;
+  const accountId = Math.trunc(Number(value.accountId));
+  const tokenId = value.tokenId == null ? null : Math.trunc(Number(value.tokenId));
+  if (!Number.isSafeInteger(accountId) || accountId <= 0) return null;
+  if (tokenId !== null && (!Number.isSafeInteger(tokenId) || tokenId <= 0)) return null;
+  return Object.freeze({ accountId, tokenId });
+}
+
+function normalizeSelectionConstraints(
+  constraints: TokenRouterSelectionConstraints | undefined,
+): TokenRouterSelectionConstraints {
+  const preferredCredential = normalizeCredentialIdentity(constraints?.preferredCredential);
+  const excludedCredentials = (constraints?.excludedCredentials || [])
+    .map(normalizeCredentialIdentity)
+    .filter((value): value is TokenRouterCredentialIdentity => value !== null);
+  return Object.freeze({
+    allowedSiteIds: Object.freeze(normalizeSelectionIdList(constraints?.allowedSiteIds)),
+    excludedSiteIds: Object.freeze(normalizeSelectionIdList(constraints?.excludedSiteIds)),
+    preferredCredential,
+    excludedCredentials: Object.freeze(excludedCredentials),
+  });
+}
+
+function credentialIdentityMatches(
+  candidate: { account: { id: number }; token?: { id: number } | null; channel?: { tokenId?: number | null } },
+  identity: TokenRouterCredentialIdentity,
+): boolean {
+  const tokenId = candidate.channel?.tokenId ?? candidate.token?.id ?? null;
+  return candidate.account.id === identity.accountId && tokenId === identity.tokenId;
+}
+
+function getEphemeralSelectionExclusionReason(
+  candidate: RouteChannelCandidate,
+  constraints: TokenRouterSelectionConstraints | undefined,
+): string | null {
+  if (!constraints) return null;
+  const allowedSiteIds = normalizeSelectionIdList(constraints.allowedSiteIds);
+  if (allowedSiteIds.length > 0 && !allowedSiteIds.includes(candidate.site.id)) {
+    return 'Bridge 路由约束要求保留当前 API Channel';
+  }
+  if (normalizeSelectionIdList(constraints.excludedSiteIds).includes(candidate.site.id)) {
+    return 'Bridge 路由约束要求切换 API Channel';
+  }
+  const preferredCredential = normalizeCredentialIdentity(constraints.preferredCredential);
+  if (preferredCredential && !credentialIdentityMatches(candidate, preferredCredential)) {
+    return 'Bridge 路由约束要求保留当前 Credential';
+  }
+  const excludedCredentials = (constraints.excludedCredentials || [])
+    .map(normalizeCredentialIdentity)
+    .filter((value): value is TokenRouterCredentialIdentity => value !== null);
+  if (excludedCredentials.some((identity) => credentialIdentityMatches(candidate, identity))) {
+    return 'Bridge 路由约束要求轮换 Credential';
+  }
+  return null;
+}
+
 export class TokenRouter {
   /**
    * Find matching route and select a channel for the given model.
    * Returns null if no route/channel available.
    */
-  async selectChannel(requestedModel: string, downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY): Promise<SelectedChannel | null> {
+  async selectChannel(
+    requestedModel: string,
+    downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraints: TokenRouterSelectionConstraints = {},
+  ): Promise<SelectedChannel | null> {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy);
+    await this.hydrateModelCapabilityCache(match, requestedModel);
+    return await this.selectFromMatch(
+      match,
+      requestedModel,
+      downstreamPolicy,
+      [],
+      true,
+      normalizeSelectionConstraints(selectionConstraints),
+    );
   }
 
   async previewSelectedChannel(
@@ -1858,6 +2543,7 @@ export class TokenRouter {
 
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (!match) return null;
+    await this.hydrateModelCapabilityCache(match, requestedModel);
     return await this.selectFromMatch(match, requestedModel, downstreamPolicy, [], false);
   }
 
@@ -1868,13 +2554,22 @@ export class TokenRouter {
     requestedModel: string,
     excludeChannelIds: number[],
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): Promise<SelectedChannel | null> {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, excludeChannelIds);
+    await this.hydrateModelCapabilityCache(match, requestedModel);
+    return await this.selectFromMatch(
+      match,
+      requestedModel,
+      downstreamPolicy,
+      excludeChannelIds,
+      true,
+      normalizeSelectionConstraints(selectionConstraints),
+    );
   }
 
   async selectPreferredChannel(
@@ -1882,6 +2577,7 @@ export class TokenRouter {
     preferredChannelId: number,
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
     excludeChannelIds: number[] = [],
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): Promise<SelectedChannel | null> {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     const normalizedPreferredChannelId = Math.trunc(preferredChannelId || 0);
@@ -1890,12 +2586,15 @@ export class TokenRouter {
 
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (!match) return null;
+    await this.hydrateModelCapabilityCache(match, requestedModel);
     return await this.selectPreferredFromMatch(
       match,
       requestedModel,
       normalizedPreferredChannelId,
       downstreamPolicy,
       excludeChannelIds,
+      true,
+      normalizeSelectionConstraints(selectionConstraints),
     );
   }
 
@@ -1906,6 +2605,7 @@ export class TokenRouter {
   ): Promise<RouteDecisionExplanation> {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRoute(requestedModel, downstreamPolicy);
+    if (match) await this.hydrateModelCapabilityCache(match, requestedModel);
     return this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy });
   }
 
@@ -1917,6 +2617,7 @@ export class TokenRouter {
   ): Promise<RouteDecisionExplanation> {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRouteById(routeId, downstreamPolicy);
+    if (match) await this.hydrateModelCapabilityCache(match, requestedModel);
     return this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy });
   }
 
@@ -1924,6 +2625,7 @@ export class TokenRouter {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRouteById(routeId, downstreamPolicy);
     const fallbackRequestedModel = match?.route.modelPattern || `route:${routeId}`;
+    if (match) await this.hydrateModelCapabilityCache(match, fallbackRequestedModel);
     return this.explainSelectionFromMatch(match, fallbackRequestedModel, {
       bypassSourceModelCheck: true,
       useChannelSourceModelForCost: true,
@@ -1996,7 +2698,11 @@ export class TokenRouter {
       `命中路由：${match.route.modelPattern}`,
       routeStrategy === 'round_robin'
         ? '路由策略：轮询'
-        : (routeStrategy === 'stable_first' ? '路由策略：稳定优先' : '路由策略：按权重随机'),
+        : (
+          routeStrategy === 'stable_first'
+            ? '路由策略：稳定优先'
+            : (routeStrategy === 'manual' ? '路由策略：手动调度（P 优先级 + 组内顺序）' : '路由策略：按权重随机')
+        ),
     ];
     if (requestedByDisplayName) {
       summary.push(`按显示名命中：${normalizeRouteDisplayName(match.route.displayName)}`);
@@ -2009,6 +2715,7 @@ export class TokenRouter {
     for (const row of match.channels) {
       const reasonParts = this.getCandidateEligibilityReasons(row, {
         requestedModel,
+        capabilityModelName: resolveCapabilityModelName(row, mappedModel, requestedByDisplayName),
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
@@ -2026,6 +2733,7 @@ export class TokenRouter {
         siteName: row.site.name || 'unknown',
         tokenName: row.token?.name || 'default',
         priority: row.channel.priority ?? 0,
+        sortOrder: row.channel.sortOrder ?? 0,
         weight: row.channel.weight ?? 10,
         eligible,
         recentlyFailed,
@@ -2127,7 +2835,11 @@ export class TokenRouter {
     }
 
     if (routeStrategy === 'stable_first') {
-      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
+      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(
+        available,
+        runtimeModelResolver,
+        nowMs,
+      );
       if (breakerFiltered.avoided.length > 0) {
         for (const item of breakerFiltered.avoided) {
           const target = candidateMap.get(item.candidate.channel.id);
@@ -2295,11 +3007,41 @@ export class TokenRouter {
       };
     }
 
+    const routeBreakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(
+      available,
+      runtimeModelResolver,
+      nowMs,
+    );
+    for (const item of routeBreakerFiltered.avoided) {
+      const target = candidateMap.get(item.candidate.channel.id);
+      if (!target) continue;
+      target.reason = item.reason;
+    }
+
     const availableByPriority = new Map<number, RouteChannelCandidate[]>();
-    for (const row of available) {
+    for (const row of routeBreakerFiltered.candidates) {
       const priority = row.channel.priority ?? 0;
       if (!availableByPriority.has(priority)) availableByPriority.set(priority, []);
       availableByPriority.get(priority)!.push(row);
+    }
+
+    const manualOrderByChannelId = new Map<number, { position: number; total: number }>();
+    if (routeStrategy === 'manual') {
+      const configuredByPriority = new Map<number, RouteChannelCandidate[]>();
+      for (const row of match.channels) {
+        const priority = row.channel.priority ?? 0;
+        if (!configuredByPriority.has(priority)) configuredByPriority.set(priority, []);
+        configuredByPriority.get(priority)!.push(row);
+      }
+      for (const rows of configuredByPriority.values()) {
+        const orderedRows = [...rows].sort(compareManualChannelOrder);
+        orderedRows.forEach((row, index) => {
+          manualOrderByChannelId.set(row.channel.id, {
+            position: index + 1,
+            total: orderedRows.length,
+          });
+        });
+      }
     }
 
     const sortedPriorities = Array.from(availableByPriority.keys()).sort((a, b) => a - b);
@@ -2310,17 +3052,8 @@ export class TokenRouter {
       const rawLayer = availableByPriority.get(priority) ?? [];
       if (rawLayer.length === 0) continue;
 
-      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(rawLayer, runtimeModelResolver, nowMs);
-      if (breakerFiltered.avoided.length > 0) {
-        for (const item of breakerFiltered.avoided) {
-          const target = candidateMap.get(item.candidate.channel.id);
-          if (!target) continue;
-          target.reason = item.reason;
-        }
-      }
-
-      const filteredLayer = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
-      const avoided = breakerFiltered.candidates.filter((row) => !filteredLayer.some((item) => item.channel.id === row.channel.id));
+      const filteredLayer = filterRecentlyFailedCandidates(rawLayer, nowMs);
+      const avoided = rawLayer.filter((row) => !filteredLayer.some((item) => item.channel.id === row.channel.id));
       if (avoided.length > 0) {
         for (const row of avoided) {
           const target = candidateMap.get(row.channel.id);
@@ -2330,31 +3063,53 @@ export class TokenRouter {
         }
       }
 
-      const weighted = this.calculateWeightedSelection(
-        filteredLayer,
-        useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
-        downstreamPolicy,
-        nowMs,
-        'weighted',
-      );
-      for (const detail of weighted.details) {
-        const target = candidateMap.get(detail.candidate.channel.id);
-        if (!target) continue;
-        target.probability = Number((detail.probability * 100).toFixed(2));
-        if (target.eligible && !target.avoidedByRecentFailure) {
-          target.reason = detail.reason;
+      if (routeStrategy === 'manual') {
+        const orderedLayer = [...filteredLayer].sort(compareManualChannelOrder);
+        for (let index = 0; index < orderedLayer.length; index += 1) {
+          const target = candidateMap.get(orderedLayer[index].channel.id);
+          if (!target) continue;
+          target.probability = index === 0 ? 100 : 0;
+          if (target.eligible && !target.avoidedByRecentFailure) {
+            const configuredOrder = manualOrderByChannelId.get(orderedLayer[index].channel.id);
+            const orderLabel = configuredOrder
+              ? `#${configuredOrder.position} / ${configuredOrder.total}`
+              : `#${index + 1} / ${orderedLayer.length}`;
+            target.reason = index === 0
+              ? `组内顺序 ${orderLabel}，当前首个可用通道`
+              : `组内顺序 ${orderLabel}，等待前序可用通道`;
+          }
         }
+        selected = orderedLayer[0] ?? null;
+      } else {
+        const weighted = this.calculateWeightedSelection(
+          filteredLayer,
+          useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
+          downstreamPolicy,
+          nowMs,
+          'weighted',
+        );
+        for (const detail of weighted.details) {
+          const target = candidateMap.get(detail.candidate.channel.id);
+          if (!target) continue;
+          target.probability = Number((detail.probability * 100).toFixed(2));
+          if (target.eligible && !target.avoidedByRecentFailure) {
+            target.reason = detail.reason;
+          }
+        }
+        selected = weighted.selected;
       }
 
-      if (!weighted.selected) continue;
-      selected = weighted.selected;
+      if (!selected) continue;
       selectedPriority = priority;
       const layerSummaryParts = [`优先级 P${priority}：可用 ${rawLayer.length}`];
-      if (breakerFiltered.avoided.length > 0) {
-        const breakerSummaryLabel = breakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
+      if (routeStrategy === 'manual') {
+        layerSummaryParts.push('同层按从上到下的顺序调用');
+      }
+      if (routeBreakerFiltered.avoided.length > 0) {
+        const breakerSummaryLabel = routeBreakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
           ? '运行时熔断避让'
           : '站点熔断避让';
-        layerSummaryParts.push(`${breakerSummaryLabel} ${breakerFiltered.avoided.length}`);
+        layerSummaryParts.push(`${breakerSummaryLabel} ${routeBreakerFiltered.avoided.length}`);
       }
       if (avoided.length > 0) {
         layerSummaryParts.push(`最近失败避让 ${avoided.length}`);
@@ -2386,7 +3141,12 @@ export class TokenRouter {
       mappedModel,
       selected.channel.sourceModel,
     );
-    summary.push(`最终选择：${selectedLabel}（P${selectedPriority}）`);
+    const selectedOrder = manualOrderByChannelId.get(selected.channel.id)?.position ?? 1;
+    summary.push(
+      routeStrategy === 'manual'
+        ? `最终选择：${selectedLabel}（P${selectedPriority}，组内 #${selectedOrder}）`
+        : `最终选择：${selectedLabel}（P${selectedPriority}）`,
+    );
     if (actualModel !== mappedModel) {
       summary.push(`实际转发模型：${actualModel}`);
     }
@@ -2453,6 +3213,7 @@ export class TokenRouter {
     cost: number,
     modelName?: string | null,
     actualAccountId?: number,
+    firstByteLatencyMs?: number | null,
   ) {
     await ensureSiteRuntimeHealthStateLoaded();
     const row = await db.select()
@@ -2497,13 +3258,43 @@ export class TokenRouter {
           cooldownLevel: 0,
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
-        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName);
+        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName, {
+          channelId,
+          firstByteLatencyMs,
+        });
+        if (modelName) {
+          await recordProxyModelCapabilitySuccessBestEffort({
+            accountId: memberRow.account.id,
+            tokenId: null,
+            modelName,
+          });
+        }
       } else {
-        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+          channelId,
+          firstByteLatencyMs,
+        });
+        if (modelName) {
+          await recordProxyModelCapabilitySuccessBestEffort({
+            accountId: account.id,
+            tokenId: ch.tokenId,
+            modelName,
+          });
+        }
       }
       invalidateRouteScopedCache(ch.routeId);
     } else {
-      recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+      recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+        channelId,
+        firstByteLatencyMs,
+      });
+      if (modelName) {
+        await recordProxyModelCapabilitySuccessBestEffort({
+          accountId: account.id,
+          tokenId: ch.tokenId,
+          modelName,
+        });
+      }
     }
 
     await db.update(schema.routeChannels).set({
@@ -2569,9 +3360,29 @@ export class TokenRouter {
           cooldownLevel: 0,
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
-        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName);
+        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName, {
+          channelId,
+          isProbe: true,
+        });
+        if (modelName) {
+          await recordProxyModelCapabilitySuccessBestEffort({
+            accountId: memberRow.account.id,
+            tokenId: null,
+            modelName,
+          });
+        }
       } else {
-        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+          channelId,
+          isProbe: true,
+        });
+        if (modelName) {
+          await recordProxyModelCapabilitySuccessBestEffort({
+            accountId: account.id,
+            tokenId: ch.tokenId,
+            modelName,
+          });
+        }
       }
 
       await db.update(schema.routeChannels).set({
@@ -2651,7 +3462,17 @@ export class TokenRouter {
       }
     }
 
-    recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+    recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+      channelId,
+      isProbe: true,
+    });
+    if (modelName) {
+      await recordProxyModelCapabilitySuccessBestEffort({
+        accountId: account.id,
+        tokenId: ch.tokenId,
+        modelName,
+      });
+    }
   }
 
   /**
@@ -2717,6 +3538,48 @@ export class TokenRouter {
     const normalizedContext: SiteRuntimeFailureContext = typeof context === 'string'
       ? { modelName: context }
       : (context ?? {});
+    normalizedContext.channelId = channelId;
+    const domain = normalizedContext.domain
+      || (isUsageLimitRateLimitFailure(normalizedContext)
+        ? 'credential'
+        : classifyProxyHealthDomain({
+          status: normalizedContext.status ?? undefined,
+          errorText: normalizedContext.errorText,
+        }));
+    normalizedContext.domain = domain;
+    const mutation = buildProxyHealthMutation(domain);
+    const targetAccountId = Number.isFinite(actualAccountId) && (actualAccountId ?? 0) > 0
+      ? Math.trunc(actualAccountId!)
+      : account.id;
+
+    if (domain === 'model_capability') {
+      const modelName = String(normalizedContext.modelName || '').trim()
+        || (isExactRouteModelPattern(route.modelPattern) ? route.modelPattern.trim() : '');
+      if (modelName) {
+        await recordProxyModelCapabilityFailure({
+          accountId: targetAccountId,
+          tokenId: targetAccountId === account.id ? ch.tokenId : null,
+          modelName,
+        });
+      }
+      invalidateRouteScopedCache(route.id);
+      return;
+    }
+
+    // Request and stream faults must not cool a credential or route. A concrete
+    // endpoint is isolated in its own pool; a missing endpoint ID means the Site
+    // primary URL failed and needs a Site-level breaker instead.
+    if (domain === 'endpoint' || domain === 'request' || domain === 'stream') {
+      if (domain === 'endpoint' && normalizedContext.endpointId) {
+        await recordSiteApiEndpointFailure(normalizedContext.endpointId, {
+          status: normalizedContext.status,
+          message: normalizedContext.errorText,
+        }, nowIso);
+      } else if (domain === 'endpoint') {
+        recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
+      }
+      return;
+    }
     if (typeof ch.oauthRouteUnitId === 'number' && ch.oauthRouteUnitId > 0) {
       const targetAccountId = Number.isFinite(actualAccountId) && (actualAccountId ?? 0) > 0
         ? Math.trunc(actualAccountId!)
@@ -2747,6 +3610,10 @@ export class TokenRouter {
           cooldownUntil = shortWindowLimitCooldownUntil;
           consecutiveFailCount = 0;
           cooldownLevel = 0;
+        } else if (mutation.affectsCredential) {
+          cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(Math.max(1, failCount))).toISOString();
+          consecutiveFailCount = 0;
+          cooldownLevel = 0;
         } else if (routeUnitStrategy === 'round_robin') {
           if (consecutiveFailCount >= ROUND_ROBIN_FAILURE_THRESHOLD) {
             cooldownLevel = Math.min(cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1);
@@ -2770,7 +3637,9 @@ export class TokenRouter {
           cooldownUntil,
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
-        recordSiteRuntimeFailure(memberRow.account.siteId, normalizedContext, nowMs);
+        if (shouldRecordSiteRuntimeHealth(domain)) {
+          recordSiteRuntimeFailure(memberRow.account.siteId, normalizedContext, nowMs);
+        }
         invalidateRouteScopedCache(route.id);
         return;
       }
@@ -2779,7 +3648,7 @@ export class TokenRouter {
     const shortWindowLimitCooldownUntil = resolveShortWindowLimitCooldown(account, normalizedContext, nowMs);
     const failCount = shortWindowLimitCooldownUntil ? 0 : ((ch.failCount ?? 0) + 1);
     const routeStrategy = resolveRouteStrategy(route);
-    const affectedChannelIds = shortWindowLimitCooldownUntil
+    const affectedChannelIds = shortWindowLimitCooldownUntil || mutation.affectsCredential
       ? await loadCredentialScopedChannelIds(ch, account.id)
       : [channelId];
     let cooldownUntil: string | null = null;
@@ -2788,6 +3657,10 @@ export class TokenRouter {
 
     if (shortWindowLimitCooldownUntil) {
       cooldownUntil = shortWindowLimitCooldownUntil;
+      consecutiveFailCount = 0;
+      cooldownLevel = 0;
+    } else if (mutation.affectsCredential) {
+      cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(Math.max(1, failCount))).toISOString();
       consecutiveFailCount = 0;
       cooldownLevel = 0;
     } else if (routeStrategy === 'round_robin') {
@@ -2823,7 +3696,9 @@ export class TokenRouter {
       });
     }
 
-    recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
+    if (shouldRecordSiteRuntimeHealth(domain)) {
+      recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
+    }
   }
 
   /**
@@ -2839,12 +3714,39 @@ export class TokenRouter {
 
   // --- Private methods ---
 
+  private async hydrateModelCapabilityCache(
+    match: RouteMatch,
+    requestedModel: string,
+  ): Promise<void> {
+    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
+    const jobs: Promise<unknown>[] = [];
+
+    for (const candidate of match.channels) {
+      const capabilityModelName = resolveCapabilityModelName(candidate, mappedModel, requestedByDisplayName);
+      if (isOauthRouteUnitCandidate(candidate)) {
+        for (const member of candidate.routeUnitMembers) {
+          jobs.push(getProxyModelCapability(buildProxyModelCapabilityRef({
+            channel: candidate.channel,
+            account: member.account,
+            token: null,
+          }, capabilityModelName)));
+        }
+        continue;
+      }
+      jobs.push(getProxyModelCapability(buildProxyModelCapabilityRef(candidate, capabilityModelName)));
+    }
+
+    await Promise.all(jobs);
+  }
+
   private async selectFromMatch(
     match: RouteMatch,
     requestedModel: string,
     downstreamPolicy: DownstreamRoutingPolicy,
     excludeChannelIds: number[] = [],
     recordSelection = true,
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): Promise<SelectedChannel | null> {
     const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
     const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
@@ -2859,17 +3761,24 @@ export class TokenRouter {
     const available = match.channels.filter((candidate) => (
       this.getCandidateEligibilityReasons(candidate, {
         requestedModel,
+        capabilityModelName: resolveCapabilityModelName(candidate, mappedModel, requestedByDisplayName),
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraints,
       }).length === 0
     ));
 
     if (available.length === 0) return null;
 
     if (routeStrategy === 'round_robin') {
-      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
+      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(
+        available,
+        runtimeModelResolver,
+        nowMs,
+        { gateRecoveringTraffic: true },
+      );
       const selected = this.selectRoundRobinCandidate(breakerFiltered.candidates);
       if (!selected) return null;
       return await this.finalizeSelectedCandidateForDispatch(
@@ -2885,11 +3794,17 @@ export class TokenRouter {
         undefined,
         false,
         excludeChannelIds,
+        selectionConstraints,
       );
     }
 
     if (routeStrategy === 'stable_first') {
-      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
+      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(
+        available,
+        runtimeModelResolver,
+        nowMs,
+        { gateRecoveringTraffic: true },
+      );
       const candidates = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
       const rotationKey = this.buildStableFirstRotationKey(match.route.id, requestedModel);
       const poolPlan = buildStableFirstPoolPlan(
@@ -2931,11 +3846,18 @@ export class TokenRouter {
         `${rotationKey}:observe`,
         shouldUseObservation,
         excludeChannelIds,
+        selectionConstraints,
       );
     }
 
+    const breakerFilteredAvailable = filterSiteRuntimeBrokenCandidatesByModel(
+      available,
+      runtimeModelResolver,
+      nowMs,
+      { gateRecoveringTraffic: true },
+    ).candidates;
     const layers = new Map<number, typeof available>();
-    for (const candidate of available) {
+    for (const candidate of breakerFilteredAvailable) {
       const priority = candidate.channel.priority ?? 0;
       if (!layers.has(priority)) layers.set(priority, []);
       layers.get(priority)!.push(candidate);
@@ -2944,8 +3866,29 @@ export class TokenRouter {
     const sortedPriorities = Array.from(layers.keys()).sort((a, b) => a - b);
     for (const priority of sortedPriorities) {
       const rawLayer = layers.get(priority) ?? [];
-      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(rawLayer, runtimeModelResolver, nowMs);
-      const candidates = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
+      const candidates = filterRecentlyFailedCandidates(rawLayer, nowMs);
+      if (routeStrategy === 'manual') {
+        const orderedCandidates = [...candidates].sort(compareManualChannelOrder);
+        for (const candidate of orderedCandidates) {
+          const resolved = await this.finalizeSelectedCandidateForDispatch(
+            candidate,
+            match,
+            requestedModel,
+            mappedModel,
+            downstreamPolicy,
+            recordSelection,
+            nowIso,
+            nowMs,
+            undefined,
+            undefined,
+            false,
+            excludeChannelIds,
+            selectionConstraints,
+          );
+          if (resolved) return resolved;
+        }
+        continue;
+      }
       const selected = this.weightedRandomSelect(
         candidates,
         requestedByDisplayName ? runtimeModelResolver : mappedModel,
@@ -2966,6 +3909,7 @@ export class TokenRouter {
         undefined,
         false,
         excludeChannelIds,
+        selectionConstraints,
       );
       if (resolved) return resolved;
     }
@@ -2980,6 +3924,7 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     excludeChannelIds: number[] = [],
     recordSelection = true,
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): Promise<SelectedChannel | null> {
     const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
     const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
@@ -2994,21 +3939,36 @@ export class TokenRouter {
     const available = match.channels.filter((candidate) => (
       this.getCandidateEligibilityReasons(candidate, {
         requestedModel,
+        capabilityModelName: resolveCapabilityModelName(candidate, mappedModel, requestedByDisplayName),
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraints,
       }).length === 0
     ));
 
     const preferred = available.find((candidate) => candidate.channel.id === preferredChannelId);
     if (!preferred) return null;
 
-    const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel([preferred], runtimeModelResolver, nowMs);
-    if (breakerFiltered.candidates.length <= 0) return null;
+    const preferredHealth = getSiteRuntimeHealthDetails(
+      preferred.site.id,
+      typeof runtimeModelResolver === 'function' ? runtimeModelResolver(preferred) : runtimeModelResolver,
+      nowMs,
+    );
+    if (
+      (preferredHealth.globalBreakerOpen && !preferredHealth.globalHalfOpenEligible)
+      || (preferredHealth.modelBreakerOpen && !preferredHealth.modelHalfOpenEligible)
+    ) return null;
+    if (
+      (
+        preferredHealth.globalRecoveryState === 'recovering'
+        || preferredHealth.modelRecoveryState === 'recovering'
+      )
+      && Math.random() >= SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO
+    ) return null;
 
-    const selected = breakerFiltered.candidates.find((candidate) => candidate.channel.id === preferredChannelId);
-    if (!selected) return null;
+    const selected = preferred;
     if (!isOauthRouteUnitCandidate(selected) && routeStrategy !== 'round_robin' && isChannelRecentlyFailed(selected.channel, nowMs)) {
       return null;
     }
@@ -3025,6 +3985,7 @@ export class TokenRouter {
       routeStrategy === 'stable_first' ? `${this.buildStableFirstRotationKey(match.route.id, requestedModel)}:observe` : undefined,
       false,
       excludeChannelIds,
+      selectionConstraints,
     );
   }
 
@@ -3110,6 +4071,19 @@ export class TokenRouter {
       reasonParts.push(`账号状态=${memberCandidate.account.status}`);
     }
 
+    const balanceDecision = evaluateBalanceRoutingPolicy({
+      balance: memberCandidate.account.balance,
+      lastBalanceRefresh: memberCandidate.account.lastBalanceRefresh,
+      policy: config.balanceRoutingPolicy,
+    });
+    if (!balanceDecision.eligible) {
+      reasonParts.push(`余额策略硬阻断（余额=${balanceDecision.balance ?? '未知'}）`);
+    }
+
+    if (!isOauthRefreshStateRoutable(memberCandidate.account)) {
+      reasonParts.push(`OAuth 刷新状态=${memberCandidate.account.oauthRefreshState}`);
+    }
+
     if (isSiteDisabled(memberCandidate.site.status)) {
       reasonParts.push(`站点状态=${memberCandidate.site.status || 'disabled'}`);
     }
@@ -3120,6 +4094,23 @@ export class TokenRouter {
     );
     if (downstreamExclusionReason) {
       reasonParts.push(downstreamExclusionReason);
+    }
+
+    const ephemeralSelectionExclusion = getEphemeralSelectionExclusionReason(
+      this.buildRouteUnitMemberDispatchCandidate(outerCandidate, memberCandidate),
+      options.selectionConstraints,
+    );
+    if (ephemeralSelectionExclusion) {
+      reasonParts.push(ephemeralSelectionExclusion);
+    }
+
+    const capability = peekProxyModelCapability(buildProxyModelCapabilityRef({
+      channel: outerCandidate.channel,
+      account: memberCandidate.account,
+      token: null,
+    }, options.capabilityModelName || options.requestedModel));
+    if (capability?.status === 'unsupported') {
+      reasonParts.push(`模型能力不可用=${options.capabilityModelName || options.requestedModel}`);
     }
 
     const tokenValue = this.resolveRouteUnitMemberTokenValue(memberCandidate);
@@ -3182,18 +4173,22 @@ export class TokenRouter {
   private selectRouteUnitMember(
     candidate: RouteChannelCandidate,
     requestedModel: string,
+    capabilityModelName: string,
     downstreamPolicy: DownstreamRoutingPolicy,
     nowIso: string,
     nowMs: number,
     excludeChannelIds: number[] = [],
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): RouteChannelCandidate['routeUnitMembers'][number] | null {
     if (!isOauthRouteUnitCandidate(candidate)) return null;
     const eligibleMembers = this.getEligibleRouteUnitMembers(candidate, {
       requestedModel,
+      capabilityModelName,
       bypassSourceModelCheck: true,
       excludeChannelIds: [],
       nowIso,
       downstreamPolicy,
+      selectionConstraints,
     });
     if (eligibleMembers.length === 0) return null;
 
@@ -3328,6 +4323,15 @@ export class TokenRouter {
     const bypassSourceModelCheck = options.bypassSourceModelCheck ?? false;
     const excludeChannelIds = options.excludeChannelIds ?? [];
     const nowIso = options.nowIso ?? new Date().toISOString();
+    const selectionConstraints = options.selectionConstraints;
+
+    const allowedSiteIds = normalizeSelectionIdList(selectionConstraints?.allowedSiteIds);
+    if (allowedSiteIds.length > 0 && !allowedSiteIds.includes(candidate.site.id)) {
+      reasonParts.push('Bridge 路由约束要求保留当前 API Channel');
+    }
+    if (normalizeSelectionIdList(selectionConstraints?.excludedSiteIds).includes(candidate.site.id)) {
+      reasonParts.push('Bridge 路由约束要求切换 API Channel');
+    }
 
     if (!bypassSourceModelCheck && !channelSupportsRequestedModel(candidate.channel.sourceModel, options.requestedModel)) {
       reasonParts.push(`来源模型不匹配=${candidate.channel.sourceModel || ''}`);
@@ -3347,6 +4351,14 @@ export class TokenRouter {
       return reasonParts;
     }
 
+    const ephemeralSelectionExclusion = getEphemeralSelectionExclusionReason(
+      candidate,
+      selectionConstraints,
+    );
+    if (ephemeralSelectionExclusion && !reasonParts.includes(ephemeralSelectionExclusion)) {
+      reasonParts.push(ephemeralSelectionExclusion);
+    }
+
     if (isExplicitTokenChannel(candidate)) {
       if (candidate.account.status === 'disabled') {
         reasonParts.push(`账号状态=${candidate.account.status}`);
@@ -3355,13 +4367,34 @@ export class TokenRouter {
       reasonParts.push(`账号状态=${candidate.account.status}`);
     }
 
+    if (!isOauthRefreshStateRoutable(candidate.account)) {
+      reasonParts.push(`OAuth 刷新状态=${candidate.account.oauthRefreshState}`);
+    }
+
     if (isSiteDisabled(candidate.site.status)) {
       reasonParts.push(`站点状态=${candidate.site.status || 'disabled'}`);
+    }
+
+    const balanceDecision = evaluateBalanceRoutingPolicy({
+      balance: candidate.account.balance,
+      lastBalanceRefresh: candidate.account.lastBalanceRefresh,
+      policy: config.balanceRoutingPolicy,
+    });
+    if (!balanceDecision.eligible) {
+      reasonParts.push(`余额策略硬阻断（余额=${balanceDecision.balance ?? '未知'}）`);
     }
 
     const downstreamExclusionReason = this.resolveDownstreamExclusionReason(candidate, options.downstreamPolicy);
     if (downstreamExclusionReason) {
       reasonParts.push(downstreamExclusionReason);
+    }
+
+    const capability = peekProxyModelCapability(buildProxyModelCapabilityRef(
+      candidate,
+      options.capabilityModelName || options.requestedModel,
+    ));
+    if (capability?.status === 'unsupported') {
+      reasonParts.push(`模型能力不可用=${options.capabilityModelName || options.requestedModel}`);
     }
 
     if (excludeChannelIds.includes(candidate.channel.id)) {
@@ -3455,6 +4488,7 @@ export class TokenRouter {
     stableFirstObservationKey?: string,
     usedObservation = false,
     excludeChannelIds: number[] = [],
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): Promise<SelectedChannel | null> {
     let dispatchCandidate = selected;
     let resolvedRouteUnitMemberTokenValue: string | null = null;
@@ -3462,10 +4496,17 @@ export class TokenRouter {
       const member = this.selectRouteUnitMember(
         selected,
         requestedModel,
+        resolveActualModelForSelectedChannel(
+          requestedModel,
+          match.route,
+          mappedModel,
+          selected.channel.sourceModel,
+        ),
         downstreamPolicy,
         nowIso,
         nowMs,
         excludeChannelIds,
+        selectionConstraints,
       );
       if (!member || !selected.routeUnit) return null;
       resolvedRouteUnitMemberTokenValue = this.resolveRouteUnitMemberTokenValue(member);
@@ -3477,6 +4518,23 @@ export class TokenRouter {
 
     const tokenValue = resolvedRouteUnitMemberTokenValue ?? this.resolveChannelTokenValue(dispatchCandidate);
     if (!tokenValue) return null;
+
+    const actualModel = resolveActualModelForSelectedChannel(
+      requestedModel,
+      match.route,
+      mappedModel,
+      selected.channel.sourceModel,
+    );
+    const runtimeHealth = getSiteRuntimeHealthDetails(dispatchCandidate.site.id, actualModel, nowMs);
+    if (runtimeHealth.globalBreakerOpen || runtimeHealth.modelBreakerOpen) {
+      const claimed = await claimSiteRuntimeRecoveryProbe({
+        siteId: dispatchCandidate.site.id,
+        modelName: actualModel,
+        channelId: selected.channel.id,
+        nowMs,
+      });
+      if (!claimed) return null;
+    }
 
     if (recordSelection) {
       if (stableFirstRotationKey && stableFirstObservationKey) {
@@ -3492,13 +4550,6 @@ export class TokenRouter {
       }
       await this.recordChannelSelection(selected.channel.id);
     }
-
-    const actualModel = resolveActualModelForSelectedChannel(
-      requestedModel,
-      match.route,
-      mappedModel,
-      selected.channel.sourceModel,
-    );
 
     return {
       ...dispatchCandidate,
@@ -3559,6 +4610,11 @@ export class TokenRouter {
     const runtimeHealthDetails = candidates.map((candidate) => (
       getSiteRuntimeHealthDetails(candidate.site.id, resolveModelName(candidate), nowMs)
     ));
+    const balanceDecisions: BalanceRoutingDecision[] = candidates.map((candidate) => evaluateBalanceRoutingPolicy({
+      balance: candidate.account.balance,
+      lastBalanceRefresh: candidate.account.lastBalanceRefresh,
+      policy: config.balanceRoutingPolicy,
+    }));
     const channelLoadSnapshots = candidates.map((candidate) => (
       proxyChannelCoordinator.getChannelLoadSnapshot({
         channelId: candidate.channel.id,
@@ -3603,12 +4659,14 @@ export class TokenRouter {
           siteHistoricalHealthMetrics.get(candidate.site.id)?.successRate,
         );
         let contribution = Math.max(1e-4, recentSuccessRate ** 2);
+        contribution *= balanceDecisions[i]?.multiplier ?? 1;
         contribution *= runtimeMultiplier;
         contribution *= runtimeLoadMultiplier;
         return contribution / siteChannels;
       }
 
       let contribution = baseContributions[i] / siteChannels;
+      contribution *= balanceDecisions[i]?.multiplier ?? 1;
       const downstreamSiteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
       const normalizedDownstreamSiteMultiplier =
         (Number.isFinite(downstreamSiteMultiplier) && downstreamSiteMultiplier > 0)
@@ -3684,7 +4742,17 @@ export class TokenRouter {
       const runtimeHealthText = siteRuntimeDetail.modelKey
         ? `${siteRuntimeDetail.combinedMultiplier.toFixed(2)}（站点=${siteRuntimeDetail.globalMultiplier.toFixed(2)}，模型=${siteRuntimeDetail.modelMultiplier.toFixed(2)}）`
         : `${siteRuntimeDetail.globalMultiplier.toFixed(2)}`;
+      const firstByteLatencyText = siteRuntimeDetail.firstByteLatencyEmaMs == null
+        ? '—'
+        : `${Math.round(siteRuntimeDetail.firstByteLatencyEmaMs)}ms`;
+      const firstByteRoutingText = `首字 EMA=${firstByteLatencyText}，样本=${siteRuntimeDetail.firstByteSampleCount}，首字倍率=${siteRuntimeDetail.firstByteMultiplier.toFixed(2)}`;
       const runtimeLoadText = formatChannelRuntimeLoad(channelRuntimeLoad);
+      const balanceDecision = balanceDecisions[i];
+      const balancePolicyText = balanceDecision?.reason === 'soft_avoid'
+        ? `，余额软避让=${(balanceDecision.multiplier * 100).toFixed(0)}%`
+        : (balanceDecision?.reason === 'balance_unknown' && balanceDecision.mode !== 'observe_only'
+          ? '，余额未知=保留候选'
+          : '');
       const recentSuccessRateText = `${(siteRuntimeDetail.recentSuccessRate * 100).toFixed(1)}%`;
       const stableFirstSuccessRate = resolveStableFirstSuccessRate(siteRuntimeDetail, siteHistoricalHealth?.successRate);
       const stableFirstSuccessRateText = `${(stableFirstSuccessRate * 100).toFixed(1)}%`;
@@ -3707,11 +4775,11 @@ export class TokenRouter {
         candidate,
         probability,
         reason: selectionMode === 'stable_first'
-          ? `${reasonPrefix}，近期成功率=${recentSuccessRateText}（样本=${siteRuntimeDetail.recentSampleCount.toFixed(2)}，置信=${siteRuntimeDetail.recentConfidence.toFixed(2)}），回退成功率=${historicalSuccessRateText}，综合近期成功率=${stableFirstSuccessRateText}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，同站点通道=${siteChannels}${stablePoolText}，评分占比≈${(probability * 100).toFixed(1)}%）`
+          ? `${reasonPrefix}，近期成功率=${recentSuccessRateText}（样本=${siteRuntimeDetail.recentSampleCount.toFixed(2)}，置信=${siteRuntimeDetail.recentConfidence.toFixed(2)}），回退成功率=${historicalSuccessRateText}，综合近期成功率=${stableFirstSuccessRateText}，运行时健康=${runtimeHealthText}，${firstByteRoutingText}，会话负载=${runtimeLoadText}${balancePolicyText}，同站点通道=${siteChannels}${stablePoolText}，评分占比≈${(probability * 100).toFixed(1)}%）`
           : (
             candidates.length === 1
-              ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
-              : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
+              ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，${firstByteRoutingText}，会话负载=${runtimeLoadText}${balancePolicyText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
+              : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，${firstByteRoutingText}，会话负载=${runtimeLoadText}${balancePolicyText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
           ),
       };
     });

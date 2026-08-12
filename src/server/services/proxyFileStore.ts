@@ -164,6 +164,18 @@ export async function getProxyFileContentByPublicIdForOwner(
   };
 }
 
+export async function getProxyFileContentByPublicId(
+  publicId: string,
+): Promise<{ filename: string; mimeType: string; buffer: Buffer } | null> {
+  const record = await getProxyFileByPublicId(publicId);
+  if (!record) return null;
+  return {
+    filename: record.filename,
+    mimeType: record.mimeType,
+    buffer: Buffer.from(record.contentBase64, 'base64'),
+  };
+}
+
 export async function softDeleteProxyFileByPublicIdForOwner(
   publicId: string,
   owner: ProxyResourceOwner,

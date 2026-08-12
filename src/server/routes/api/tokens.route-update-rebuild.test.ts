@@ -583,6 +583,73 @@ describe('PUT /api/routes/:id route rebuild', () => {
     });
   });
 
+  it('creates and updates API channel retry ownership declarations', async () => {
+    const seeded = await seedAccountWithToken('gpt-4o-mini');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels`,
+      payload: {
+        accountId: seeded.account.id,
+        tokenId: seeded.token.id,
+        retryOwner: 'cooperative',
+        upstreamRetryMode: 'internal_retry',
+      },
+    });
+
+    expect(createResponse.statusCode).toBe(200);
+    expect(createResponse.json()).toMatchObject({
+      retryOwner: 'cooperative',
+      upstreamRetryMode: 'internal_retry',
+    });
+    const channelId = Number(createResponse.json().id);
+
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/channels/${channelId}`,
+      payload: {
+        retryOwner: 'local_proxy',
+        upstreamRetryMode: 'none',
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toMatchObject({
+      id: channelId,
+      retryOwner: 'local_proxy',
+      upstreamRetryMode: 'none',
+      manualOverride: true,
+    });
+  });
+
+  it('rejects invalid API channel retry ownership declarations', async () => {
+    const seeded = await seedAccountWithToken('gpt-4o-mini');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels`,
+      payload: {
+        accountId: seeded.account.id,
+        tokenId: seeded.token.id,
+        retryOwner: 'both',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid retryOwner. Expected local_proxy, upstream_gateway, or cooperative.',
+    });
+  });
+
   it('rejects non-number accountId when batch-adding route channels', async () => {
     const seeded = await seedAccountWithToken('gpt-4o-mini');
     const route = await db.insert(schema.tokenRoutes).values({

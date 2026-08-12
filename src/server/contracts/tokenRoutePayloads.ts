@@ -5,7 +5,10 @@ const routeChannelCreatePayloadSchema = z.object({
   tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
   sourceModel: z.string().optional(),
   priority: z.number().optional(),
+  sortOrder: z.number().optional(),
   weight: z.number().optional(),
+  retryOwner: z.enum(['local_proxy', 'upstream_gateway', 'cooperative']).optional(),
+  upstreamRetryMode: z.enum(['unknown', 'none', 'internal_retry']).optional(),
 }).passthrough();
 
 const routeChannelBatchCreatePayloadSchema = z.object({
@@ -13,6 +16,8 @@ const routeChannelBatchCreatePayloadSchema = z.object({
     accountId: z.number().int().positive(),
     tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
     sourceModel: z.string().optional(),
+    retryOwner: z.enum(['local_proxy', 'upstream_gateway', 'cooperative']).optional(),
+    upstreamRetryMode: z.enum(['unknown', 'none', 'internal_retry']).optional(),
   }).passthrough()).min(1),
 }).passthrough();
 
@@ -20,8 +25,12 @@ const routeChannelUpdatePayloadSchema = z.object({
   tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
   sourceModel: z.union([z.string(), z.null()]).optional(),
   priority: z.number().optional(),
+  sortOrder: z.number().optional(),
   weight: z.number().optional(),
+  schedulingRouteId: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
+  retryOwner: z.enum(['local_proxy', 'upstream_gateway', 'cooperative']).optional(),
+  upstreamRetryMode: z.enum(['unknown', 'none', 'internal_retry']).optional(),
 }).passthrough();
 
 const tokenRouteCreatePayloadSchema = z.object({
@@ -116,8 +125,20 @@ function formatTokenRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'priority') {
     return 'Invalid priority. Expected number.';
   }
+  if (firstPath === 'sortOrder') {
+    return 'Invalid sortOrder. Expected number.';
+  }
   if (firstPath === 'weight') {
     return 'Invalid weight. Expected number.';
+  }
+  if (firstPath === 'schedulingRouteId') {
+    return 'Invalid schedulingRouteId. Expected positive number.';
+  }
+  if (firstPath === 'retryOwner') {
+    return 'Invalid retryOwner. Expected local_proxy, upstream_gateway, or cooperative.';
+  }
+  if (firstPath === 'upstreamRetryMode') {
+    return 'Invalid upstreamRetryMode. Expected unknown, none, or internal_retry.';
   }
   if (firstPath === 'refreshModels') {
     return 'Invalid refreshModels. Expected boolean.';
@@ -133,6 +154,12 @@ function formatTokenRoutePayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'channels' && thirdPath === 'sourceModel') {
     return 'Invalid channels[].sourceModel. Expected string.';
+  }
+  if (firstPath === 'channels' && thirdPath === 'retryOwner') {
+    return 'Invalid channels[].retryOwner. Expected local_proxy, upstream_gateway, or cooperative.';
+  }
+  if (firstPath === 'channels' && thirdPath === 'upstreamRetryMode') {
+    return 'Invalid channels[].upstreamRetryMode. Expected unknown, none, or internal_retry.';
   }
   if (firstPath === 'channels') {
     return 'Invalid channels. Expected channel array.';

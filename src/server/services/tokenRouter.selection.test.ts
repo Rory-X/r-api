@@ -37,6 +37,7 @@ describe('TokenRouter selection scoring', () => {
   let idSeed = 0;
   let originalRoutingWeights: typeof config.routingWeights;
   let originalRoutingFallbackUnitCost: number;
+  let originalFirstByteRoutingPolicy: typeof config.firstByteRoutingPolicy;
   let originalProxySessionChannelConcurrencyLimit: number;
   let originalProxySessionChannelQueueWaitMs: number;
 
@@ -67,6 +68,7 @@ describe('TokenRouter selection scoring', () => {
     resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
     originalRoutingWeights = { ...config.routingWeights };
     originalRoutingFallbackUnitCost = config.routingFallbackUnitCost;
+    originalFirstByteRoutingPolicy = { ...config.firstByteRoutingPolicy };
     originalProxySessionChannelConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
     originalProxySessionChannelQueueWaitMs = config.proxySessionChannelQueueWaitMs;
   });
@@ -77,6 +79,7 @@ describe('TokenRouter selection scoring', () => {
     mockedCatalogRoutingCost.mockReturnValue(null);
     config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
     config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
+    config.firstByteRoutingPolicy = { ...originalFirstByteRoutingPolicy };
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.settings).run();
@@ -91,6 +94,7 @@ describe('TokenRouter selection scoring', () => {
   afterAll(() => {
     config.routingWeights = { ...originalRoutingWeights };
     config.routingFallbackUnitCost = originalRoutingFallbackUnitCost;
+    config.firstByteRoutingPolicy = { ...originalFirstByteRoutingPolicy };
     config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
     config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     invalidateTokenRouterCache();
@@ -137,6 +141,84 @@ describe('TokenRouter selection scoring', () => {
       isDefault: false,
     }).returning().get();
   }
+
+  it('dispatches manual routes by priority and persisted in-layer order without using weight', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'manual-order-model',
+      routingStrategy: 'manual',
+      enabled: true,
+    }).returning().get();
+
+    const laterSite = await createSite('manual-later-site');
+    const laterAccount = await createAccount(laterSite.id, 'manual-later-user');
+    const laterToken = await createToken(laterAccount.id, 'manual-later-token');
+    const laterChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: laterAccount.id,
+      tokenId: laterToken.id,
+      priority: 0,
+      sortOrder: 1,
+      weight: 100_000,
+      enabled: true,
+    }).returning().get();
+
+    const firstSite = await createSite('manual-first-site');
+    const firstAccount = await createAccount(firstSite.id, 'manual-first-user');
+    const firstToken = await createToken(firstAccount.id, 'manual-first-token');
+    const firstChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: firstAccount.id,
+      tokenId: firstToken.id,
+      priority: 0,
+      sortOrder: 0,
+      weight: 1,
+      enabled: true,
+    }).returning().get();
+
+    const fallbackSite = await createSite('manual-fallback-site');
+    const fallbackAccount = await createAccount(fallbackSite.id, 'manual-fallback-user');
+    const fallbackToken = await createToken(fallbackAccount.id, 'manual-fallback-token');
+    const fallbackChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: fallbackAccount.id,
+      tokenId: fallbackToken.id,
+      priority: 1,
+      sortOrder: 0,
+      weight: 1_000_000,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('manual-order-model');
+    expect(selected?.channel.id).toBe(firstChannel.id);
+    expect(firstChannel.id).toBeGreaterThan(laterChannel.id);
+
+    const decision = await router.explainSelection('manual-order-model');
+    expect(decision.selectedChannelId).toBe(firstChannel.id);
+    expect(decision.summary.join(' ')).toContain('P 优先级 + 组内顺序');
+    expect(decision.candidates.find((candidate) => candidate.channelId === firstChannel.id)).toMatchObject({
+      sortOrder: 0,
+      probability: 100,
+    });
+    expect(decision.candidates.find((candidate) => candidate.channelId === laterChannel.id)).toMatchObject({
+      sortOrder: 1,
+      probability: 0,
+    });
+
+    const nextInLayer = await router.selectNextChannel('manual-order-model', [firstChannel.id]);
+    expect(nextInLayer?.channel.id).toBe(laterChannel.id);
+
+    await db.update(schema.routeChannels)
+      .set({ enabled: false })
+      .where(eq(schema.routeChannels.id, firstChannel.id))
+      .run();
+    invalidateTokenRouterCache();
+    const selectedWithFirstUnavailable = await router.selectChannel('manual-order-model');
+    expect(selectedWithFirstUnavailable?.channel.id).toBe(laterChannel.id);
+
+    const nextLayer = await router.selectNextChannel('manual-order-model', [firstChannel.id, laterChannel.id]);
+    expect(nextLayer?.channel.id).toBe(fallbackChannel.id);
+  });
 
   it('reuses a preferred channel only while it remains healthy', async () => {
     config.routingWeights = {
@@ -272,6 +354,176 @@ describe('TokenRouter selection scoring', () => {
     expect(second?.channel.id).toBe(channel.id);
     expect(first?.account.id).toBe(accountA.id);
     expect(second?.account.id).toBe(accountB.id);
+  });
+
+  it('rotates to another credential while staying inside the same site', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4-rotate',
+      routingStrategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    const site = await createSite('bridge-rotate-site');
+    const account = await createAccount(site.id, 'bridge-rotate-user');
+    const tokenA = await createToken(account.id, 'bridge-rotate-a');
+    const tokenB = await createToken(account.id, 'bridge-rotate-b');
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: route.id,
+        accountId: account.id,
+        tokenId: tokenA.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: route.id,
+        accountId: account.id,
+        tokenId: tokenB.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]).run();
+
+    const selected = await new TokenRouter().selectChannel(
+      'gpt-5.4-rotate',
+      undefined,
+      {
+        allowedSiteIds: [site.id],
+        excludedCredentials: [{ accountId: account.id, tokenId: tokenA.id }],
+      },
+    );
+
+    expect(selected).toMatchObject({
+      site: { id: site.id },
+      account: { id: account.id },
+      token: { id: tokenB.id },
+    });
+  });
+
+  it('switches API Channel by excluding every credential on the previous site', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4-switch',
+      routingStrategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    const previousSite = await createSite('bridge-previous-site');
+    const previousAccount = await createAccount(previousSite.id, 'bridge-previous-user');
+    const previousToken = await createToken(previousAccount.id, 'bridge-previous-token');
+    const nextSite = await createSite('bridge-next-site');
+    const nextAccount = await createAccount(nextSite.id, 'bridge-next-user');
+    const nextToken = await createToken(nextAccount.id, 'bridge-next-token');
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: route.id,
+        accountId: previousAccount.id,
+        tokenId: previousToken.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: route.id,
+        accountId: nextAccount.id,
+        tokenId: nextToken.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]).run();
+
+    const selected = await new TokenRouter().selectChannel(
+      'gpt-5.4-switch',
+      undefined,
+      { excludedSiteIds: [previousSite.id] },
+    );
+
+    expect(selected).toMatchObject({
+      site: { id: nextSite.id },
+      account: { id: nextAccount.id },
+      token: { id: nextToken.id },
+    });
+  });
+
+  it('preserves or rotates an exact oauth route-unit member', async () => {
+    const route = await createRoute('gpt-5.4-bridge-oauth');
+    const site = await db.insert(schema.sites).values({
+      name: 'bridge-oauth-pool-site',
+      url: 'https://bridge-oauth-pool.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const createOauthAccount = async (suffix: string) => await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: `bridge-oauth-${suffix}@example.com`,
+      accessToken: `oauth-bridge-${suffix}`,
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: `bridge-oauth-${suffix}`,
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: `bridge-oauth-${suffix}`,
+          accountKey: `bridge-oauth-${suffix}`,
+          email: `bridge-oauth-${suffix}@example.com`,
+        },
+      }),
+    }).returning().get();
+    const accountA = await createOauthAccount('a');
+    const accountB = await createOauthAccount('b');
+    const unit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Bridge OAuth Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: unit.id, accountId: accountA.id, sortOrder: 0 },
+      { unitId: unit.id, accountId: accountB.id, sortOrder: 1 },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      oauthRouteUnitId: unit.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    const router = new TokenRouter();
+
+    const preserved = await router.selectPreferredChannel(
+      'gpt-5.4-bridge-oauth',
+      channel.id,
+      undefined,
+      [],
+      {
+        allowedSiteIds: [site.id],
+        preferredCredential: { accountId: accountA.id, tokenId: null },
+      },
+    );
+    const rotated = await router.selectChannel(
+      'gpt-5.4-bridge-oauth',
+      undefined,
+      {
+        allowedSiteIds: [site.id],
+        excludedCredentials: [{ accountId: accountA.id, tokenId: null }],
+      },
+    );
+
+    expect(preserved).toMatchObject({
+      channel: { id: channel.id },
+      account: { id: accountA.id },
+      token: null,
+    });
+    expect(rotated).toMatchObject({
+      channel: { id: channel.id },
+      account: { id: accountB.id },
+      token: null,
+    });
   });
 
   it('sticks to one oauth route unit member until that member becomes unavailable', async () => {
@@ -748,7 +1000,74 @@ describe('TokenRouter selection scoring', () => {
     expect((candidateB?.probability || 0)).toBeLessThan(60);
   });
 
-  it('opens a site breaker after repeated transient failures and closes it after recovery', async () => {
+  it('downweights a channel after enough slow first-byte samples', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+    config.firstByteRoutingPolicy = {
+      enabled: true,
+      baselineMs: 2_500,
+      penaltyWindowMs: 10_000,
+      maxPenaltyRatio: 0.65,
+      minSamples: 5,
+    };
+
+    const route = await createRoute('first-byte-routing-model');
+    const slowSite = await createSite('first-byte-slow');
+    const slowAccount = await createAccount(slowSite.id, 'first-byte-slow-user');
+    const slowToken = await createToken(slowAccount.id, 'first-byte-slow-token');
+    const slowChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: slowAccount.id,
+      tokenId: slowToken.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const fastSite = await createSite('first-byte-fast');
+    const fastAccount = await createAccount(fastSite.id, 'first-byte-fast-user');
+    const fastToken = await createToken(fastAccount.id, 'first-byte-fast-token');
+    const fastChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: fastAccount.id,
+      tokenId: fastToken.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    for (let index = 0; index < 4; index += 1) {
+      await router.recordSuccess(slowChannel.id, 15_000, 0, 'first-byte-routing-model', undefined, 12_500);
+      await router.recordSuccess(fastChannel.id, 15_000, 0, 'first-byte-routing-model', undefined, 1_000);
+    }
+    invalidateTokenRouterCache();
+
+    let decision = await router.explainSelection('first-byte-routing-model');
+    let slowCandidate = decision.candidates.find((candidate) => candidate.channelId === slowChannel.id);
+    let fastCandidate = decision.candidates.find((candidate) => candidate.channelId === fastChannel.id);
+    expect(slowCandidate?.probability).toBeCloseTo(50, 1);
+    expect(fastCandidate?.probability).toBeCloseTo(50, 1);
+
+    await router.recordSuccess(slowChannel.id, 15_000, 0, 'first-byte-routing-model', undefined, 12_500);
+    await router.recordSuccess(fastChannel.id, 15_000, 0, 'first-byte-routing-model', undefined, 1_000);
+    invalidateTokenRouterCache();
+
+    decision = await router.explainSelection('first-byte-routing-model');
+    slowCandidate = decision.candidates.find((candidate) => candidate.channelId === slowChannel.id);
+    fastCandidate = decision.candidates.find((candidate) => candidate.channelId === fastChannel.id);
+    expect((slowCandidate?.probability || 0)).toBeLessThan(fastCandidate?.probability || 0);
+    expect(slowCandidate?.reason || '').toContain('首字 EMA=12500ms');
+    expect(slowCandidate?.reason || '').toContain('样本=5');
+    expect(slowCandidate?.reason || '').toContain('首字倍率=0.35');
+  });
+
+  it('requires two consecutive successes before fully closing a site breaker', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,
       valueScoreFactor: 0,
@@ -806,6 +1125,16 @@ describe('TokenRouter selection scoring', () => {
     expect(decision.summary.join(' ')).toContain('站点熔断避让');
 
     await router.recordSuccess(channelA.id, 600, 0);
+    invalidateTokenRouterCache();
+
+    decision = await router.explainSelection('gpt-5.3');
+    const recoveringCandidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
+    const recoveringCandidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
+    expect((recoveringCandidateA?.probability || 0)).toBeLessThan(20);
+    expect((recoveringCandidateB?.probability || 0)).toBeGreaterThan(80);
+    expect(recoveringCandidateA?.reason || '').toContain('运行时健康=');
+
+    await router.recordSuccess(channelA.id, 580, 0);
     invalidateTokenRouterCache();
 
     decision = await router.explainSelection('gpt-5.3');

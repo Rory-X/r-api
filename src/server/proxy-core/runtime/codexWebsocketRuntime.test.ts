@@ -56,6 +56,7 @@ describe('codexWebsocketRuntime', () => {
   it('reuses the same upstream websocket connection across turns for one execution session', async () => {
     const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
     const runtime = createCodexWebsocketRuntime();
+    const lifecycleEvents: string[] = [];
 
     const first = await runtime.sendRequest({
       sessionId: 'exec-session-1',
@@ -67,6 +68,9 @@ describe('codexWebsocketRuntime', () => {
       body: {
         model: 'gpt-5.4',
         input: [],
+      },
+      onAttemptEvent: (event) => {
+        lifecycleEvents.push(event.type);
       },
     });
 
@@ -102,6 +106,12 @@ describe('codexWebsocketRuntime', () => {
       type: 'response.create',
       previous_response_id: 'resp-1',
     });
+    expect(lifecycleEvents).toEqual([
+      'attempt_started',
+      'request_sent',
+      'response_started',
+      'completed',
+    ]);
 
     await runtime.closeSession('exec-session-1');
   });
@@ -219,6 +229,7 @@ describe('codexWebsocketRuntime', () => {
 
     const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
     const runtime = createCodexWebsocketRuntime();
+    const lifecycleEvents: string[] = [];
 
     const result = await runtime.sendRequest({
       sessionId: 'exec-session-incomplete',
@@ -231,6 +242,9 @@ describe('codexWebsocketRuntime', () => {
         model: 'gpt-5.4',
         input: [],
       },
+      onAttemptEvent: (event) => {
+        lifecycleEvents.push(event.type);
+      },
     });
 
     expect(result.events).toEqual([
@@ -239,6 +253,12 @@ describe('codexWebsocketRuntime', () => {
       }),
     ]);
     expect(result.reusedSession).toBe(false);
+    expect(lifecycleEvents).toEqual([
+      'attempt_started',
+      'request_sent',
+      'response_started',
+      'failed',
+    ]);
 
     await runtime.closeSession('exec-session-incomplete');
   });

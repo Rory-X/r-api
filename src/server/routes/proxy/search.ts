@@ -5,7 +5,7 @@ import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
+import { ensureDownstreamPolicySnapshotActive, ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
@@ -16,10 +16,14 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  getSiteApiEndpointIdFromError,
+  runWithSiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
 import {
   buildForcedChannelUnavailableMessage,
-  canRetryChannelSelection,
+  canRetryChannelSelectionForFailure,
   getTesterForcedChannelId,
   selectProxyChannelForAttempt,
 } from '../../proxy-core/channelSelection.js';
@@ -78,6 +82,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
+      if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
       const selected = await selectProxyChannelForAttempt({
         requestedModel,
         downstreamPolicy,
@@ -146,7 +151,14 @@ export async function searchProxyRoute(app: FastifyInstance) {
 
         const latency = Date.now() - startTime;
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, 0, upstreamModel)
+          tokenRouter.recordSuccess(
+            selected.channel.id,
+            latency,
+            0,
+            upstreamModel,
+            selected.account.id,
+            firstByteLatencyMs,
+          )
         ));
         recordDownstreamCostUsage(request, 0);
         logProxy(
@@ -172,6 +184,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
           status,
           errorText,
           modelName: upstreamModel,
+          endpointId: getSiteApiEndpointIdFromError(error),
         }));
         logProxy(
           selected,
@@ -195,7 +208,17 @@ export async function searchProxyRoute(app: FastifyInstance) {
             detail: `HTTP ${status}`,
           });
         }
-        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (
+          (status > 0 ? shouldRetryProxyRequest(status, errorText) : true)
+          && canRetryChannelSelectionForFailure({
+            retryCount,
+            forcedChannelId,
+            selected,
+            status,
+            errorText,
+            ...(status > 0 ? {} : { errorScope: 'transport' as const }),
+          })
+        ) {
           retryCount += 1;
           continue;
         }

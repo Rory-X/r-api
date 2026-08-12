@@ -12,6 +12,8 @@ export type ProxyLogInsertInput = {
   channelId?: number | null;
   accountId?: number | null;
   downstreamApiKeyId?: number | null;
+  requestId?: string | null;
+  attemptId?: string | null;
   modelRequested?: string | null;
   modelActual?: string | null;
   status?: string | null;
@@ -40,6 +42,8 @@ function buildProxyLogCoreSelectFields() {
     channelId: schema.proxyLogs.channelId,
     accountId: schema.proxyLogs.accountId,
     downstreamApiKeyId: schema.proxyLogs.downstreamApiKeyId,
+    requestId: schema.proxyLogs.requestId,
+    attemptId: schema.proxyLogs.attemptId,
     modelRequested: schema.proxyLogs.modelRequested,
     modelActual: schema.proxyLogs.modelActual,
     status: schema.proxyLogs.status,
@@ -261,6 +265,8 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
     routeId: input.routeId ?? null,
     channelId: input.channelId ?? null,
     accountId: input.accountId ?? null,
+    requestId: input.requestId ?? null,
+    attemptId: input.attemptId ?? null,
     modelRequested: input.modelRequested ?? null,
     modelActual: input.modelActual ?? null,
     status: input.status ?? null,

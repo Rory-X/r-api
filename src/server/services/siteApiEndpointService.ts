@@ -1,9 +1,8 @@
 import { asc, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { classifyProxyHealthDomain } from './proxyHealthDomain.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 
-const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
-const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
 const NETWORK_FAILURE_PATTERNS = [
   /network error/i,
   /fetch failed/i,
@@ -13,7 +12,6 @@ const NETWORK_FAILURE_PATTERNS = [
   /enotfound/i,
   /ehostunreach/i,
   /ecanceled/i,
-  ...RETRYABLE_TIMEOUT_PATTERNS,
 ];
 
 export const SITE_API_ENDPOINT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -50,11 +48,13 @@ export class SiteApiEndpointRequestError extends Error {
   readonly status: number | null;
   readonly rawErrText: string | null;
   readonly firstByteLatencyMs: number | null;
+  endpointId: number | null;
 
   constructor(message: string, options?: {
     status?: number | null;
     rawErrText?: string | null;
     firstByteLatencyMs?: number | null;
+    endpointId?: number | null;
     cause?: unknown;
   }) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
@@ -66,6 +66,26 @@ export class SiteApiEndpointRequestError extends Error {
     this.firstByteLatencyMs = typeof options?.firstByteLatencyMs === 'number' && Number.isFinite(options.firstByteLatencyMs)
       ? options.firstByteLatencyMs
       : null;
+    this.endpointId = typeof options?.endpointId === 'number' && Number.isFinite(options.endpointId)
+      ? Math.trunc(options.endpointId)
+      : null;
+  }
+}
+
+export function getSiteApiEndpointIdFromError(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const endpointId = (error as { endpointId?: unknown }).endpointId;
+  return typeof endpointId === 'number' && Number.isFinite(endpointId) && endpointId > 0
+    ? Math.trunc(endpointId)
+    : null;
+}
+
+function attachSiteApiEndpointId(error: unknown, endpointId: number | null): void {
+  if (!endpointId || !error || typeof error !== 'object') return;
+  try {
+    (error as { endpointId?: number | null }).endpointId = endpointId;
+  } catch {
+    // Non-extensible third-party errors keep their original behavior.
   }
 }
 
@@ -133,16 +153,22 @@ export function classifySiteApiEndpointFailure(
     : parseStatusFromFailureMessage(message);
   const failureReason = formatFailureReason(status, message);
 
-  if (status !== null) {
-    if (RETRYABLE_STATUS_CODES.has(status)) {
-      return { retryable: true, rotateToNextEndpoint: true, failureReason };
-    }
-    if (NON_RETRYABLE_STATUS_CODES.has(status)) {
-      return { retryable: false, rotateToNextEndpoint: false, failureReason };
-    }
-  }
-
-  if (NETWORK_FAILURE_PATTERNS.some((pattern) => pattern.test(message))) {
+  const isLocalFirstByteTimeout = /first byte timeout/i.test(message);
+  const isEndpointTimeout = status === null
+    && RETRYABLE_TIMEOUT_PATTERNS.some((pattern) => pattern.test(message));
+  const healthDomain = status === null
+    ? classifyProxyHealthDomain({
+      status: status ?? undefined,
+      errorText: message,
+    })
+    : null;
+  const isEndpointTransportFailure = (
+    isLocalFirstByteTimeout
+    || isEndpointTimeout
+    || (status === null && NETWORK_FAILURE_PATTERNS.some((pattern) => pattern.test(message)))
+    || healthDomain === 'endpoint'
+  );
+  if (isEndpointTransportFailure) {
     return { retryable: true, rotateToNextEndpoint: true, failureReason };
   }
 
@@ -217,9 +243,14 @@ export async function recordSiteApiEndpointFailure(
 ): Promise<RecordedSiteApiEndpointFailure> {
   const nowIso = toIsoTimestamp(now);
   const disposition = classifySiteApiEndpointFailure(input);
-  const cooldownUntil = disposition.retryable
-    ? new Date(Date.parse(nowIso) + SITE_API_ENDPOINT_COOLDOWN_MS).toISOString()
-    : null;
+  if (!disposition.rotateToNextEndpoint) {
+    return {
+      ...disposition,
+      cooldownUntil: null,
+    };
+  }
+
+  const cooldownUntil = new Date(Date.parse(nowIso) + SITE_API_ENDPOINT_COOLDOWN_MS).toISOString();
 
   await db.update(schema.siteApiEndpoints).set({
     cooldownUntil,
@@ -277,6 +308,7 @@ export async function runWithSiteApiEndpointPool<T>(
       return result;
     } catch (error) {
       lastError = error;
+      attachSiteApiEndpointId(error, target.endpointId);
       if (!target.endpointId) {
         throw error;
       }

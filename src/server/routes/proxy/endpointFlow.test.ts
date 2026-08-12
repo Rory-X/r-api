@@ -228,6 +228,136 @@ describe('executeEndpointFlow', () => {
     expect(onAttemptSuccess.mock.calls[0]?.[0]?.request?.path).toBe('/v1/chat/completions');
   });
 
+  it('emits commit-state observations for each endpoint attempt', async () => {
+    fetchMock
+      .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({
+        error: { message: 'unsupported endpoint', type: 'invalid_request_error' },
+      }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      })))
+      .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })));
+
+    const states: Array<{ event: string; commitState: string; path: string }> = [];
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses', 'chat'],
+      buildRequest: (endpoint) => endpoint === 'responses'
+        ? requestFor('/v1/responses')
+        : { ...requestFor('/v1/chat/completions'), endpoint },
+      shouldDowngrade: () => true,
+      onAttemptCommitState: (ctx) => {
+        states.push({
+          event: ctx.event,
+          commitState: ctx.commitState,
+          path: ctx.request.path,
+        });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(states).toEqual([
+      { event: 'request_sent', commitState: 'request_sent', path: '/v1/responses' },
+      { event: 'request_sent', commitState: 'request_sent', path: '/v1/chat/completions' },
+      { event: 'response_started', commitState: 'response_started', path: '/v1/chat/completions' },
+    ]);
+  });
+
+  it('keeps the allocated attempt identity across start, commit, and completion hooks', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    const observed: string[] = [];
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+      createAttemptIdentity: () => ({
+        attemptId: 'req-1:attempt:7',
+        attemptIndex: 7,
+      }),
+      onAttemptStart: (ctx) => {
+        observed.push(`start:${ctx.attemptId}:${ctx.attemptIndex}`);
+      },
+      onAttemptCommitState: (ctx) => {
+        observed.push(`commit:${ctx.attemptId}:${ctx.attemptIndex}:${ctx.commitState}`);
+      },
+      onAttemptSuccess: (ctx) => {
+        observed.push(`success:${ctx.attemptId}:${ctx.attemptIndex}`);
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(observed).toEqual([
+      'start:req-1:attempt:7:7',
+      'commit:req-1:attempt:7:7:request_sent',
+      'commit:req-1:attempt:7:7:response_started',
+      'success:req-1:attempt:7:7',
+    ]);
+  });
+
+  it('can defer successful persistence hooks until after the upstream is returned', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response('data: ready\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })));
+
+    let releaseRequestSent: (() => void) | null = null;
+    const requestSentGate = new Promise<void>((resolve) => {
+      releaseRequestSent = resolve;
+    });
+    const observed: string[] = [];
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+      deferSuccessHooks: true,
+      onAttemptCommitState: async (ctx) => {
+        observed.push(`commit:${ctx.commitState}`);
+        if (ctx.event === 'request_sent') {
+          await requestSentGate;
+        }
+      },
+      onAttemptSuccess: (ctx) => {
+        observed.push(`success:${ctx.commitState}`);
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(observed).toEqual(['commit:request_sent']);
+
+    releaseRequestSent?.();
+    await result.successHooksCompletion;
+    expect(observed).toEqual([
+      'commit:request_sent',
+      'commit:response_started',
+      'success:response_started',
+    ]);
+  });
+
+  it('marks thrown dispatch failures as sent_unknown before rethrowing', async () => {
+    const states: string[] = [];
+    await expect(executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+      dispatchRequest: async () => {
+        throw new Error('connection reset after send');
+      },
+      onAttemptCommitState: (ctx) => {
+        states.push(`${ctx.event}:${ctx.commitState}`);
+      },
+    })).rejects.toThrow('connection reset after send');
+
+    expect(states).toEqual(['transport_unknown:sent_unknown']);
+  });
+
   it('stops same-site endpoint fallback when the failure is classified as a site outage', async () => {
     fetchMock
       .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({

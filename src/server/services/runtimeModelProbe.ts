@@ -177,6 +177,7 @@ export async function probeRuntimeModel(input: {
         oauthProjectId: oauth?.projectId,
         sitePlatform: input.site.platform,
         siteUrl: input.site.url,
+        codexFingerprintEnabled: input.site.codexFingerprintEnabled === true,
         openaiBody,
         downstreamFormat: 'openai',
         downstreamHeaders: {},

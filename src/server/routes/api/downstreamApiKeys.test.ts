@@ -78,6 +78,7 @@ describe('downstream api keys routes', () => {
         enabled: true,
         maxCost: 12.5,
         maxRequests: 500,
+        maxConcurrency: 3,
         supportedModels: ['gpt-5.2', 'claude-sonnet-4-5'],
         allowedRouteIds: [route.id],
         siteWeightMultipliers: { [site.id]: 1.2 },
@@ -94,11 +95,19 @@ describe('downstream api keys routes', () => {
       tags: ['移动端', 'VIP'],
       maxCost: 12.5,
       maxRequests: 500,
+      maxConcurrency: 3,
+      policyVersion: 1,
       supportedModels: ['gpt-5.2', 'claude-sonnet-4-5'],
       allowedRouteIds: [route.id],
     });
 
     const keyId = createdBody.item.id as number;
+    await db.insert(schema.downstreamApiKeyLeases).values({
+      downstreamApiKeyId: keyId,
+      leaseToken: 'lease-before-disable',
+      slot: 1,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }).run();
 
     const updateRes = await app.inject({
       method: 'PUT',
@@ -111,6 +120,7 @@ describe('downstream api keys routes', () => {
         enabled: false,
         maxCost: 20,
         maxRequests: 900,
+        maxConcurrency: 2,
       },
     });
 
@@ -125,8 +135,11 @@ describe('downstream api keys routes', () => {
         enabled: false,
         maxCost: 20,
         maxRequests: 900,
+        maxConcurrency: 2,
+        policyVersion: 2,
       },
     });
+    expect(await db.select().from(schema.downstreamApiKeyLeases).all()).toHaveLength(0);
 
     await db.update(schema.downstreamApiKeys).set({
       usedCost: 5.5,
@@ -146,6 +159,7 @@ describe('downstream api keys routes', () => {
       .get();
     expect(resetRow?.usedCost).toBe(0);
     expect(resetRow?.usedRequests).toBe(0);
+    expect(resetRow?.policyVersion).toBe(2);
 
     const deleteRes = await app.inject({
       method: 'DELETE',

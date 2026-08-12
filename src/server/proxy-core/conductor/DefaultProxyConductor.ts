@@ -7,6 +7,15 @@ import {
 } from './retryPolicy.js';
 import type { ExecuteInput, ExecuteResult, ProxyConductorDependencies, SelectedChannelLike } from './types.js';
 import { recordFailedAttempt, recordSuccessfulAttempt } from './usageHooks.js';
+import {
+  canRetryLocally,
+  createRetryBudget,
+  spendRetryBudget,
+} from '../../services/proxyRetryContract.js';
+import {
+  resolveApiChannelRetryPolicy,
+  upstreamClaimsRetryForFailure,
+} from '../../services/proxyRetryOwnership.js';
 
 export class DefaultProxyConductor {
   constructor(private readonly deps: ProxyConductorDependencies) {}
@@ -21,6 +30,8 @@ export class DefaultProxyConductor {
   async execute(input: ExecuteInput): Promise<ExecuteResult> {
     const excludeChannelIds: number[] = [];
     let attempts = 0;
+    let retryBudget = createRetryBudget(input.retryBudget);
+    const replaySafety = input.replaySafety ?? 'safe_only';
     let selected = await this.deps.selectChannel(input.requestedModel, input.downstreamPolicy);
     if (!selected) {
       return {
@@ -31,10 +42,27 @@ export class DefaultProxyConductor {
     }
 
     while (selected) {
+      const selectedRetryPolicy = resolveApiChannelRetryPolicy(selected.channel);
+      const retryOwner = input.retryOwner ?? selectedRetryPolicy.retryOwner;
+      const attemptSpend = spendRetryBudget(retryBudget, { attempt: true });
+      if (!attemptSpend.allowed) {
+        return {
+          ok: false,
+          reason: 'budget_exhausted',
+          selected,
+          attempts,
+          retryBudget,
+        };
+      }
+      retryBudget = attemptSpend.state;
+
       const result = await input.attempt({
         selected,
         attemptIndex: attempts,
         excludeChannelIds: [...excludeChannelIds],
+        retryBudget,
+        retryOwner,
+        replaySafety,
       });
       attempts += 1;
 
@@ -72,6 +100,31 @@ export class DefaultProxyConductor {
         };
       }
 
+      const errorScope = result.errorScope ?? 'unknown';
+      const retryAllowed = canRetryLocally({
+        retryOwner: result.retryOwner ?? retryOwner,
+        replaySafety: result.replaySafety ?? replaySafety,
+        commitState: result.commitState ?? 'not_started',
+        errorScope,
+        upstreamRetryable: upstreamClaimsRetryForFailure({
+          policy: selectedRetryPolicy,
+          errorScope,
+          explicitUpstreamRetryable: result.upstreamRetryable,
+        }),
+        explicitReplay: input.explicitReplay,
+      });
+      if (!retryAllowed) {
+        return {
+          ok: false,
+          reason: 'failed',
+          selected,
+          status: result.status,
+          rawErrorText: result.rawErrorText,
+          attempts,
+          retryBudget,
+        };
+      }
+
       if (shouldRetrySameChannel(action)) {
         continue;
       }
@@ -82,6 +135,19 @@ export class DefaultProxyConductor {
           rawErrorText: result.rawErrorText,
         });
         if (refreshed) {
+          const rotationSpend = spendRetryBudget(retryBudget, { credentialRotation: true });
+          if (!rotationSpend.allowed) {
+            return {
+              ok: false,
+              reason: 'budget_exhausted',
+              selected,
+              status: result.status,
+              rawErrorText: result.rawErrorText,
+              attempts,
+              retryBudget,
+            };
+          }
+          retryBudget = rotationSpend.state;
           selected = refreshed;
           continue;
         }
@@ -102,8 +168,22 @@ export class DefaultProxyConductor {
             status: result.status,
             rawErrorText: result.rawErrorText,
             attempts,
+            retryBudget,
           };
         }
+        const switchSpend = spendRetryBudget(retryBudget, { channelSwitch: true });
+        if (!switchSpend.allowed) {
+          return {
+            ok: false,
+            reason: 'budget_exhausted',
+            selected,
+            status: result.status,
+            rawErrorText: result.rawErrorText,
+            attempts,
+            retryBudget,
+          };
+        }
+        retryBudget = switchSpend.state;
         selected = next;
         continue;
       }
@@ -115,6 +195,7 @@ export class DefaultProxyConductor {
         status: result.status,
         rawErrorText: result.rawErrorText,
         attempts,
+        retryBudget,
       };
     }
 
@@ -122,6 +203,7 @@ export class DefaultProxyConductor {
       ok: false,
       reason: 'failed',
       attempts,
+      retryBudget,
     };
   }
 }

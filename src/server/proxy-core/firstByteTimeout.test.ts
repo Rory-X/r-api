@@ -37,7 +37,13 @@ describe('fetchWithObservedFirstByte', () => {
 
     const meta = getObservedResponseMeta(response);
     expect(meta?.timedOutBeforeFirstByte).toBe(false);
+    expect(meta?.responseHeaderLatencyMs).not.toBeNull();
     expect(meta?.firstByteLatencyMs).not.toBeNull();
+    expect(meta?.responseHeadersAtMs).not.toBeNull();
+    expect(meta?.firstByteAtMs).not.toBeNull();
+    expect(meta?.dispatchStartedAtMs).toBeLessThanOrEqual(meta?.responseHeadersAtMs || 0);
+    expect(meta?.responseHeadersAtMs || 0).toBeLessThanOrEqual(meta?.firstByteAtMs || 0);
+    expect(meta?.responseHeaderLatencyMs || 0).toBeLessThanOrEqual(meta?.firstByteLatencyMs || 0);
     expect((meta?.firstByteLatencyMs || 0)).toBeGreaterThanOrEqual(0);
     expect((meta?.firstByteLatencyMs || 0)).toBeLessThan(100);
   });
@@ -57,6 +63,8 @@ describe('fetchWithObservedFirstByte', () => {
 
     const meta = getObservedResponseMeta(response);
     expect(meta?.timedOutBeforeFirstByte).toBe(true);
+    expect(meta?.responseHeaderLatencyMs).not.toBeNull();
     expect(meta?.firstByteLatencyMs).toBeNull();
+    expect(meta?.firstByteAtMs).toBeNull();
   });
 });

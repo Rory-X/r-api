@@ -7,13 +7,14 @@ import { db, schema } from '../../db/index.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { isModelAllowedByPolicyOrAllowedRoutes } from '../../services/downstreamApiKeyService.js';
+import { getProxyAuthContext } from '../../middleware/auth.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
-import { getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
+import { ensureDownstreamPolicySnapshotActive, getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import {
@@ -41,9 +42,26 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
-import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../firstByteTimeout.js';
+import {
+  fetchWithObservedFirstByte,
+  getObservedResponseMeta,
+  isObservedFirstByteTimeoutResponse,
+} from '../firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
+import {
+  classifyRetryErrorScope,
+  createRetryBudget,
+  type AttemptCommitState,
+} from '../../services/proxyRetryContract.js';
+import {
+  localProxyOwnsRetryForFailure,
+  resolveApiChannelRetryPolicy,
+} from '../../services/proxyRetryOwnership.js';
+import {
+  startProxyAttemptLedgerSession,
+  type ProxyAttemptLedgerRuntimeSession,
+} from '../../services/proxyAttemptLedgerRuntime.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
@@ -81,6 +99,21 @@ const EMPTY_PROXY_USAGE = {
   completionTokens: 0,
   totalTokens: 0,
 };
+
+function canRetryGeminiChannelOwner(input: {
+  selected: NonNullable<Awaited<ReturnType<typeof tokenRouter.selectChannel>>>;
+  status?: number;
+  errorText?: string | null;
+  errorScope?: Parameters<typeof localProxyOwnsRetryForFailure>[0]['errorScope'];
+}): boolean {
+  return localProxyOwnsRetryForFailure({
+    channel: input.selected.channel,
+    errorScope: input.errorScope ?? classifyRetryErrorScope({
+      status: input.status ?? 0,
+      rawErrorText: input.errorText || '',
+    }),
+  });
+}
 
 function isGeminiCliPlatform(platform: unknown): boolean {
   return String(platform || '').trim().toLowerCase() === 'gemini-cli';
@@ -256,6 +289,8 @@ async function logProxy(
   totalTokens = 0,
   isStream = false,
   firstByteLatencyMs: number | null = null,
+  requestId: string | null = null,
+  attemptId: string | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -273,6 +308,8 @@ async function logProxy(
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
       accountId: selected.account.id,
+      requestId,
+      attemptId,
       modelRequested,
       modelActual: selected.actualModel || modelRequested,
       status,
@@ -359,6 +396,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
     let lastContentType = 'application/json';
 
     while (retryCount <= getProxyMaxChannelRetries()) {
+      if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
       const selected = forcedChannelId !== null
         ? (retryCount === 0
           ? await selectPreferredGeminiProbeChannel(request, forcedChannelId, excludeChannelIds)
@@ -446,7 +484,10 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             status: upstream.status,
             errorText: text,
           });
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          if (
+            canRetryGeminiChannelOwner({ selected, status: upstream.status, errorText: text })
+            && canRetryChannelSelection(retryCount, forcedChannelId)
+          ) {
             retryCount += 1;
             continue;
           }
@@ -475,7 +516,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             type: 'upstream_error',
           },
         });
-        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (
+          canRetryGeminiChannelOwner({
+            selected,
+            errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
+            errorScope: 'transport',
+          })
+          && canRetryChannelSelection(retryCount, forcedChannelId)
+        ) {
           retryCount += 1;
           continue;
         }
@@ -537,16 +585,36 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       body: request.body,
     });
+    const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+    const maxRetries = getProxyMaxChannelRetries();
+    const attemptLedger = await startProxyAttemptLedgerSession({
+      requestedModel,
+      downstreamPath,
+      clientKind: clientContext.clientKind,
+      sessionId: clientContext.sessionId || null,
+      downstreamApiKeyId,
+      policy: {
+        retryOwner: 'cooperative',
+        replaySafety: 'safe_only',
+        retryBudget: createRetryBudget({ maxAttempts: maxRetries + 1 }),
+      },
+    });
+    if (attemptLedger) {
+      reply.header('x-metapi-request-id', attemptLedger.requestId);
+    }
     const debugTrace = await startSurfaceProxyDebugTrace({
       downstreamPath,
       clientKind: clientContext.clientKind,
       sessionId: clientContext.sessionId || null,
       traceHint: clientContext.traceHint || null,
+      requestId: attemptLedger?.requestId ?? null,
       requestedModel,
+      downstreamApiKeyId,
       requestHeaders: request.headers as Record<string, unknown>,
       requestBody: request.body,
     });
     const finalizeDebugFailure = async (status: number, payload: unknown, upstreamPath: string | null = null) => {
+      await attemptLedger?.finishRequest('failed');
       await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
         finalStatus: 'failed',
         finalHttpStatus: status,
@@ -558,6 +626,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       });
     };
     const finalizeDebugSuccess = async (status: number, upstreamPath: string | null, responseHeaders: unknown, responseBody: unknown) => {
+      await attemptLedger?.finishRequest('succeeded');
       await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
         finalStatus: 'success',
         finalHttpStatus: status,
@@ -572,7 +641,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
     let lastText = 'No available channels for this model';
     let lastContentType = 'application/json';
 
-    while (retryCount <= getProxyMaxChannelRetries()) {
+    while (retryCount <= maxRetries) {
+      if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
       const selected = forcedChannelId !== null
         ? (retryCount === 0
           ? await tokenRouter.selectPreferredChannel(requestedModel, forcedChannelId, policy, excludeChannelIds)
@@ -596,6 +666,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       }
 
       excludeChannelIds.push(selected.channel.id);
+      await attemptLedger?.setRetryOwner(resolveApiChannelRetryPolicy(selected.channel).retryOwner);
+      attemptLedger?.setSelection({
+        channelId: selected.channel.id,
+        accountId: selected.account.id,
+        tokenId: selected.token?.id ?? null,
+      });
       await safeUpdateSurfaceProxyDebugSelection(debugTrace, {
         stickySessionKey: null,
         stickyHitChannelId: null,
@@ -618,6 +694,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
       const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
       let upstreamPath = '';
+      let attemptOutcomeUnknown = false;
 
       try {
         if (isDirectGeminiFamily) {
@@ -644,7 +721,10 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               status: 500,
               errorText: 'Gemini CLI OAuth project is missing',
             });
-            if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+            if (
+              canRetryGeminiChannelOwner({ selected, errorScope: 'credential' })
+              && canRetryChannelSelection(retryCount, forcedChannelId)
+            ) {
               retryCount += 1;
               continue;
             }
@@ -751,20 +831,90 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           };
 
           let directDispatchState = buildDirectDispatchState();
-          const dispatchWithObservedFirstByte = async () => fetchWithObservedFirstByte(
-            (signal) => directDispatchState.dispatch(signal),
-            {
-              firstByteTimeoutMs,
-              startedAtMs: Date.now(),
-            },
-          );
+          let directAttemptId: string | null = null;
+          let directAttemptIndex = retryCount;
+          let directAttemptCommitState: AttemptCommitState = 'not_started';
+          let directOutcomeUnknown = false;
+          const dispatchWithObservedFirstByte = async () => {
+            const identity = await attemptLedger?.beginAttempt({
+              endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
+              requestPath: upstreamPath,
+              targetUrl: directDispatchState.targetUrl,
+            });
+            directAttemptId = identity?.attemptId ?? null;
+            directAttemptIndex = identity?.attemptIndex ?? retryCount;
+            directAttemptCommitState = 'not_started';
+            try {
+              const response = await fetchWithObservedFirstByte(
+                (signal) => directDispatchState.dispatch(signal),
+                {
+                  firstByteTimeoutMs,
+                  startedAtMs: Date.now(),
+                },
+              );
+              if (identity) {
+                await attemptLedger?.markAttemptCommit({
+                  attemptId: identity.attemptId,
+                  event: 'request_sent',
+                  statusCode: response.status,
+                });
+                directAttemptCommitState = 'request_sent';
+                if (isObservedFirstByteTimeoutResponse(response)) {
+                  directOutcomeUnknown = true;
+                  attemptOutcomeUnknown = true;
+                  await attemptLedger?.markAttemptCommit({
+                    attemptId: identity.attemptId,
+                    event: 'transport_unknown',
+                    statusCode: response.status,
+                    errorSummary: 'first byte timeout',
+                  });
+                  directAttemptCommitState = 'sent_unknown';
+                } else if (response.ok) {
+                  await attemptLedger?.markAttemptCommit({
+                    attemptId: identity.attemptId,
+                    event: 'response_started',
+                    statusCode: response.status,
+                  });
+                  directAttemptCommitState = 'response_started';
+                }
+              }
+              return response;
+            } catch (error) {
+              if (identity) {
+                directOutcomeUnknown = true;
+                attemptOutcomeUnknown = true;
+                directAttemptCommitState = 'sent_unknown';
+                await attemptLedger?.markAttemptCommit({
+                  attemptId: identity.attemptId,
+                  event: 'transport_unknown',
+                  statusCode: 0,
+                  errorSummary: error instanceof Error ? error.message : 'Gemini transport failed',
+                });
+              }
+              throw error;
+            }
+          };
           let upstream = await dispatchWithObservedFirstByte();
           let firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
           let contentType = upstream.headers.get('content-type') || 'application/json';
           let recoverApplied = false;
           if (upstream.status === 401 && oauth) {
             try {
-              const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id);
+              const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id, {
+                reason: 'unauthorized',
+                failedAccessToken: selected.tokenValue,
+              });
+              if (directAttemptId) {
+                await attemptLedger?.finishAttempt({
+                  attemptId: directAttemptId,
+                  status: 'failed',
+                  commitState: directAttemptCommitState,
+                  errorScope: 'credential',
+                  statusCode: 401,
+                  errorSummary: 'OAuth access token rejected; refresh succeeded',
+                });
+                directAttemptId = null;
+              }
               selected.tokenValue = refreshed.accessToken;
               selected.account = {
                 ...selected.account,
@@ -785,8 +935,24 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             lastStatus = upstream.status;
             lastContentType = contentType;
             lastText = await readRuntimeResponseText(upstream);
+            if (directAttemptId) {
+              const unknown = directOutcomeUnknown || isObservedFirstByteTimeoutResponse(upstream);
+              await attemptLedger?.finishAttempt({
+                attemptId: directAttemptId,
+                status: unknown ? 'unknown' : 'failed',
+                commitState: unknown ? 'sent_unknown' : directAttemptCommitState,
+                errorScope: unknown ? 'transport' : classifyRetryErrorScope({
+                  status: upstream.status,
+                  rawErrorText: lastText,
+                }),
+                statusCode: upstream.status,
+                errorSummary: lastText,
+              });
+              directAttemptId = null;
+            }
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: retryCount,
+              attemptIndex: directAttemptIndex,
+              attemptId: attemptLedger?.getLatestAttemptId() ?? null,
               endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
               requestPath: upstreamPath,
               targetUrl: directDispatchState.targetUrl,
@@ -822,8 +988,18 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               0,
               isStreamAction,
               firstByteLatencyMs,
+              attemptLedger?.requestId ?? null,
+              attemptLedger?.getLatestAttemptId() ?? null,
             );
-            if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+            if (
+              !directOutcomeUnknown
+              && canRetryGeminiChannelOwner({
+                selected,
+                status: upstream.status,
+                errorText: lastText,
+              })
+              && canRetryChannelSelection(retryCount, forcedChannelId)
+            ) {
               retryCount += 1;
               continue;
             }
@@ -848,6 +1024,15 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               const responseBody = captureStreamChunks
                 ? ''
                 : { stream: true, usage: EMPTY_PROXY_USAGE };
+              if (directAttemptId) {
+                await attemptLedger?.finishAttempt({
+                  attemptId: directAttemptId,
+                  status: 'succeeded',
+                  commitState: 'response_started',
+                  statusCode: upstream.status,
+                });
+                directAttemptId = null;
+              }
               await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
               await logProxy(
                 selected,
@@ -865,9 +1050,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 0,
                 isStreamAction,
                 firstByteLatencyMs,
+                attemptLedger?.requestId ?? null,
+                attemptLedger?.getLatestAttemptId() ?? null,
               );
               await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-                attemptIndex: retryCount,
+                attemptIndex: directAttemptIndex,
+                attemptId: attemptLedger?.getLatestAttemptId() ?? null,
                 endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
                 requestPath: upstreamPath,
                 targetUrl: directDispatchState.targetUrl,
@@ -934,6 +1122,15 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               const responseBody = captureStreamChunks
                 ? rawStreamText
                 : { stream: true, usage: parsedUsage };
+              if (directAttemptId) {
+                await attemptLedger?.finishAttempt({
+                  attemptId: directAttemptId,
+                  status: 'succeeded',
+                  commitState: 'response_started',
+                  statusCode: upstream.status,
+                });
+                directAttemptId = null;
+              }
               await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
               await logProxy(
                 selected,
@@ -951,9 +1148,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 parsedUsage.totalTokens,
                 isStreamAction,
                 firstByteLatencyMs,
+                attemptLedger?.requestId ?? null,
+                attemptLedger?.getLatestAttemptId() ?? null,
               );
               await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-                attemptIndex: retryCount,
+                attemptIndex: directAttemptIndex,
+                attemptId: attemptLedger?.getLatestAttemptId() ?? null,
                 endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
                 requestPath: upstreamPath,
                 targetUrl: directDispatchState.targetUrl,
@@ -985,6 +1185,17 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               const responseBody = captureStreamChunks
                 ? rawStreamText
                 : { stream: true, usage: parsedUsage, error: errorMessage };
+              if (directAttemptId) {
+                await attemptLedger?.finishAttempt({
+                  attemptId: directAttemptId,
+                  status: 'failed',
+                  commitState: directAttemptCommitState,
+                  errorScope: 'stream',
+                  statusCode: 502,
+                  errorSummary: errorMessage,
+                });
+                directAttemptId = null;
+              }
               await tokenRouter.recordFailure?.(selected.channel.id, {
                 status: 502,
                 errorText: errorMessage,
@@ -1005,9 +1216,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 parsedUsage.totalTokens,
                 isStreamAction,
                 firstByteLatencyMs,
+                attemptLedger?.requestId ?? null,
+                attemptLedger?.getLatestAttemptId() ?? null,
               );
               await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-                attemptIndex: retryCount,
+                attemptIndex: directAttemptIndex,
+                attemptId: attemptLedger?.getLatestAttemptId() ?? null,
                 endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
                 requestPath: upstreamPath,
                 targetUrl: directDispatchState.targetUrl,
@@ -1051,9 +1265,18 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 aggregateState,
                 unwrappedPayload,
                 isStreamAction,
-              );
+            );
             parsedUsage = parseProxyUsage(aggregateState);
             const latency = Date.now() - startTime;
+            if (directAttemptId) {
+              await attemptLedger?.finishAttempt({
+                attemptId: directAttemptId,
+                status: 'succeeded',
+                commitState: 'response_started',
+                statusCode: upstream.status,
+              });
+              directAttemptId = null;
+            }
             await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
@@ -1071,9 +1294,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               parsedUsage.totalTokens,
               isStreamAction,
               firstByteLatencyMs,
+              attemptLedger?.requestId ?? null,
+              attemptLedger?.getLatestAttemptId() ?? null,
             );
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: retryCount,
+              attemptIndex: directAttemptIndex,
+              attemptId: attemptLedger?.getLatestAttemptId() ?? null,
               endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
               requestPath: upstreamPath,
               targetUrl: directDispatchState.targetUrl,
@@ -1104,6 +1330,15 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             );
           } catch {
             const latency = Date.now() - startTime;
+            if (directAttemptId) {
+              await attemptLedger?.finishAttempt({
+                attemptId: directAttemptId,
+                status: 'succeeded',
+                commitState: 'response_started',
+                statusCode: upstream.status,
+              });
+              directAttemptId = null;
+            }
             await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
@@ -1121,9 +1356,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               0,
               isStreamAction,
               firstByteLatencyMs,
+              attemptLedger?.requestId ?? null,
+              attemptLedger?.getLatestAttemptId() ?? null,
             );
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: retryCount,
+              attemptIndex: directAttemptIndex,
+              attemptId: attemptLedger?.getLatestAttemptId() ?? null,
               endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
               requestPath: upstreamPath,
               targetUrl: directDispatchState.targetUrl,
@@ -1221,6 +1459,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             oauthProjectId: oauth?.projectId,
             sitePlatform: selected.site.platform,
             siteUrl: selected.site.url,
+            codexFingerprintEnabled: selected.site.codexFingerprintEnabled === true,
             openaiBody: openAiBody,
             downstreamFormat: 'openai',
             forceNormalizeClaudeBody: requestOptions.forceNormalizeClaudeBody,
@@ -1277,12 +1516,16 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
+          createAttemptIdentity: attemptLedger?.createAttemptIdentity,
+          onAttemptStart: attemptLedger?.onAttemptStart,
+          onAttemptCommitState: attemptLedger?.onAttemptCommitState,
           tryRecover: endpointStrategy.tryRecover,
           shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
             ctx.response.status,
             ctx.rawErrText || ctx.errText,
           ),
           onAttemptFailure: async (ctx) => {
+            await attemptLedger?.onAttemptFailure(ctx);
             const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
@@ -1291,6 +1534,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             });
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: debugAttemptBase + ctx.endpointIndex,
+              attemptId: ctx.attemptId,
               endpoint: ctx.request.endpoint,
               requestPath: ctx.request.path,
               targetUrl: ctx.targetUrl,
@@ -1308,6 +1552,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             });
           },
           onAttemptSuccess: async (ctx) => {
+            await attemptLedger?.onAttemptSuccess(ctx);
             const memoryWrite = recordUpstreamEndpointSuccess({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
@@ -1315,6 +1560,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: debugAttemptBase + ctx.endpointIndex,
+              attemptId: ctx.attemptId,
               endpoint: ctx.request.endpoint,
               requestPath: ctx.request.path,
               targetUrl: ctx.targetUrl,
@@ -1369,8 +1615,18 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             0,
             isStreamAction,
             null,
+            attemptLedger?.requestId ?? null,
+            attemptLedger?.getLatestAttemptId() ?? null,
           );
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          if (
+            endpointResult.commitState !== 'sent_unknown'
+            && canRetryGeminiChannelOwner({
+              selected,
+              status: endpointResult.status,
+              errorText: endpointResult.rawErrText || endpointResult.errText,
+            })
+            && canRetryChannelSelection(retryCount, forcedChannelId)
+          ) {
             retryCount += 1;
             continue;
           }
@@ -1416,6 +1672,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           parsedUsage.totalTokens,
           isStreamAction,
           firstByteLatencyMs,
+          attemptLedger?.requestId ?? null,
+          attemptLedger?.getLatestAttemptId() ?? null,
         );
         const downstreamPayload = isGeminiCliDownstream
           ? { response: geminiResponse }
@@ -1463,8 +1721,18 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           0,
           isStreamAction,
           null,
+          attemptLedger?.requestId ?? null,
+          attemptLedger?.getLatestAttemptId() ?? null,
         );
-        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (
+          !attemptOutcomeUnknown
+          && canRetryGeminiChannelOwner({
+            selected,
+            errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
+            errorScope: 'transport',
+          })
+          && canRetryChannelSelection(retryCount, forcedChannelId)
+        ) {
           retryCount += 1;
           continue;
         }
