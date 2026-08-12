@@ -158,7 +158,8 @@
 ## 🏛️ 架构概览
 
 <div align="center">
-  <img src="docs/screenshots/metapi-architecture.png" alt="r-api: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
+  <img src="docs/screenshots/r-api-architecture.png" alt="r-api 二开能力总览架构图" style="max-width: 100%; height: auto;" />
+  <p><sub>r-api 网关、持久化账本、本地连接器与交互适配器的整体能力边界</sub></p>
 </div>
 
 ---
@@ -275,6 +276,51 @@
 - **单 Docker 容器**，默认本地数据目录部署，支持外接 MySQL / PostgreSQL 运行时数据库
 - Docker 镜像支持 `amd64`、`arm64` 和 `armv7l`（`linux/arm/v7`）服务端部署
 - 数据完整导入导出，迁移无忧
+
+### 🧩 二开能力与规划
+
+当前二开版本在原有聚合代理之上，补齐了安全、可靠性、本地控制和运营工作流。下面的模块会作为 r-api 后续迭代的统一能力地图，新增功能优先复用这些边界和数据契约。
+
+#### 🔐 管理员安全与凭证中心
+
+- 管理员凭据使用 **Argon2id** 哈希保存，WebUI 使用 Cookie 会话，并支持可信代理和安全 Cookie 配置
+- 可选 **TOTP 双因素认证**、一次性恢复码，以及仅在服务器本地执行的 TOTP 重置 CLI
+- **Credential Vault** 统一保存账号、浏览器会话和第三方应用秘密；列表只展示指纹与元数据，不回显明文
+- **Browser Credential Recovery** 通过 Chromium / Firefox MV3 扩展领取一次性任务，只采集适配器声明的 Cookie 或 Storage 字段，启用前仍会走站点校验和模型同步
+
+#### 🧾 代理请求账本与首字节路由
+
+- `proxy_requests` 记录一次下游请求的业务生命周期，`proxy_request_attempts` 记录每条上游尝试、失败分类和路由决策
+- 用 `sent_unknown` 表示“请求可能已经发出但结果未知”，由明确的重试所有权和人工确认规则避免重复扣费或重复投递
+- 基于首字节延迟、成功率、余额和成本的路由策略，配合通道健康域、失败冷却和上游 HTTP 连接复用
+- **Model Sync** 与 **Site Adapter Capability Contract** 统一模型可用性探测、站点能力声明和路由重建
+
+#### 🔌 Local Connector 与 Bridge Continuations
+
+- **Local Connector** 观察本机 Codex Desktop / App Server 会话，并按固定权限执行会话接管、Prompt 下发和状态回执
+- Hook / Notify 支持安装、加密备份、回滚和卸载；本地看板、耐久队列、LaunchAgent 与运行时恢复共同保证断线可恢复
+- **Bridge Continuations** 支持跨会话续跑、租约、恢复调度、状态机和事件审计，可保留当前线路、轮换凭据或切换 API 渠道
+- 观察权限与控制权限分离，服务端只下发声明式动作，不传任意 Shell、路径或可执行参数
+
+#### 💬 交互适配器与通知投递
+
+- **Interaction Requests / Dispatches** 将 Codex 审批、用户输入和 MCP elicitation 统一为可审计的交互请求
+- 支持飞书长连接、主题绑定、Prompt Cards 和飞书主动 Prompt；卡片动作使用一次性签名票据并支持状态回写
+- **Notification Outbox** 提供节流、租约、指数退避和失败重试；投递结果未知时进入人工确认流程，不盲目重发
+
+#### 🗂️ 管理工作区规划
+
+| 工作区 | 规划重点 | 关联文档 |
+| ---------------------- | ------------------------------------------------------------ | -------------------------------- |
+| **Channel Management** | 站点、账号、Token、OAuth 与渠道健康统一管理 | [上游接入](./docs/upstream-integration.md) |
+| **Credential Vault** | 凭证版本、指纹、撤销和最小权限使用 | [配置说明](./docs/configuration.md) |
+| **Browser Recovery** | 一次性采集任务、扩展协议和凭证启用 | [浏览器凭证扩展](./docs/browser-extension.md) |
+| **Local Connector** | 设备配对、动作队列、Hook / Notify 与本地看板 | [Local Connector 协议](./docs/local-connector.md) |
+| **Bridge Continuations** | 会话续跑、路由切换、租约恢复和事件审计 | [二开功能使用指南](./docs/fork-features-guide.md) |
+| **Interaction Requests** | WebUI / 飞书审批、Prompt Cards 与回执 | [二开功能使用指南](./docs/fork-features-guide.md) |
+| **Proxy Request Ledger** | 请求尝试、失败分类、`sent_unknown` 与首字节路由 | [项目结构](./docs/project-structure.md) |
+
+完整操作路径见 [二开功能使用指南](./docs/fork-features-guide.md)。架构图中的模块均以现有服务端、WebUI 和本地 Connector 的协议为边界，后续扩展新适配器或新通知渠道时不需要复制另一套状态机。
 
 ---
 
