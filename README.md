@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi" width="280">
+<img src="docs/logos/r-api-logo.png" alt="r-api" width="280">
 
 **中转站的中转站 — 将分散的 AI 中转站聚合为一个统一网关**
 
@@ -12,13 +12,13 @@
 
 
 <p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
-</a><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
+<a href="https://github.com/Rory-X/r-api/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/Rory-X/r-api?label=Release&logo=github&style=flat">
+</a><a href="https://github.com/Rory-X/r-api/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/Rory-X/r-api?style=flat&logo=github&label=Stars">
 </a><a href="https://atomgit.com/cita-777/metapi">
   <img alt="AtomGit Stars" src="https://atomgit.com/cita-777/metapi/star/badge.svg">
-</a><a href="https://deepwiki.com/cita-777/metapi">
+</a><a href="https://deepwiki.com/Rory-X/r-api">
   <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
 </a><a href="https://hub.docker.com/r/1467078763/metapi">
   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/1467078763/metapi?style=flat&logo=docker&label=Docker%20Pulls">
@@ -26,7 +26,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
-</a><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+</a><a href="https://render.com/deploy?repo=https://github.com/Rory-X/r-api">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 </p>
@@ -51,7 +51,7 @@
 
 ## 🌐 在线体验
 
-> 无需部署，直接体验 Metapi 的完整功能：
+> 无需部署，直接体验 r-api 的完整功能：
 
 |                        |                                                            |
 | ---------------------- | ---------------------------------------------------------- |
@@ -68,7 +68,7 @@
 
 现在 AI 生态里有越来越多基于 New API / One API 系列的聚合中转站，要管理多个站点的余额、模型列表和 API 密钥，往往既分散又费时。
 
-**Metapi** 作为这些中转站之上的**元聚合层（Meta-Aggregation Layer）**，把多个站点统一到 **一个入口（可按项目配置多个下游 API Key）**——下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）即可无感接入全部模型。当前支持的上游范围已经不止传统聚合面板，还包括：
+**r-api** 作为这些中转站之上的**元聚合层（Meta-Aggregation Layer）**，把多个站点统一到 **一个入口（可按项目配置多个下游 API Key）**——下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）即可无感接入全部模型。当前支持的上游范围已经不止传统聚合面板，还包括：
 
 - 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[AnyRouter](https://anyrouter.top)、[Sub2API](https://github.com/Wei-Shaw/sub2api)
 - 通用兼容接口：OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA
@@ -77,7 +77,7 @@
 
 详细接法见 [上游接入](./docs/upstream-integration.md) 与 [OAuth 管理](./docs/oauth.md)。
 
-| 痛点                                  | Metapi 怎么解决                                                        |
+| 痛点                                  | r-api 怎么解决                                                        |
 | ------------------------------------- | ---------------------------------------------------------------------- |
 | 🔑 每个站点一个 Key，下游工具配置一堆 | **统一代理入口 + 可选多下游 Key 策略**，模型自动聚合到 `/v1/*` |
 | 💸 不知道哪个站点用某个模型最便宜     | **智能路由** 自动按成本、余额、使用率选最优通道                  |
@@ -158,7 +158,7 @@
 ## 🏛️ 架构概览
 
 <div align="center">
-  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
+  <img src="docs/screenshots/metapi-architecture.png" alt="r-api: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
 </div>
 
 ---
@@ -283,18 +283,18 @@
 <a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
 </a>
-<a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+<a href="https://render.com/deploy?repo=https://github.com/Rory-X/r-api">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 
 ### Docker Compose（推荐）
 
 ```bash
-mkdir metapi && cd metapi
+mkdir r-api && cd r-api
 
 cat > docker-compose.yml << 'EOF'
 services:
-  metapi:
+  r-api:
     image: 1467078763/metapi:latest
     ports:
       - "4000:4000"
@@ -328,7 +328,7 @@ docker compose up -d
 <summary><strong>一行 Docker 命令</strong></summary>
 
 ```bash
-docker run -d --name metapi \
+docker run -d --name r-api \
   -p 4000:4000 \
   -e ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret \
   -e AUTH_TOKEN=your-admin-token \
@@ -412,7 +412,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 | 项目                                            | 说明                                    |
 | ----------------------------------------------- | --------------------------------------- |
-| [New API](https://github.com/QuantumNous/new-api)  | 新一代大模型网关，Metapi 的主要上游之一 |
+| [New API](https://github.com/QuantumNous/new-api)  | 新一代大模型网关，r-api 的主要上游之一 |
 | [One API](https://github.com/songquanpeng/one-api) | 经典 OpenAI 接口聚合管理                |
 | [OneHub](https://github.com/MartialBE/one-hub)     | One API 增强分支                        |
 | [DoneHub](https://github.com/deanxv/done-hub)      | OneHub 增强分支                         |
@@ -422,7 +422,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 | 项目                                                 | 说明                                                      |
 | ---------------------------------------------------- | --------------------------------------------------------- |
-| [All API Hub](https://github.com/qixing-jk/all-api-hub) | 浏览器扩展版 — 一站式管理中转站账号，Metapi 最初灵感来源 |
+| [All API Hub](https://github.com/qixing-jk/all-api-hub) | 浏览器扩展版 — 一站式管理中转站账号，r-api 最初灵感来源 |
 | [LLM Metadata](https://github.com/nicepkg/llm-metadata) | LLM 模型元数据库，用于模型描述参考                        |
 | [New API](https://github.com/QuantumNous/new-api)       | 平台适配器参考实现                                        |
 
@@ -430,7 +430,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 ## 🔒 数据与隐私
 
-Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
+r-api 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
 
 ---
 
@@ -438,9 +438,9 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 欢迎各种形式的贡献！
 
-- 🐛 报告 Bug — [提交 Issue](https://github.com/cita-777/metapi/issues)
-- 💡 功能建议 — [发起讨论](https://github.com/cita-777/metapi/issues)
-- 🔧 代码贡献 — [提交 Pull Request](https://github.com/cita-777/metapi/pulls)
+- 🐛 报告 Bug — [提交 Issue](https://github.com/Rory-X/r-api/issues)
+- 💡 功能建议 — [发起讨论](https://github.com/Rory-X/r-api/issues)
+- 🔧 代码贡献 — [提交 Pull Request](https://github.com/Rory-X/r-api/pulls)
 - 📝 贡献指南 — [CONTRIBUTING.md](CONTRIBUTING.md)
 - 📜 行为准则 — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -460,25 +460,25 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ## 🙏 致谢
 
-感谢所有为 Metapi 提交代码、反馈问题、提供思路和实测数据的朋友。这个项目的很多能力，都是在社区的真实使用和反复打磨中慢慢长出来的。
+感谢所有为 r-api 提交代码、反馈问题、提供思路和实测数据的朋友。这个项目的很多能力，都是在社区的真实使用和反复打磨中慢慢长出来的。
 
 特别感谢所有贡献者：
 
-<a href="https://github.com/cita-777/metapi/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=cita-777/metapi" alt="Contributors" />
+<a href="https://github.com/Rory-X/r-api/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Rory-X/r-api" alt="Contributors" />
 </a>
 
 ---
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=Rory-X/r-api&type=date&legend=top-left&v=2)](https://www.star-history.com/#Rory-X/r-api&type=date&legend=top-left)
 
 ---
 
 <div align="center">
 
-**⭐ 如果 Metapi 对你有帮助，给个 Star 就是最大的支持！**
+**⭐ 如果 r-api 对你有帮助，给个 Star 就是最大的支持！**
 
 `<sub>`Built with ❤️ by the AI community`</sub>`
 
