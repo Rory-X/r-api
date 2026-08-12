@@ -282,4 +282,3 @@ JSON 2.0 表单按钮使用：
 - [卡片 JSON 中配置卡片交互](https://open.feishu.cn/document/feishu-cards/configuring-card-interactions)
 - [卡片回传交互回调](https://open.feishu.cn/document/feishu-cards/card-callback-communication)
 - [处理卡片回调](https://open.feishu.cn/document/feishu-cards/handle-card-callbacks)
-

@@ -57,4 +57,3 @@ export async function __resetBridgeContinuationRecoverySchedulerForTests(): Prom
   await stopBridgeContinuationRecoveryScheduler();
   recoveryPassPromise = null;
 }
-

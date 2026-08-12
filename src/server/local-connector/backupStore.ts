@@ -174,4 +174,3 @@ export async function restoreLocalConnectorBackup(input: {
   await atomicWriteFile(input.targetPath, content, payload.mode ?? 0o600);
   return { restored: true, existed: true, sha256 };
 }
-

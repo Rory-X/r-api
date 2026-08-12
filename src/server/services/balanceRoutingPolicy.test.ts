@@ -45,4 +45,3 @@ describe('balance routing policy', () => {
     })).toEqual({ mode: 'observe_only', threshold: 0, softAvoidMultiplier: 1 });
   });
 });
-

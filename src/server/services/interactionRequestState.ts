@@ -225,4 +225,3 @@ export function transitionInteractionRequest(
     updatedAtMs: nowMs,
   });
 }
-

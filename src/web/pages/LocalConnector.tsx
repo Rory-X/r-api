@@ -340,7 +340,8 @@ export default function LocalConnector() {
   }
 
   return (
-    <div className="animate-fade-in local-connector-page">
+    <div className="management-page-stack">
+      <div className="animate-fade-in local-connector-page">
       <div className="page-header">
         <div>
           <h2 className="page-title">Codex 会话接管</h2>
@@ -584,7 +585,8 @@ export default function LocalConnector() {
           </div>
         </Disclosure>
       </section>
-      {confirmationDialog}
+        {confirmationDialog}
+      </div>
     </div>
   );
 }
