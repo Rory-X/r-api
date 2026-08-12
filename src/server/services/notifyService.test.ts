@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const sendMailMock = vi.fn();
 const createTransportMock = vi.fn(() => ({
@@ -29,15 +32,31 @@ vi.mock('./siteProxy.js', () => ({
 }));
 
 describe('notifyService', () => {
+  let db: typeof import('../db/index.js')['db'];
+  let schema: typeof import('../db/index.js')['schema'];
+  let config: typeof import('../config.js')['config'];
+  let dataDir = '';
+  let previousDataDir: string | undefined;
+
+  beforeAll(async () => {
+    previousDataDir = process.env.DATA_DIR;
+    dataDir = mkdtempSync(join(tmpdir(), 'metapi-notify-service-'));
+    process.env.DATA_DIR = dataDir;
+    await import('../db/migrate.js');
+    ({ db, schema } = await import('../db/index.js'));
+    ({ config } = await import('../config.js'));
+    await import('./notifyService.js');
+  });
+
   beforeEach(async () => {
-    vi.resetModules();
     sendMailMock.mockReset();
     createTransportMock.mockClear();
     fetchMock.mockReset();
     withExplicitProxyRequestInitMock.mockClear();
-
-    const { config } = await import('../config.js');
+    await db.delete(schema.notificationOutbox).run();
+    await db.delete(schema.notificationThrottleStates).run();
     config.notifyCooldownSec = 300;
+    config.notifyDeliveryPolicy = 'prefer_delivery';
     config.webhookEnabled = false;
     config.webhookUrl = '';
     config.barkEnabled = false;
@@ -58,6 +77,14 @@ describe('notifyService', () => {
     config.smtpPass = 'demo-pass';
     config.smtpFrom = 'sender@example.com';
     config.smtpTo = 'receiver@example.com';
+  });
+
+  afterAll(async () => {
+    const dbModule = await import('../db/index.js');
+    await dbModule.closeDbConnections();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it('bypasses cooldown when bypassThrottle is enabled', async () => {

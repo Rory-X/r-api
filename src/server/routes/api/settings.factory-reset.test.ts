@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
+import argon2 from 'argon2';
 
 type DbModule = typeof import('../../db/index.js');
 type ConfigModule = typeof import('../../config.js');
@@ -164,11 +165,17 @@ describe('settings factory reset api', () => {
     ]);
 
     const authTokenSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'auth_token')).get();
+    const adminPasswordHashSetting = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'admin_password_hash'))
+      .get();
     const dbTypeSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'db_type')).get();
     const dbUrlSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'db_url')).get();
     const dbSslSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'db_ssl')).get();
     const systemProxySetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'system_proxy_url')).get();
-    expect(authTokenSetting?.value).toBe(JSON.stringify('before-reset-token'));
+    expect(authTokenSetting).toBeUndefined();
+    const adminPasswordHash = JSON.parse(adminPasswordHashSetting?.value || '""');
+    expect(adminPasswordHash).toMatch(/^\$argon2id\$/);
+    expect(await argon2.verify(adminPasswordHash, 'before-reset-token')).toBe(true);
     expect(dbTypeSetting?.value).toBe(JSON.stringify('sqlite'));
     expect(dbUrlSetting?.value).toBe(JSON.stringify(''));
     expect(dbSslSetting?.value).toBe(JSON.stringify(false));

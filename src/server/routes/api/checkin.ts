@@ -4,7 +4,7 @@ import { db, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import { eq, desc } from 'drizzle-orm';
 import { checkinAccount, checkinAll } from '../../services/checkinService.js';
-import { updateCheckinSchedule } from '../../services/checkinScheduler.js';
+import { updateCheckinSchedule, updateCheckinSchedulePolicy } from '../../services/checkinScheduler.js';
 import { startBackgroundTask, summarizeCheckinResults } from '../../services/backgroundTaskService.js';
 import { classifyFailureReason } from '../../services/failureReasonService.js';
 
@@ -85,7 +85,7 @@ export async function checkinRoutes(app: FastifyInstance) {
         failureMessage: (currentTask) => `全部账号签到任务失败：${currentTask.error || 'unknown error'}`,
       },
       async () => {
-        const results = await checkinAll({ scheduleMode: config.checkinScheduleMode });
+        const results = await checkinAll({ scheduleMode: config.checkinScheduleMode, manual: true, automatic: false });
         return {
           summary: summarizeCheckinResults(results),
           total: results.length,
@@ -109,7 +109,7 @@ export async function checkinRoutes(app: FastifyInstance) {
   // Trigger check-in for a specific account
   app.post<{ Params: { id: string } }>('/api/checkin/trigger/:id', async (request) => {
     const id = parseInt(request.params.id, 10);
-    const result = await checkinAccount(id, { scheduleMode: config.checkinScheduleMode });
+    const result = await checkinAccount(id, { scheduleMode: config.checkinScheduleMode, manual: true, automatic: false });
     return result;
   });
 
@@ -143,7 +143,7 @@ export async function checkinRoutes(app: FastifyInstance) {
   });
 
   // Update check-in schedule
-  app.put<{ Body: { mode?: 'cron' | 'interval'; cron?: string; intervalHours?: number } }>('/api/checkin/schedule', async (request) => {
+  app.put<{ Body: { mode?: 'cron' | 'interval'; cron?: string; intervalHours?: number; policy?: unknown } }>('/api/checkin/schedule', async (request) => {
     try {
       const body = request.body || {};
       const nextMode: 'cron' | 'interval' = body.mode === 'interval' ? 'interval' : 'cron';
@@ -152,6 +152,11 @@ export async function checkinRoutes(app: FastifyInstance) {
       const normalizedIntervalHours = typeof nextIntervalHours === 'number' && Number.isFinite(nextIntervalHours)
         ? Math.trunc(nextIntervalHours)
         : undefined;
+
+      if (body.policy !== undefined) {
+        updateCheckinSchedulePolicy(body.policy);
+        await upsertSetting('checkin_schedule_policy', config.checkinSchedulePolicy);
+      }
 
       updateCheckinSchedule({
         mode: nextMode,
@@ -169,6 +174,7 @@ export async function checkinRoutes(app: FastifyInstance) {
         mode: nextMode,
         cron: nextCron,
         intervalHours: normalizedIntervalHours,
+        policy: config.checkinSchedulePolicy,
       };
     } catch (err: any) {
       return { error: err.message };

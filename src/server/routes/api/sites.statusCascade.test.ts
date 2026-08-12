@@ -30,6 +30,7 @@ describe('sites status cascade', () => {
   beforeEach(async () => {
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
+    await db.delete(schema.settings).run();
   });
 
   afterAll(async () => {
@@ -70,5 +71,49 @@ describe('sites status cascade', () => {
 
     const enabledAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(enabledAccount?.status).toBe('active');
+  });
+
+  it('remembers deletion of an OAuth provider site so implicit recreation is blocked', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/sites/${site.id}`,
+    });
+    expect(response.statusCode).toBe(200);
+
+    const { ensureOauthProviderSite } = await import('../../services/oauth/oauthSiteRegistry.js');
+    const { getOAuthProviderDefinition } = await import('../../services/oauth/providers.js');
+    const definition = getOAuthProviderDefinition('codex');
+    await expect(ensureOauthProviderSite(definition!)).rejects.toThrow('oauth provider site was deleted');
+    expect(await db.select().from(schema.sites)).toHaveLength(0);
+  });
+
+  it('remembers OAuth provider site deletion through the batch action', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/batch',
+      payload: { ids: [site.id], action: 'delete' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ successIds: [site.id] });
+
+    const { ensureOauthProviderSite } = await import('../../services/oauth/oauthSiteRegistry.js');
+    const { getOAuthProviderDefinition } = await import('../../services/oauth/providers.js');
+    const definition = getOAuthProviderDefinition('codex');
+    await expect(ensureOauthProviderSite(definition!)).rejects.toThrow('oauth provider site was deleted');
+    expect(await db.select().from(schema.sites)).toHaveLength(0);
   });
 });

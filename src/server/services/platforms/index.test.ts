@@ -68,6 +68,14 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('chatgpt-codex')?.platformName).toBe('codex');
   });
 
+  it('exposes the site capability contract from a registered adapter', () => {
+    expect(getAdapter('new-api')?.getContract()).toMatchObject({
+      platformName: 'new-api',
+      credentialStorage: 'encrypted_vault_only',
+      browser: { supported: true },
+    });
+  });
+
   it('detects anyrouter URL before generic new-api adapter', async () => {
     const adapter = await detectPlatform('https://anyrouter.top');
     expect(adapter?.platformName).toBe('anyrouter');

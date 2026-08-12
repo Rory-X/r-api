@@ -45,6 +45,56 @@ describe('applyRuntimeSettings', () => {
     expect(config.smtpPort).toBe(587);
   });
 
+  it('hydrates the global notification delivery policy', () => {
+    config.notifyDeliveryPolicy = 'prefer_delivery';
+
+    applyRuntimeSettings(new Map([
+      ['notify_delivery_policy', JSON.stringify('prefer_no_duplicate')],
+    ]));
+
+    expect(config.notifyDeliveryPolicy).toBe('prefer_no_duplicate');
+  });
+
+  it('hydrates and normalizes the first-byte routing policy', () => {
+    applyRuntimeSettings(new Map([
+      ['first_byte_routing_policy', JSON.stringify({
+        enabled: true,
+        baselineMs: 3_200,
+        penaltyWindowMs: 15_000,
+        maxPenaltyRatio: 0.72,
+        minSamples: 8,
+      })],
+    ]));
+
+    expect(config.firstByteRoutingPolicy).toEqual({
+      enabled: true,
+      baselineMs: 3_200,
+      penaltyWindowMs: 15_000,
+      maxPenaltyRatio: 0.72,
+      minSamples: 8,
+    });
+  });
+
+  it('hydrates and normalizes the checkin schedule policy', () => {
+    applyRuntimeSettings(new Map([
+      ['checkin_schedule_policy', JSON.stringify({
+        timeZone: 'Asia/Shanghai',
+        windowStart: '23:00',
+        windowEnd: '01:00',
+        jitterMinutes: 240,
+        catchUp: false,
+      })],
+    ]));
+
+    expect(config.checkinSchedulePolicy).toEqual({
+      timeZone: 'Asia/Shanghai',
+      windowStart: '23:00',
+      windowEnd: '01:00',
+      jitterMinutes: 180,
+      catchUp: false,
+    });
+  });
+
   it('hydrates legacy double-encoded global model allowlist values', () => {
     config.globalAllowedModels = [];
 

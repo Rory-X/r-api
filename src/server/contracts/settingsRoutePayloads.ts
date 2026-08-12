@@ -12,8 +12,28 @@ const runtimeSettingsPayloadSchema = z.object({
   telegramUseSystemProxy: z.boolean().optional(),
   smtpEnabled: z.boolean().optional(),
   smtpSecure: z.boolean().optional(),
+  notifyDeliveryPolicy: z.enum(['prefer_delivery', 'prefer_no_duplicate']).optional(),
+  checkinSchedulePolicy: z.object({
+    timeZone: z.string().optional(),
+    windowStart: z.string().optional(),
+    windowEnd: z.string().optional(),
+    jitterMinutes: z.number().finite().optional(),
+    catchUp: z.boolean().optional(),
+  }).optional(),
   logCleanupUsageLogsEnabled: z.boolean().optional(),
   logCleanupProgramLogsEnabled: z.boolean().optional(),
+  balanceRoutingPolicy: z.object({
+    mode: z.enum(['observe_only', 'soft_avoid', 'hard_block']).optional(),
+    threshold: z.number().finite().optional(),
+    softAvoidMultiplier: z.number().finite().optional(),
+  }).optional(),
+  firstByteRoutingPolicy: z.object({
+    enabled: z.boolean().optional(),
+    baselineMs: z.number().finite().optional(),
+    penaltyWindowMs: z.number().finite().optional(),
+    maxPenaltyRatio: z.number().finite().optional(),
+    minSamples: z.number().finite().optional(),
+  }).optional(),
 }).passthrough();
 
 const systemProxyTestPayloadSchema = z.object({
@@ -108,11 +128,23 @@ function formatSettingsPayloadError(error: z.ZodError): string {
   if (firstPath === 'smtpSecure') {
     return 'SMTP 安全连接格式无效：需要 boolean';
   }
+  if (firstPath === 'notifyDeliveryPolicy') {
+    return '通知投递策略格式无效：需要 prefer_delivery 或 prefer_no_duplicate';
+  }
+  if (firstPath === 'checkinSchedulePolicy') {
+    return '签到调度策略格式无效';
+  }
   if (firstPath === 'logCleanupUsageLogsEnabled') {
     return '自动清理使用日志格式无效：需要 boolean';
   }
   if (firstPath === 'logCleanupProgramLogsEnabled') {
     return '自动清理程序日志格式无效：需要 boolean';
+  }
+  if (firstPath === 'balanceRoutingPolicy') {
+    return '余额路由策略格式无效';
+  }
+  if (firstPath === 'firstByteRoutingPolicy') {
+    return '首字调度策略格式无效';
   }
   return 'Invalid settings payload.';
 }

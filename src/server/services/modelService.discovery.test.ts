@@ -797,16 +797,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
   });
 
-  it('rotates codex cloud discovery across configured ai endpoints after a retryable failure', async () => {
+  it('rotates codex cloud discovery across configured ai endpoints after a transport failure', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
     undiciFetchMock
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 502,
-        json: async () => ({ error: 'bad gateway' }),
-        text: async () => 'bad gateway',
-      })
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNRESET'))
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -875,7 +870,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const firstEndpoint = endpoints.find((item) => item.url === 'https://chatgpt.com/backend-api/codex-a');
     const secondEndpoint = endpoints.find((item) => item.url === 'https://chatgpt.com/backend-api/codex-b');
     expect(firstEndpoint?.cooldownUntil).toBeTruthy();
-    expect(firstEndpoint?.lastFailureReason).toContain('HTTP 502');
+    expect(firstEndpoint?.lastFailureReason).toContain('ECONNRESET');
     expect(secondEndpoint?.lastSelectedAt).toBeTruthy();
   });
 
@@ -1035,7 +1030,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelsPreview: ['claude-sonnet-4-5-20250929'],
       discoveredByCredential: true,
     });
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id, {
+      reason: 'model_discovery',
+      failedAccessToken: 'claude-access-token-expired',
+    });
     expect(undiciFetchMock).toHaveBeenCalledTimes(2);
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://api.anthropic.com/v1/models');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
@@ -1155,7 +1153,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelsPreview: ['gpt-5.4'],
       discoveredByCredential: true,
     });
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id, {
+      reason: 'model_discovery',
+      failedAccessToken: 'codex-access-token-expired',
+    });
     expect(undiciFetchMock).toHaveBeenCalledTimes(2);
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
@@ -1272,7 +1273,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       errorCode: 'unknown',
       discoveredByCredential: false,
     });
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id, {
+      reason: 'model_discovery',
+      failedAccessToken: 'codex-access-token-expired',
+    });
 
     const latest = await db.select().from(schema.accounts)
       .where(eq(schema.accounts.id, account.id))
@@ -1413,7 +1417,9 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelsPreview: ['gpt-5.4'],
     });
     expect(undiciFetchMock).toHaveBeenCalledTimes(1);
-    expect(proxyAgentCtorMock).toHaveBeenCalledWith('http://127.0.0.1:7890');
+    expect(proxyAgentCtorMock).toHaveBeenCalledWith(expect.objectContaining({
+      uri: 'http://127.0.0.1:7890',
+    }));
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'GET',
       dispatcher: expect.any(MockProxyAgent),
@@ -1465,7 +1471,9 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: expect.any(Number),
     });
     expect(undiciFetchMock).toHaveBeenCalledTimes(1);
-    expect(proxyAgentCtorMock).toHaveBeenCalledWith('http://127.0.0.1:1080');
+    expect(proxyAgentCtorMock).toHaveBeenCalledWith(expect.objectContaining({
+      uri: 'http://127.0.0.1:1080',
+    }));
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toContain('/projects/project-proxy-demo/services/');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'GET',
@@ -1521,7 +1529,9 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: expect.any(Number),
     });
     expect(undiciFetchMock).toHaveBeenCalledTimes(1);
-    expect(proxyAgentCtorMock).toHaveBeenCalledWith('http://127.0.0.1:1081');
+    expect(proxyAgentCtorMock).toHaveBeenCalledWith(expect.objectContaining({
+      uri: 'http://127.0.0.1:1081',
+    }));
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toContain('/projects/project-site-proxy-demo/services/');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'GET',
@@ -1614,7 +1624,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: expect.any(Number),
       discoveredByCredential: true,
     });
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id, {
+      reason: 'model_discovery',
+      failedAccessToken: 'gemini-access-token-expired',
+    });
     expect(undiciFetchMock).toHaveBeenCalledTimes(2);
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toContain('/projects/project-refresh-demo/services/');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
@@ -1755,7 +1768,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelsPreview: ['gemini-3-pro-preview'],
       discoveredByCredential: true,
     });
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id, {
+      reason: 'model_discovery',
+      failedAccessToken: 'antigravity-access-token-expired',
+    });
     expect(undiciFetchMock).toHaveBeenCalledTimes(4);
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
@@ -1939,16 +1955,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     });
   });
 
-  it('rotates antigravity discovery across configured ai endpoints before using built-in fallback hosts', async () => {
+  it('rotates antigravity discovery across configured ai endpoints after a transport failure', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('antigravity oauth discovery should not call adapter.getModels'));
     undiciFetchMock
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 503,
-        json: async () => ({ error: 'endpoint-a unavailable' }),
-        text: async () => 'endpoint-a unavailable',
-      })
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNRESET'))
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -2015,7 +2026,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     const firstEndpoint = endpoints.find((item) => item.url === 'https://api-antigravity-a.example.com');
     const secondEndpoint = endpoints.find((item) => item.url === 'https://api-antigravity-b.example.com');
     expect(firstEndpoint?.cooldownUntil).toBeTruthy();
-    expect(firstEndpoint?.lastFailureReason).toContain('HTTP 503');
+    expect(firstEndpoint?.lastFailureReason).toContain('ECONNRESET');
     expect(secondEndpoint?.lastSelectedAt).toBeTruthy();
   });
 

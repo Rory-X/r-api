@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import {
   buildFastifyOptions,
@@ -16,6 +17,16 @@ import { settingsRoutes } from './routes/api/settings.js';
 import { accountTokensRoutes } from './routes/api/accountTokens.js';
 import { searchRoutes } from './routes/api/search.js';
 import { eventsRoutes } from './routes/api/events.js';
+import { notificationOutboxRoutes } from './routes/api/notificationOutbox.js';
+import { proxyRequestLedgerRoutes } from './routes/api/proxyRequestLedgers.js';
+import { proxyFileAdminRoutes } from './routes/api/proxyFiles.js';
+import { credentialVaultRoutes } from './routes/api/credentialVault.js';
+import { browserCredentialRecoveryRoutes } from './routes/api/browserCredentialRecovery.js';
+import { modelSyncRoutes } from './routes/api/modelSync.js';
+import { localConnectorRoutes } from './routes/api/localConnector.js';
+import { bridgeContinuationRoutes } from './routes/api/bridgeContinuations.js';
+import { interactionRequestRoutes } from './routes/api/interactionRequests.js';
+import { interactionAdapterRoutes } from './routes/api/interactionAdapters.js';
 import { taskRoutes } from './routes/api/tasks.js';
 import { testRoutes } from './routes/api/test.js';
 import { monitorRoutes } from './routes/api/monitor.js';
@@ -33,7 +44,7 @@ import { repairStoredCreatedAtValues } from './services/storedTimestampRepairSer
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
-import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
+import { recoverAbandonedProxyRequestLedgers } from './services/proxyAttemptLedgerStore.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling, stopSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
 import {
@@ -58,7 +69,30 @@ import {
   stopUsageAggregationProjectorScheduler,
 } from './services/usageAggregationService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
+import {
+  startNotificationOutboxWorker,
+  stopNotificationOutboxWorker,
+} from './services/notificationOutboxService.js';
+import {
+  startBrowserRecoveryTaskSweeper,
+  stopBrowserRecoveryTaskSweeper,
+} from './services/browserCredentialRecoveryService.js';
+import {
+  startBridgeContinuationRecoveryScheduler,
+  stopBridgeContinuationRecoveryScheduler,
+} from './services/bridgeContinuationRecoveryScheduler.js';
+import {
+  startInteractionRequestExpiryScheduler,
+  stopInteractionRequestExpiryScheduler,
+} from './services/interactionRequestExpiryScheduler.js';
+import {
+  startFeishuInteractionAdapterScheduler,
+  stopFeishuInteractionAdapterScheduler,
+} from './services/feishuInteractionAdapterScheduler.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
+import { ensureAdminAuthReady, pruneAdminSessions } from './services/adminAuthService.js';
+import { pruneAdminAuthChallenges } from './services/adminTotpService.js';
+import { configureUpstreamHttpTransport } from './services/upstreamHttpTransport.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -132,6 +166,8 @@ function hasExplicitLogCleanupSettings(settingsMap: Map<string, string>): boolea
   return LOG_CLEANUP_SETTING_KEYS.some((key) => settingsMap.has(key));
 }
 
+configureUpstreamHttpTransport();
+
 // Ensure the current runtime database is bootstrapped before reading settings.
 await ensureRuntimeDatabaseReady({
   dialect: runtimeDbDialect,
@@ -197,10 +233,25 @@ try {
   console.warn(`Failed to load runtime settings overrides: ${(error as Error)?.message || 'unknown error'}`);
 }
 
-await ensureOauthProviderSitesExist();
+await ensureAdminAuthReady();
+await pruneAdminSessions();
+await pruneAdminAuthChallenges();
+
+try {
+  const recovered = await recoverAbandonedProxyRequestLedgers();
+  if (recovered.recoveredRequests > 0) {
+    console.warn(
+      `[proxy-ledger] recovered ${recovered.recoveredRequests} abandoned request(s) `
+      + `and ${recovered.recoveredAttempts} in-flight attempt(s) as sent_unknown`,
+    );
+  }
+} catch (error) {
+  console.warn(`[proxy-ledger] startup recovery failed: ${(error as Error)?.message || 'unknown error'}`);
+}
 
 const app = Fastify(buildFastifyOptions(config));
 
+await app.register(cookie);
 await app.register(cors);
 
 // Auth middleware for /api routes
@@ -222,6 +273,16 @@ await app.register(settingsRoutes);
 await app.register(accountTokensRoutes);
 await app.register(searchRoutes);
 await app.register(eventsRoutes);
+await app.register(notificationOutboxRoutes);
+await app.register(proxyRequestLedgerRoutes);
+await app.register(proxyFileAdminRoutes);
+await app.register(credentialVaultRoutes);
+await app.register(browserCredentialRecoveryRoutes);
+await app.register(modelSyncRoutes);
+await app.register(localConnectorRoutes);
+await app.register(bridgeContinuationRoutes);
+await app.register(interactionRequestRoutes);
+await app.register(interactionAdapterRoutes);
 await app.register(siteAnnouncementsRoutes);
 await app.register(updateCenterRoutes);
 await app.register(taskRoutes);
@@ -270,6 +331,11 @@ startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
 startUsageAggregationProjectorScheduler();
 startAdminSnapshotWarmScheduler();
+startNotificationOutboxWorker();
+await startBrowserRecoveryTaskSweeper();
+await startBridgeContinuationRecoveryScheduler();
+await startInteractionRequestExpiryScheduler();
+await startFeishuInteractionAdapterScheduler();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -286,6 +352,11 @@ app.addHook('onClose', async () => {
   stopChannelRecoveryProbeScheduler();
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
+  await stopNotificationOutboxWorker();
+  stopBrowserRecoveryTaskSweeper();
+  await stopBridgeContinuationRecoveryScheduler();
+  await stopInteractionRequestExpiryScheduler();
+  await stopFeishuInteractionAdapterScheduler();
   await stopSub2ApiManagedRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
@@ -296,8 +367,6 @@ try {
   const summaryLines = buildStartupSummaryLines({
     port: config.port,
     host: config.listenHost,
-    authToken: config.authToken,
-    proxyToken: config.proxyToken,
   });
   for (const line of summaryLines) {
     console.log(line);

@@ -187,6 +187,7 @@ async function restoreDeletedOauthRouteUnit(snapshot: {
         oauthRouteUnitId: channel.oauthRouteUnitId,
         sourceModel: channel.sourceModel,
         priority: channel.priority,
+        sortOrder: channel.sortOrder,
         weight: channel.weight,
         enabled: channel.enabled,
         manualOverride: channel.manualOverride,

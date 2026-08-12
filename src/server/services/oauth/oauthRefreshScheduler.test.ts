@@ -272,7 +272,9 @@ describe('oauthRefreshScheduler', () => {
 
     await vi.advanceTimersByTimeAsync(0);
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledTimes(1);
-    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenLastCalledWith(account.id);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenLastCalledWith(account.id, {
+      reason: 'scheduled',
+    });
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledTimes(2);
@@ -327,5 +329,86 @@ describe('oauthRefreshScheduler', () => {
     releaseRefresh?.();
     await stopPromise;
     expect(stopResolved).toBe(true);
+  });
+
+  it('counts lease, provider cooldown, and account backoff deferrals as skipped', async () => {
+    const nowMs = Date.parse('2026-04-05T12:00:00.000Z');
+    vi.setSystemTime(nowMs);
+    const { OAuthRefreshCoordinatorError } = await import('./refreshCoordinator.js');
+
+    const site = await db.insert(schema.sites).values({
+      name: 'oauth-refresh-site',
+      url: 'https://oauth-refresh.example.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    const dueAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'due-user@example.com',
+      accessToken: 'due-access-token',
+      status: 'active',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'due-user@example.com',
+      extraConfig: buildOauthExtraConfig({
+        provider: 'antigravity',
+        refreshToken: 'due-refresh-token',
+        tokenExpiresAt: nowMs + (4 * 60 * 1000),
+      }),
+    }).returning().get();
+
+    await db.insert(schema.accounts).values([
+      {
+        siteId: site.id,
+        username: 'backoff-user@example.com',
+        accessToken: 'backoff-access-token',
+        status: 'active',
+        oauthProvider: 'antigravity',
+        oauthAccountKey: 'backoff-user@example.com',
+        oauthRefreshState: 'transient_error',
+        oauthRefreshRetryAt: new Date(nowMs + 60_000).toISOString(),
+        extraConfig: buildOauthExtraConfig({
+          provider: 'antigravity',
+          refreshToken: 'backoff-refresh-token',
+          tokenExpiresAt: nowMs + (4 * 60 * 1000),
+        }),
+      },
+      {
+        siteId: site.id,
+        username: 'unknown-user@example.com',
+        accessToken: 'unknown-access-token',
+        status: 'active',
+        oauthProvider: 'antigravity',
+        oauthAccountKey: 'unknown-user@example.com',
+        oauthRefreshState: 'refresh_unknown',
+        extraConfig: buildOauthExtraConfig({
+          provider: 'antigravity',
+          refreshToken: 'unknown-refresh-token',
+          tokenExpiresAt: nowMs + (4 * 60 * 1000),
+        }),
+      },
+    ]).run();
+
+    refreshOauthAccessTokenSingleflightMock.mockRejectedValueOnce(new OAuthRefreshCoordinatorError({
+      code: 'provider_rate_limited',
+      message: 'provider cooldown',
+      retryAfterMs: 30_000,
+      transient: true,
+    }));
+
+    const result = await executeOauthTokenAutoRefreshPass({ nowMs });
+
+    expect(result).toMatchObject({
+      scanned: 3,
+      refreshed: 0,
+      failed: 0,
+      skipped: 3,
+      refreshedAccountIds: [],
+      failedAccountIds: [],
+    });
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledOnce();
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(dueAccount.id, {
+      reason: 'scheduled',
+    });
   });
 });

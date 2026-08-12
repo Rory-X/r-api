@@ -1,6 +1,7 @@
 import { fetch } from 'undici';
 import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import type { OAuthProviderDefinition } from './providers.js';
+import { createOauthProviderHttpError } from './providerError.js';
 
 export const ANTIGRAVITY_OAUTH_PROVIDER = 'antigravity';
 export const ANTIGRAVITY_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -146,7 +147,13 @@ async function postAntigravityToken(
   }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `antigravity token exchange failed with status ${response.status}`);
+    throw createOauthProviderHttpError({
+      provider: ANTIGRAVITY_OAUTH_PROVIDER,
+      statusCode: response.status,
+      bodyText: text,
+      fallbackMessage: `antigravity token exchange failed with status ${response.status}`,
+      retryAfter: response.headers?.get?.('retry-after') ?? null,
+    });
   }
   const payload = await response.json() as AntigravityOAuthTokenPayload;
   const accessToken = asTrimmedString(payload.access_token);

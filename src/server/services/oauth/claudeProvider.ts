@@ -3,6 +3,7 @@ import { config } from '../../config.js';
 import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import { createPkceChallenge } from './sessionStore.js';
 import type { OAuthProviderDefinition } from './providers.js';
+import { createOauthProviderHttpError } from './providerError.js';
 
 export const CLAUDE_OAUTH_PROVIDER = 'claude';
 export const CLAUDE_AUTH_URL = 'https://claude.ai/oauth/authorize';
@@ -92,7 +93,13 @@ async function postClaudeToken(
   }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `claude token exchange failed with status ${response.status}`);
+    throw createOauthProviderHttpError({
+      provider: CLAUDE_OAUTH_PROVIDER,
+      statusCode: response.status,
+      bodyText: text,
+      fallbackMessage: `claude token exchange failed with status ${response.status}`,
+      retryAfter: response.headers?.get?.('retry-after') ?? null,
+    });
   }
   return parseClaudeTokenPayload(await response.json());
 }

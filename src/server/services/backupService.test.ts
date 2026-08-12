@@ -36,7 +36,10 @@ describe('backupService', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.siteAnnouncements).run();
     await db.delete(schema.siteDisabledModels).run();
+    await db.delete(schema.oauthRefreshLeases).run();
+    await db.delete(schema.oauthRefreshProviderStates).run();
     await db.delete(schema.accountTokens).run();
+    await db.delete(schema.credentialVaultItems).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.downstreamApiKeys).run();
@@ -78,6 +81,18 @@ describe('backupService', () => {
       oauthProvider: 'codex',
       oauthAccountKey: 'roundtrip-account-key',
       oauthProjectId: 'roundtrip-project-id',
+      oauthCredentialPayload: JSON.stringify({
+        email: 'roundtrip-user@example.com',
+        refreshToken: 'roundtrip-refresh-token',
+        tokenExpiresAt: Date.parse(now) + 60_000,
+      }),
+      oauthCredentialVersion: 7,
+      oauthRefreshState: 'transient_error',
+      oauthRefreshFailureCount: 2,
+      oauthRefreshRetryAt: now,
+      oauthRefreshLastAttemptAt: now,
+      oauthRefreshLastSuccessAt: now,
+      oauthRefreshLastError: 'temporary provider failure',
       balance: 12.3,
       balanceUsed: 4.5,
       quota: 99.9,
@@ -187,6 +202,27 @@ describe('backupService', () => {
       },
     ]).run();
 
+    await db.insert(schema.oauthRefreshLeases).values({
+      accountId: account.id,
+      provider: 'codex',
+      providerSlot: 1,
+      leaseToken: 'roundtrip-runtime-lease',
+      leaseOwner: 'backup-test-worker',
+      credentialVersion: 7,
+      expiresAt: new Date(Date.parse(now) + 60_000).toISOString(),
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    await db.insert(schema.oauthRefreshProviderStates).values({
+      provider: 'codex',
+      nextAllowedAt: new Date(Date.parse(now) + 60_000).toISOString(),
+      lastStartedAt: now,
+      consecutiveFailureCount: 1,
+      lastError: 'runtime cooldown',
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
     await db.insert(schema.downstreamApiKeys).values({
       name: 'Shared Downstream',
       key: 'downstream-roundtrip-key',
@@ -213,6 +249,7 @@ describe('backupService', () => {
 
     const exported = await backupService.exportBackup('all') as any;
     expect(exported.version).toBe('2.1');
+    expect(exported.accounts.sites[0]?.homepageUrl).toBeNull();
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
     ]);
@@ -249,6 +286,22 @@ describe('backupService', () => {
     expect(exported.accounts.accounts[0]).not.toHaveProperty('balanceUsed');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastCheckinAt');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastBalanceRefresh');
+    expect(exported.accounts.accounts[0]).toMatchObject({
+      oauthCredentialPayload: JSON.stringify({
+        email: 'roundtrip-user@example.com',
+        refreshToken: 'roundtrip-refresh-token',
+        tokenExpiresAt: Date.parse(now) + 60_000,
+      }),
+      oauthCredentialVersion: 7,
+      oauthRefreshState: 'transient_error',
+      oauthRefreshFailureCount: 2,
+      oauthRefreshRetryAt: now,
+      oauthRefreshLastAttemptAt: now,
+      oauthRefreshLastSuccessAt: now,
+      oauthRefreshLastError: 'temporary provider failure',
+    });
+    expect(exported.accounts).not.toHaveProperty('oauthRefreshLeases');
+    expect(exported.accounts).not.toHaveProperty('oauthRefreshProviderStates');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('successCount');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('lastUsedAt');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('usedCost');
@@ -271,6 +324,7 @@ describe('backupService', () => {
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
 
     expect(restoredSite?.proxyUrl).toBe('http://127.0.0.1:8080');
+    expect(restoredSite?.homepageUrl).toBeNull();
     expect(restoredSite?.externalCheckinUrl).toBe('https://checkin.roundtrip.example.com');
     expect(restoredSite?.useSystemProxy).toBe(true);
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
@@ -282,6 +336,18 @@ describe('backupService', () => {
     expect(restoredAccount?.oauthProvider).toBe('codex');
     expect(restoredAccount?.oauthAccountKey).toBe('roundtrip-account-key');
     expect(restoredAccount?.oauthProjectId).toBe('roundtrip-project-id');
+    expect(restoredAccount).toMatchObject({
+      oauthCredentialVersion: 7,
+      oauthRefreshState: 'transient_error',
+      oauthRefreshFailureCount: 2,
+      oauthRefreshRetryAt: now,
+      oauthRefreshLastAttemptAt: now,
+      oauthRefreshLastSuccessAt: now,
+      oauthRefreshLastError: 'temporary provider failure',
+    });
+    expect(restoredAccount?.oauthCredentialPayload).toContain('roundtrip-refresh-token');
+    expect(await db.select().from(schema.oauthRefreshLeases).all()).toEqual([]);
+    expect(await db.select().from(schema.oauthRefreshProviderStates).all()).toEqual([]);
 
     expect(restoredRoute?.displayName).toBe('gpt-route');
     expect(restoredRoute?.displayIcon).toBe('icon-gpt');
@@ -1098,6 +1164,7 @@ describe('backupService', () => {
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
 
     expect(restoredSites).toHaveLength(1);
+    expect(restoredSites[0]?.homepageUrl).toBe('https://legacy-native.example.com');
     expect(restoredAccounts).toHaveLength(1);
     expect(restoredAccounts[0]?.username).toBe('legacy-user');
     expect(restoredDownstreamKeys).toHaveLength(1);

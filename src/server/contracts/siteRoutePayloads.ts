@@ -6,11 +6,13 @@ const unknownField = z.unknown().optional();
 const siteCreatePayloadSchema = z.object({
   name: requiredTrimmedString,
   url: requiredTrimmedString,
+  homepageUrl: z.union([z.string(), z.null()]).optional(),
   platform: z.string().trim().optional(),
   initializationPresetId: z.union([z.string(), z.null()]).optional(),
   proxyUrl: unknownField,
   useSystemProxy: unknownField,
   customHeaders: unknownField,
+  codexFingerprintEnabled: unknownField,
   externalCheckinUrl: unknownField,
   status: unknownField,
   isPinned: unknownField,
@@ -21,10 +23,12 @@ const siteCreatePayloadSchema = z.object({
 const siteUpdatePayloadSchema = z.object({
   name: requiredTrimmedString.optional(),
   url: requiredTrimmedString.optional(),
+  homepageUrl: z.union([z.string(), z.null()]).optional(),
   platform: requiredTrimmedString.optional(),
   proxyUrl: unknownField,
   useSystemProxy: unknownField,
   customHeaders: unknownField,
+  codexFingerprintEnabled: unknownField,
   externalCheckinUrl: unknownField,
   status: unknownField,
   isPinned: unknownField,
@@ -65,6 +69,9 @@ function formatSitePayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'url') {
     return 'Invalid url. Expected non-empty string.';
+  }
+  if (firstPath === 'homepageUrl') {
+    return 'Invalid homepageUrl. Expected string or null.';
   }
   if (firstPath === 'platform') {
     return 'Invalid platform. Expected string.';

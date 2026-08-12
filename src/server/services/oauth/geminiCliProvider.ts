@@ -2,6 +2,7 @@ import { fetch } from 'undici';
 import { config } from '../../config.js';
 import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import type { OAuthProviderDefinition } from './providers.js';
+import { createOauthProviderHttpError } from './providerError.js';
 
 export const GEMINI_CLI_OAUTH_PROVIDER = 'gemini-cli';
 export const GEMINI_CLI_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -162,7 +163,13 @@ async function postGeminiToken(
   }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `gemini token exchange failed with status ${response.status}`);
+    throw createOauthProviderHttpError({
+      provider: GEMINI_CLI_OAUTH_PROVIDER,
+      statusCode: response.status,
+      bodyText: text,
+      fallbackMessage: `gemini token exchange failed with status ${response.status}`,
+      retryAfter: response.headers?.get?.('retry-after') ?? null,
+    });
   }
   const payload = await response.json() as GeminiOAuthTokenPayload;
   const accessToken = asTrimmedString(payload.access_token);

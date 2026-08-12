@@ -1,5 +1,6 @@
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
+import { getSiteAdapterContract } from './platforms/siteAdapterContract.js';
 import { eq } from 'drizzle-orm';
 import { appendSessionTokenRebindHint, isTokenExpiredError } from './alertRules.js';
 import { reportTokenExpired } from './alertService.js';
@@ -266,6 +267,24 @@ export async function refreshBalance(accountId: number) {
 
   const adapter = getAdapter(site.platform);
   if (!adapter) return null;
+
+  const adapterContract = typeof (adapter as { getContract?: unknown }).getContract === 'function'
+    ? adapter.getContract()
+    : getSiteAdapterContract(site.platform);
+  if (!adapterContract.operations.balance) {
+    setAccountRuntimeHealth(account.id, {
+      state: 'degraded',
+      reason: '站点适配器未声明余额读取能力',
+      source: 'balance',
+    });
+    return {
+      balance: account.balance ?? 0,
+      used: account.balanceUsed ?? 0,
+      quota: account.quota ?? 0,
+      skipped: true,
+      reason: 'capability_unsupported',
+    };
+  }
 
   if (isApiKeyConnection(account)) {
     return {

@@ -4,6 +4,7 @@ import { inferCodexOfficialOriginator } from '../../shared/codexClientFamily.js'
 import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import { createPkceChallenge } from './sessionStore.js';
 import type { OAuthProviderDefinition } from './providers.js';
+import { createOauthProviderHttpError } from './providerError.js';
 
 export const CODEX_OAUTH_PROVIDER = 'codex';
 export const CODEX_AUTH_URL = 'https://auth.openai.com/oauth/authorize';
@@ -122,7 +123,13 @@ async function exchangeCodexToken(
   }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `codex token exchange failed with status ${response.status}`);
+    throw createOauthProviderHttpError({
+      provider: CODEX_OAUTH_PROVIDER,
+      statusCode: response.status,
+      bodyText: text,
+      fallbackMessage: `codex token exchange failed with status ${response.status}`,
+      retryAfter: response.headers?.get?.('retry-after') ?? null,
+    });
   }
   return parseTokenResponsePayload(await response.json());
 }

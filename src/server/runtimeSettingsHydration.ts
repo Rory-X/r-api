@@ -1,9 +1,13 @@
 import {
   config,
+  normalizeNotificationDeliveryPolicy,
   normalizeTokenRouterFailureCooldownMaxSec,
 } from './config.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
+import { normalizeBalanceRoutingPolicy } from './services/balanceRoutingPolicy.js';
+import { normalizeCheckinSchedulePolicy } from './services/checkinSchedulePolicy.js';
+import { normalizeFirstByteRoutingPolicy } from '../shared/firstByteRoutingPolicy.js';
 
 export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: string): T | undefined {
   const raw = settingsMap.get(key);
@@ -39,9 +43,6 @@ function toStringList(value: unknown): string[] {
 }
 
 export function applyRuntimeSettings(settingsMap: Map<string, string>) {
-  const authToken = parseSettingFromMap<string>(settingsMap, 'auth_token');
-  if (typeof authToken === 'string' && authToken) config.authToken = authToken;
-
   const proxyToken = parseSettingFromMap<string>(settingsMap, 'proxy_token');
   if (typeof proxyToken === 'string' && proxyToken) config.proxyToken = proxyToken;
 
@@ -116,6 +117,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const checkinIntervalHours = parseSettingFromMap<number>(settingsMap, 'checkin_interval_hours');
   if (typeof checkinIntervalHours === 'number' && Number.isFinite(checkinIntervalHours) && checkinIntervalHours >= 1 && checkinIntervalHours <= 24) {
     config.checkinIntervalHours = Math.trunc(checkinIntervalHours);
+  }
+
+  const checkinSchedulePolicy = parseSettingFromMap<unknown>(settingsMap, 'checkin_schedule_policy');
+  if (checkinSchedulePolicy !== undefined) {
+    config.checkinSchedulePolicy = normalizeCheckinSchedulePolicy(checkinSchedulePolicy);
   }
 
   const balanceRefreshCron = parseSettingFromMap<string>(settingsMap, 'balance_refresh_cron');
@@ -220,10 +226,20 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(proxyFirstByteTimeoutSec));
   }
 
+  const firstByteRoutingPolicy = parseSettingFromMap<unknown>(settingsMap, 'first_byte_routing_policy');
+  if (firstByteRoutingPolicy !== undefined) {
+    config.firstByteRoutingPolicy = normalizeFirstByteRoutingPolicy(firstByteRoutingPolicy);
+  }
+
   const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');
   const normalizedFailureCooldownMaxSec = normalizeTokenRouterFailureCooldownMaxSec(tokenRouterFailureCooldownMaxSec);
   if (normalizedFailureCooldownMaxSec != null) {
     config.tokenRouterFailureCooldownMaxSec = normalizedFailureCooldownMaxSec;
+  }
+
+  const balanceRoutingPolicy = parseSettingFromMap<unknown>(settingsMap, 'balance_routing_policy');
+  if (balanceRoutingPolicy !== undefined) {
+    config.balanceRoutingPolicy = normalizeBalanceRoutingPolicy(balanceRoutingPolicy);
   }
 
   const webhookUrl = parseSettingFromMap<string>(settingsMap, 'webhook_url');
@@ -293,6 +309,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const notifyCooldownSec = parseSettingFromMap<number>(settingsMap, 'notify_cooldown_sec');
   if (typeof notifyCooldownSec === 'number' && Number.isFinite(notifyCooldownSec) && notifyCooldownSec >= 0) {
     config.notifyCooldownSec = Math.trunc(notifyCooldownSec);
+  }
+
+  const notifyDeliveryPolicy = parseSettingFromMap<string>(settingsMap, 'notify_delivery_policy');
+  if (typeof notifyDeliveryPolicy === 'string') {
+    config.notifyDeliveryPolicy = normalizeNotificationDeliveryPolicy(notifyDeliveryPolicy);
   }
 
   const adminIpAllowlist = parseSettingFromMap<string[] | string>(settingsMap, 'admin_ip_allowlist');

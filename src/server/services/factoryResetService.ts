@@ -1,10 +1,15 @@
 import { buildConfig, config } from '../config.js';
 import { db, schema, switchRuntimeDatabase } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
+import { eq } from 'drizzle-orm';
 import { updateBalanceRefreshCron, updateCheckinCron, updateLogCleanupSettings } from './checkinScheduler.js';
 import { ensureDefaultSitesSeeded } from './defaultSiteSeedService.js';
 import { startProxyLogRetentionService } from './proxyLogRetentionService.js';
 import { invalidateSiteProxyCache } from './siteProxy.js';
+import {
+  ADMIN_PASSWORD_HASH_SETTING_KEY,
+  hashAdminCredential,
+} from './adminAuthService.js';
 
 export const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 
@@ -16,6 +21,8 @@ type FactoryResetDependencies = {
 
 type PreservedInfrastructureState = {
   authToken: string;
+  adminPasswordHash: string;
+  adminTotpConfig: typeof schema.adminTotpConfigs.$inferSelect | null;
   proxyToken: string;
   systemProxyUrl: string;
   dbType: 'sqlite' | 'mysql' | 'postgres';
@@ -28,23 +35,58 @@ async function clearAllBusinessData() {
     await tx.delete(schema.routeChannels).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
+    await tx.delete(schema.modelSyncStates).run();
     await tx.delete(schema.proxyLogs).run();
     await tx.delete(schema.proxyVideoTasks).run();
     await tx.delete(schema.proxyFiles).run();
     await tx.delete(schema.checkinLogs).run();
     await tx.delete(schema.accountTokens).run();
+    await tx.delete(schema.browserCredentialRecoveryTasks).run();
+    await tx.delete(schema.bridgeContinuationEvents).run();
+    await tx.delete(schema.bridgeContinuationLeases).run();
+    await tx.delete(schema.bridgeContinuationTasks).run();
+    await tx.delete(schema.interactionActionTickets).run();
+    await tx.delete(schema.interactionCardUpdates).run();
+    await tx.delete(schema.interactionDispatches).run();
+    await tx.delete(schema.interactionPromptCards).run();
+    await tx.delete(schema.interactionAdapters).run();
+    await tx.delete(schema.interactionEvents).run();
+    await tx.delete(schema.interactionRequests).run();
+    await tx.delete(schema.localConnectorActions).run();
+    await tx.delete(schema.localConnectorPairings).run();
+    await tx.delete(schema.localConnectorDevices).run();
+    await tx.delete(schema.credentialVaultItems).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.sites).run();
     await tx.delete(schema.downstreamApiKeys).run();
     await tx.delete(schema.events).run();
+    await tx.delete(schema.notificationOutbox).run();
+    await tx.delete(schema.notificationThrottleStates).run();
+    await tx.delete(schema.adminAuthChallenges).run();
+    await tx.delete(schema.adminSessions).run();
+    await tx.delete(schema.adminTotpConfigs).run();
     await tx.delete(schema.settings).run();
   });
 }
 
-function captureInfrastructureState(): PreservedInfrastructureState {
+async function captureInfrastructureState(): Promise<PreservedInfrastructureState> {
+  const storedHash = await db.select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, ADMIN_PASSWORD_HASH_SETTING_KEY))
+    .get();
+  let adminPasswordHash = '';
+  try {
+    const parsed = JSON.parse(storedHash?.value || 'null');
+    adminPasswordHash = typeof parsed === 'string' ? parsed.trim() : '';
+  } catch {
+    adminPasswordHash = String(storedHash?.value || '').trim();
+  }
+
   return {
     authToken: config.authToken,
+    adminPasswordHash,
+    adminTotpConfig: await db.select().from(schema.adminTotpConfigs).get() || null,
     proxyToken: config.proxyToken,
     systemProxyUrl: config.systemProxyUrl,
     dbType: config.dbType,
@@ -85,7 +127,12 @@ function resetRuntimeConfigToInitialState(preserved: PreservedInfrastructureStat
 }
 
 async function restoreInfrastructureSettings(preserved: PreservedInfrastructureState): Promise<void> {
-  await upsertSetting('auth_token', preserved.authToken || FACTORY_RESET_ADMIN_TOKEN);
+  const adminPasswordHash = preserved.adminPasswordHash
+    || await hashAdminCredential(preserved.authToken || FACTORY_RESET_ADMIN_TOKEN);
+  await upsertSetting(ADMIN_PASSWORD_HASH_SETTING_KEY, adminPasswordHash);
+  if (preserved.adminTotpConfig) {
+    await db.insert(schema.adminTotpConfigs).values(preserved.adminTotpConfig).run();
+  }
   await upsertSetting('proxy_token', preserved.proxyToken);
   await upsertSetting('system_proxy_url', preserved.systemProxyUrl);
 
@@ -110,7 +157,7 @@ export async function performFactoryReset(deps: FactoryResetDependencies = {}): 
   const switchRuntimeDatabaseImpl = deps.switchRuntimeDatabase ?? switchRuntimeDatabase;
   const runSqliteMigrationsImpl = deps.runSqliteMigrations ?? runDefaultSqliteMigrations;
   const ensureDefaultSitesSeededImpl = deps.ensureDefaultSitesSeeded ?? ensureDefaultSitesSeeded;
-  const preserved = captureInfrastructureState();
+  const preserved = await captureInfrastructureState();
 
   await clearAllBusinessData();
   resetRuntimeConfigToInitialState(preserved);

@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import cookie from '@fastify/cookie';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
@@ -30,7 +31,8 @@ describe('settings and auth events', () => {
     schema = dbModule.schema;
     config = configModule.config;
 
-    app = Fastify();
+    app = Fastify({ trustProxy: '10.0.0.8' });
+    await app.register(cookie);
     await app.register(settingsRoutesModule.settingsRoutes);
     await app.register(authRoutesModule.authRoutes);
   });
@@ -46,6 +48,13 @@ describe('settings and auth events', () => {
     config.checkinCron = '0 8 * * *';
     (config as any).checkinScheduleMode = 'cron';
     (config as any).checkinIntervalHours = 6;
+    config.checkinSchedulePolicy = {
+      timeZone: '',
+      windowStart: '00:00',
+      windowEnd: '23:59',
+      jitterMinutes: 0,
+      catchUp: false,
+    };
     config.balanceRefreshCron = '0 * * * *';
     config.logCleanupConfigured = false;
     config.logCleanupCron = '0 6 * * *';
@@ -66,6 +75,13 @@ describe('settings and auth events', () => {
     (config as any).proxyDebugMaxBodyBytes = 262144;
     config.routingFallbackUnitCost = 1;
     (config as any).proxyFirstByteTimeoutSec = 0;
+    (config as any).firstByteRoutingPolicy = {
+      enabled: true,
+      baselineMs: 2_500,
+      penaltyWindowMs: 10_000,
+      maxPenaltyRatio: 0.65,
+      minSamples: 5,
+    };
     (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).disableCrossProtocolFallback = false;
     (config as any).payloadRules = {
@@ -113,6 +129,26 @@ describe('settings and auth events', () => {
     expect(events[0].message || '').toContain('签到 Cron');
   });
 
+  it('persists the global notification delivery policy', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        notifyDeliveryPolicy: 'prefer_no_duplicate',
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect((updateResponse.json() as { notifyDeliveryPolicy?: string }).notifyDeliveryPolicy)
+      .toBe('prefer_no_duplicate');
+    expect(config.notifyDeliveryPolicy).toBe('prefer_no_duplicate');
+
+    const saved = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'notify_delivery_policy'))
+      .get();
+    expect(saved?.value).toBe(JSON.stringify('prefer_no_duplicate'));
+  });
+
   it('persists and returns checkin interval mode from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',
@@ -133,6 +169,48 @@ describe('settings and auth events', () => {
     const savedInterval = await db.select().from(schema.settings).where(eq(schema.settings.key, 'checkin_interval_hours')).get();
     expect(savedMode?.value).toBe(JSON.stringify('interval'));
     expect(savedInterval?.value).toBe(JSON.stringify(8));
+  });
+
+  it('persists and returns the checkin timezone, window, jitter, and catch-up policy', async () => {
+    const policy = {
+      timeZone: 'Asia/Shanghai',
+      windowStart: '23:00',
+      windowEnd: '01:00',
+      jitterMinutes: 25,
+      catchUp: false,
+    };
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: { checkinSchedulePolicy: policy },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect((updateResponse.json() as { checkinSchedulePolicy?: unknown }).checkinSchedulePolicy).toEqual(policy);
+    expect(config.checkinSchedulePolicy).toEqual(policy);
+
+    const saved = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'checkin_schedule_policy'))
+      .get();
+    expect(saved?.value).toBe(JSON.stringify(policy));
+  });
+
+  it('rejects invalid checkin timezone and jitter settings', async () => {
+    const invalidTimezone = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: { checkinSchedulePolicy: { timeZone: 'not-a-timezone' } },
+    });
+    expect(invalidTimezone.statusCode).toBe(400);
+    expect(invalidTimezone.json()).toMatchObject({ success: false });
+
+    const invalidJitter = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: { checkinSchedulePolicy: { jitterMinutes: 181 } },
+    });
+    expect(invalidJitter.statusCode).toBe(400);
+    expect(invalidJitter.json()).toMatchObject({ success: false });
   });
 
   it('persists codex upstream websocket and session lease settings from runtime settings', async () => {
@@ -639,6 +717,33 @@ describe('settings and auth events', () => {
     expect(runtime.proxyFirstByteTimeoutSec).toBe(7);
   });
 
+  it('persists and returns first-byte routing policy from runtime settings', async () => {
+    const firstByteRoutingPolicy = {
+      enabled: true,
+      baselineMs: 3_000,
+      penaltyWindowMs: 12_000,
+      maxPenaltyRatio: 0.7,
+      minSamples: 7,
+    };
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: { firstByteRoutingPolicy },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { firstByteRoutingPolicy?: typeof firstByteRoutingPolicy };
+    expect(updated.firstByteRoutingPolicy).toEqual(firstByteRoutingPolicy);
+    expect((config as any).firstByteRoutingPolicy).toEqual(firstByteRoutingPolicy);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'first_byte_routing_policy')).get();
+    expect(saved?.value).toBe(JSON.stringify(firstByteRoutingPolicy));
+
+    const getResponse = await app.inject({ method: 'GET', url: '/api/settings/runtime' });
+    expect(getResponse.statusCode).toBe(200);
+    expect((getResponse.json() as { firstByteRoutingPolicy?: unknown }).firstByteRoutingPolicy).toEqual(firstByteRoutingPolicy);
+  });
+
   it('persists and returns disable cross protocol fallback from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',
@@ -981,24 +1086,27 @@ describe('settings and auth events', () => {
     expect(events.length).toBe(1);
     expect(events[0]).toMatchObject({
       type: 'token',
-      title: '管理员登录令牌已更新',
+      title: '管理员登录凭据已更新',
       relatedType: 'settings',
     });
   });
 
   it('rate limits repeated admin auth token changes from the same client ip', async () => {
+    let currentCredential = 'old-admin-token-123';
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      const nextCredential = `new-admin-token-${attempt}-456`;
       const response = await app.inject({
         method: 'POST',
         url: '/api/settings/auth/change',
         remoteAddress: '198.51.100.12',
         payload: {
-          oldToken: config.authToken,
-          newToken: `new-admin-token-${attempt}-456`,
+          oldToken: currentCredential,
+          newToken: nextCredential,
         },
       });
 
       expect(response.statusCode).toBe(200);
+      currentCredential = nextCredential;
     }
 
     const limited = await app.inject({
@@ -1006,7 +1114,7 @@ describe('settings and auth events', () => {
       url: '/api/settings/auth/change',
       remoteAddress: '198.51.100.12',
       payload: {
-        oldToken: config.authToken,
+        oldToken: currentCredential,
         newToken: 'new-admin-token-rate-limit',
       },
     });

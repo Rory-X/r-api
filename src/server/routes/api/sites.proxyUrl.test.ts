@@ -43,6 +43,7 @@ describe('sites proxy settings', () => {
       payload: {
         name: 'proxy-site',
         url: 'https://proxy-site.example.com',
+        homepageUrl: 'https://www.proxy-site.example.com/login/',
         platform: 'new-api',
         proxyUrl: 'socks5://127.0.0.1:1080',
         useSystemProxy: true,
@@ -60,14 +61,34 @@ describe('sites proxy settings', () => {
       proxyUrl?: string | null;
       useSystemProxy?: boolean;
       customHeaders?: string | null;
+      homepageUrl?: string | null;
       externalCheckinUrl?: string | null;
       globalWeight?: number;
     };
     expect(payload.proxyUrl).toBe('socks5://127.0.0.1:1080');
     expect(payload.useSystemProxy).toBe(true);
     expect(payload.customHeaders).toBe('{"cf-access-client-id":"site-client-id","x-site-scope":"internal"}');
+    expect(payload.homepageUrl).toBe('https://www.proxy-site.example.com/login');
     expect(payload.externalCheckinUrl).toBe('https://checkin.example.com/welfare');
     expect(payload.globalWeight).toBe(1.5);
+  });
+
+  it('defaults the homepage to the request address when it is omitted', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'default-homepage-site',
+        url: 'https://default-homepage.example.com/v1',
+        platform: 'new-api',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as { url?: string; homepageUrl?: string | null })).toMatchObject({
+      url: 'https://default-homepage.example.com',
+      homepageUrl: 'https://default-homepage.example.com',
+    });
   });
 
   it('returns a conflict response when the same platform and url already exist', async () => {
@@ -186,6 +207,22 @@ describe('sites proxy settings', () => {
     expect((response.json() as { error?: string }).error).toContain('Invalid externalCheckinUrl');
   });
 
+  it('rejects an invalid homepage url', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'invalid-homepage-site',
+        url: 'https://request.example.com',
+        homepageUrl: 'ftp://homepage.example.com',
+        platform: 'new-api',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid homepageUrl');
+  });
+
   it('updates per-site proxy settings for an existing site', async () => {
     const created = await app.inject({
       method: 'POST',
@@ -222,6 +259,7 @@ describe('sites proxy settings', () => {
       payload: {
         name: 'editable-site',
         url: 'https://editable-site.example.com',
+        homepageUrl: 'https://home.editable-site.example.com',
         platform: 'new-api',
         proxyUrl: 'http://127.0.0.1:8080',
         useSystemProxy: true,
@@ -241,6 +279,7 @@ describe('sites proxy settings', () => {
         proxyUrl: '',
         useSystemProxy: false,
         customHeaders: '',
+        homepageUrl: '',
         externalCheckinUrl: '',
       },
     });
@@ -250,11 +289,13 @@ describe('sites proxy settings', () => {
       proxyUrl?: string | null;
       useSystemProxy?: boolean;
       customHeaders?: string | null;
+      homepageUrl?: string | null;
       externalCheckinUrl?: string | null;
     };
     expect(payload.proxyUrl).toBeNull();
     expect(payload.useSystemProxy).toBe(false);
     expect(payload.customHeaders).toBeNull();
+    expect(payload.homepageUrl).toBeNull();
     expect(payload.externalCheckinUrl).toBeNull();
   });
 

@@ -3,8 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 
 describe('desktop server routes', () => {
-  it('marks only the desktop health route as public', () => {
+  it('marks only explicit bootstrap/callback routes as public', () => {
     expect(isPublicApiRoute('/api/desktop/health')).toBe(true);
+    expect(isPublicApiRoute('/api/auth/login')).toBe(true);
+    expect(isPublicApiRoute('/api/auth/session?refresh=1')).toBe(true);
+    expect(isPublicApiRoute('/api/auth/logout')).toBe(false);
+    expect(isPublicApiRoute('/api/local-connector/public/heartbeat')).toBe(true);
+    expect(isPublicApiRoute('/api/local-connector/devices')).toBe(false);
     expect(isPublicApiRoute('/api/stats/dashboard')).toBe(false);
   });
 

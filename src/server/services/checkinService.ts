@@ -1,5 +1,6 @@
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
+import { getSiteAdapterContract } from './platforms/siteAdapterContract.js';
 import { eq, and } from 'drizzle-orm';
 import { sendNotification } from './notifyService.js';
 import { isCloudflareChallenge, isTokenExpiredError } from './alertRules.js';
@@ -120,7 +121,7 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
   return result.accessToken;
 }
 
-export async function checkinAccount(accountId: number, options?: { skipEvent?: boolean; scheduleMode?: 'cron' | 'interval' }) {
+export async function checkinAccount(accountId: number, options?: { skipEvent?: boolean; scheduleMode?: 'cron' | 'interval'; manual?: boolean; automatic?: boolean }) {
   const rows = await db
     .select()
     .from(schema.accounts)
@@ -170,6 +171,44 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
 
   const adapter = getAdapter(site.platform);
   if (!adapter) return { success: false, status: 'failed' as const, message: `unsupported platform: ${site.platform}` };
+
+  const contract = typeof (adapter as { getContract?: unknown }).getContract === 'function'
+    ? adapter.getContract()
+    : getSiteAdapterContract(site.platform);
+  const recordCapabilitySkip = async (reason: string, message: string) => {
+    const createdAt = formatUtcSqlDateTime(new Date());
+    setAccountRuntimeHealth(account.id, { state: 'degraded', reason: message, source: 'checkin', checkedAt: createdAt });
+    await db.insert(schema.checkinLogs).values({
+      accountId: account.id,
+      status: 'skipped',
+      message,
+      createdAt,
+    }).run();
+    if (!options?.skipEvent) {
+      await db.insert(schema.events).values({
+        type: 'checkin',
+        title: 'checkin skipped',
+        message: `${account.username || 'ID:' + accountId} @ ${site.name}: ${message}`,
+        level: 'info',
+        relatedId: accountId,
+        relatedType: 'account',
+        createdAt,
+      }).run();
+    }
+    return {
+      success: true,
+      status: 'skipped' as const,
+      skipped: true,
+      reason,
+      message,
+    };
+  };
+  if (contract.checkin.support === 'unsupported' || !contract.operations.checkin) {
+    return await recordCapabilitySkip('checkin_not_supported', '站点不支持签到接口');
+  }
+  if (!contract.checkin.allowsAutomaticExecution && options?.automatic === true && options?.manual !== true) {
+    return await recordCapabilitySkip('manual_checkin_required', '该站点签到需要手动触发');
+  }
 
   const storedPlatformUserId = getPlatformUserIdFromExtraConfig(account.extraConfig);
   const guessedPlatformUserId = storedPlatformUserId
@@ -320,7 +359,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   };
 }
 
-export async function checkinAll(options?: { accountIds?: number[]; scheduleMode?: 'cron' | 'interval' }) {
+export async function checkinAll(options?: { accountIds?: number[]; scheduleMode?: 'cron' | 'interval'; manual?: boolean; automatic?: boolean }) {
   const rows = await db
     .select()
     .from(schema.accounts)
@@ -349,6 +388,8 @@ export async function checkinAll(options?: { accountIds?: number[]; scheduleMode
       const r = await checkinAccount(row.accounts.id, {
         skipEvent: true,
         scheduleMode: options?.scheduleMode,
+        manual: options?.manual,
+        automatic: options?.automatic,
       });
       results.push({
         accountId: row.accounts.id,

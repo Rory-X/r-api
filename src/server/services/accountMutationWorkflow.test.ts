@@ -4,7 +4,8 @@ const ensureDefaultTokenForAccountMock = vi.fn();
 const syncTokensFromUpstreamMock = vi.fn();
 const refreshBalanceMock = vi.fn();
 const refreshModelsForAccountMock = vi.fn();
-const rebuildTokenRoutesFromAvailabilityMock = vi.fn();
+const rebuildRoutesOnlyMock = vi.fn();
+const rebuildRoutesBestEffortMock = vi.fn();
 
 vi.mock('./accountTokenService.js', () => ({
   ensureDefaultTokenForAccount: (...args: unknown[]) => ensureDefaultTokenForAccountMock(...args),
@@ -17,7 +18,11 @@ vi.mock('./balanceService.js', () => ({
 
 vi.mock('./modelService.js', () => ({
   refreshModelsForAccount: (...args: unknown[]) => refreshModelsForAccountMock(...args),
-  rebuildTokenRoutesFromAvailability: (...args: unknown[]) => rebuildTokenRoutesFromAvailabilityMock(...args),
+}));
+
+vi.mock('./routeRefreshWorkflow.js', () => ({
+  rebuildRoutesOnly: (...args: unknown[]) => rebuildRoutesOnlyMock(...args),
+  rebuildRoutesBestEffort: (...args: unknown[]) => rebuildRoutesBestEffortMock(...args),
 }));
 
 describe('accountMutationWorkflow', () => {
@@ -26,7 +31,8 @@ describe('accountMutationWorkflow', () => {
     syncTokensFromUpstreamMock.mockReset();
     refreshBalanceMock.mockReset();
     refreshModelsForAccountMock.mockReset();
-    rebuildTokenRoutesFromAvailabilityMock.mockReset();
+    rebuildRoutesOnlyMock.mockReset();
+    rebuildRoutesBestEffortMock.mockReset();
   });
 
   it('can ensure a preferred token before syncing upstream tokens', async () => {
@@ -34,7 +40,7 @@ describe('accountMutationWorkflow', () => {
     syncTokensFromUpstreamMock.mockResolvedValue({ total: 2, created: 1, updated: 1 });
     refreshBalanceMock.mockResolvedValue({ balance: 1 });
     refreshModelsForAccountMock.mockResolvedValue({ accountId: 1, refreshed: true });
-    rebuildTokenRoutesFromAvailabilityMock.mockResolvedValue({ createdRoutes: 1 });
+    rebuildRoutesOnlyMock.mockResolvedValue({ createdRoutes: 1 });
 
     const { convergeAccountMutation } = await import('./accountMutationWorkflow.js');
     const upstreamTokens = [{ name: 'default', key: 'sk-upstream', enabled: true }];
@@ -56,7 +62,7 @@ describe('accountMutationWorkflow', () => {
     expect(syncTokensFromUpstreamMock).toHaveBeenCalledWith(1, upstreamTokens);
     expect(refreshBalanceMock).toHaveBeenCalledWith(1);
     expect(refreshModelsForAccountMock).toHaveBeenCalledWith(1);
-    expect(rebuildTokenRoutesFromAvailabilityMock).toHaveBeenCalledTimes(1);
+    expect(rebuildRoutesOnlyMock).toHaveBeenCalledTimes(1);
     expect(ensureDefaultTokenForAccountMock.mock.invocationCallOrder[0]).toBeLessThan(
       syncTokensFromUpstreamMock.mock.invocationCallOrder[0]!,
     );
@@ -89,7 +95,7 @@ describe('accountMutationWorkflow', () => {
   it('continues through later refresh steps when continueOnError is enabled', async () => {
     refreshBalanceMock.mockRejectedValue(new Error('balance failed'));
     refreshModelsForAccountMock.mockResolvedValue({ accountId: 3, refreshed: true });
-    rebuildTokenRoutesFromAvailabilityMock.mockResolvedValue({ createdRoutes: 0 });
+    rebuildRoutesOnlyMock.mockResolvedValue({ createdRoutes: 0 });
 
     const { convergeAccountMutation } = await import('./accountMutationWorkflow.js');
     const result = await convergeAccountMutation({
@@ -104,7 +110,7 @@ describe('accountMutationWorkflow', () => {
     expect(result.refreshedModels).toBe(true);
     expect(result.rebuiltRoutes).toBe(true);
     expect(refreshModelsForAccountMock).toHaveBeenCalledWith(3);
-    expect(rebuildTokenRoutesFromAvailabilityMock).toHaveBeenCalledTimes(1);
+    expect(rebuildRoutesOnlyMock).toHaveBeenCalledTimes(1);
   });
 
   it('only marks refreshedModels when the refresh result explicitly says it refreshed', async () => {
@@ -137,7 +143,7 @@ describe('accountMutationWorkflow', () => {
     refreshModelsForAccountMock
       .mockResolvedValueOnce({ accountId: 1, refreshed: true, status: 'success' })
       .mockRejectedValueOnce(new Error('coverage failed'));
-    rebuildTokenRoutesFromAvailabilityMock.mockResolvedValue({ createdRoutes: 2 });
+    rebuildRoutesOnlyMock.mockResolvedValue({ createdRoutes: 2 });
 
     const { refreshAccountCoverageBatch } = await import('./accountMutationWorkflow.js');
     const result = await refreshAccountCoverageBatch({
@@ -169,12 +175,12 @@ describe('accountMutationWorkflow', () => {
   });
 
   it('exposes a best-effort route rebuild helper for controller callers', async () => {
-    rebuildTokenRoutesFromAvailabilityMock.mockResolvedValueOnce({ createdRoutes: 1 });
+    rebuildRoutesBestEffortMock.mockResolvedValueOnce(true);
 
     const { rebuildRoutesBestEffort } = await import('./accountMutationWorkflow.js');
     await expect(rebuildRoutesBestEffort()).resolves.toBe(true);
 
-    rebuildTokenRoutesFromAvailabilityMock.mockRejectedValueOnce(new Error('rebuild failed'));
+    rebuildRoutesBestEffortMock.mockResolvedValueOnce(false);
     await expect(rebuildRoutesBestEffort()).resolves.toBe(false);
   });
 });

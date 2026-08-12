@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import {
+  getSiteAdapterContract,
+  type SiteAdapterContract,
+} from './siteAdapterContract.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -92,6 +96,7 @@ export interface CreateApiTokenOptions {
 
 export interface PlatformAdapter {
   readonly platformName: string;
+  getContract(): SiteAdapterContract;
   detect(url: string): Promise<boolean>;
   login(baseUrl: string, username: string, password: string): Promise<LoginResult>;
   getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null>;
@@ -109,6 +114,10 @@ export interface PlatformAdapter {
 
 export abstract class BasePlatformAdapter implements PlatformAdapter {
   abstract readonly platformName: string;
+
+  getContract(): SiteAdapterContract {
+    return getSiteAdapterContract(this.platformName);
+  }
 
   abstract detect(url: string): Promise<boolean>;
   abstract checkin(baseUrl: string, accessToken: string): Promise<CheckinResult>;

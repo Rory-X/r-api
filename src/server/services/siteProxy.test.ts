@@ -259,6 +259,22 @@ describe('siteProxy', () => {
     expect('dispatcher' in result).toBe(true);
   });
 
+  it('reuses the dispatcher for repeated account proxy requests', async () => {
+    const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+    const first = withSiteRecordProxyRequestInit(
+      { useSystemProxy: false },
+      { method: 'POST' },
+      'http://account-proxy:8080',
+    );
+    const second = withSiteRecordProxyRequestInit(
+      { useSystemProxy: false },
+      { method: 'POST' },
+      'http://account-proxy:8080',
+    );
+
+    expect(first.dispatcher).toBe(second.dispatcher);
+  });
+
   it('withSiteRecordProxyRequestInit ignores invalid account proxy', async () => {
     const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
     const result = withSiteRecordProxyRequestInit(

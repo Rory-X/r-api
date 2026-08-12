@@ -9,6 +9,7 @@ const authChangePayloadSchema = z.object({
 
 const monitorConfigPayloadSchema = z.object({
   ldohCookie: z.union([z.string(), z.null()]).optional(),
+  aihubCookie: z.union([z.string(), z.null()]).optional(),
 }).passthrough();
 
 const oauthStartPayloadSchema = z.object({
@@ -114,6 +115,9 @@ function formatSupportRoutePayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'ldohCookie') {
     return 'Invalid ldohCookie. Expected string or null.';
+  }
+  if (firstPath === 'aihubCookie') {
+    return 'Invalid aihubCookie. Expected string or null.';
   }
   if (firstPath === 'accountId') {
     return 'Invalid accountId. Expected positive number.';

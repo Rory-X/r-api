@@ -52,6 +52,7 @@ type OauthIdentityCarrier = {
   oauthProvider?: string | null;
   oauthAccountKey?: string | null;
   oauthProjectId?: string | null;
+  oauthCredentialPayload?: ExtraConfigInput;
 };
 
 type StoredOauthIdentity = Pick<OauthInfo, 'provider' | 'accountId' | 'accountKey' | 'projectId'>;
@@ -137,8 +138,7 @@ function parseStoredOauthIdentity(extraConfig?: ExtraConfigInput): StoredOauthId
   };
 }
 
-function parseStoredOauthRuntimeState(extraConfig?: ExtraConfigInput): Partial<OauthInfo> | null {
-  const parsed = parseExtraConfig(extraConfig).oauth;
+function parseOauthRuntimeState(parsed: ParsedOauthInfo | null | undefined): Partial<OauthInfo> | null {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   return {
     email: asTrimmedString(parsed.email),
@@ -152,6 +152,34 @@ function parseStoredOauthRuntimeState(extraConfig?: ExtraConfigInput): Partial<O
     lastModelSyncAt: asIsoDateTime(parsed.lastModelSyncAt),
     lastModelSyncError: asTrimmedString(parsed.lastModelSyncError),
     lastDiscoveredModels: asStringArray(parsed.lastDiscoveredModels),
+  };
+}
+
+function parseStoredOauthRuntimeState(extraConfig?: ExtraConfigInput): Partial<OauthInfo> | null {
+  return parseOauthRuntimeState(parseExtraConfig(extraConfig).oauth);
+}
+
+function parseOauthCredentialPayload(payload?: ExtraConfigInput): Partial<OauthInfo> | null {
+  if (payload === null || payload === undefined || payload === '') return null;
+  let parsed: Record<string, unknown> | null = null;
+  if (isRecord(payload)) {
+    parsed = payload;
+  } else if (typeof payload === 'string') {
+    try {
+      const decoded = JSON.parse(payload) as unknown;
+      parsed = isRecord(decoded) ? decoded : null;
+    } catch {
+      parsed = null;
+    }
+  }
+  if (!parsed) return null;
+  return {
+    email: asTrimmedString(parsed.email),
+    planType: asTrimmedString(parsed.planType),
+    tokenExpiresAt: asPositiveInteger(parsed.tokenExpiresAt),
+    refreshToken: asTrimmedString(parsed.refreshToken),
+    idToken: asTrimmedString(parsed.idToken),
+    providerData: asRecord(parsed.providerData),
   };
 }
 
@@ -182,7 +210,11 @@ export function getOauthInfoFromExtraConfig(extraConfig?: ExtraConfigInput): Oau
 export function getOauthInfoFromAccount(account?: OauthIdentityCarrier | null): OauthInfo | null {
   if (!account) return null;
   const storedIdentity = parseStoredOauthIdentity(account.extraConfig);
-  const storedRuntime = parseStoredOauthRuntimeState(account.extraConfig);
+  const legacyRuntime = parseStoredOauthRuntimeState(account.extraConfig);
+  const credentialRuntime = parseOauthCredentialPayload(account.oauthCredentialPayload);
+  const storedRuntime = credentialRuntime
+    ? { ...(legacyRuntime || {}), ...credentialRuntime }
+    : legacyRuntime;
   const provider = asTrimmedString(account.oauthProvider) || storedIdentity?.provider;
   if (!provider) return null;
   const structuredAccountKey = asTrimmedString(account.oauthAccountKey);
@@ -274,6 +306,17 @@ export function buildStoredOauthState(oauth: OauthInfo): StoredOauthState {
     ...stored
   } = oauth;
   return stored;
+}
+
+export function buildOauthCredentialPayload(oauth: OauthInfo): string {
+  return JSON.stringify({
+    email: oauth.email,
+    planType: oauth.planType,
+    tokenExpiresAt: oauth.tokenExpiresAt,
+    refreshToken: oauth.refreshToken,
+    idToken: oauth.idToken,
+    providerData: oauth.providerData,
+  });
 }
 
 export function buildStoredOauthStateFromAccount(

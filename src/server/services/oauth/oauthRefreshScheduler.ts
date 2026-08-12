@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { getOauthInfoFromAccount } from './oauthAccount.js';
+import { isOauthRefreshDeferredError, isOauthRefreshStateRoutable } from './refreshCoordinator.js';
 import { refreshOauthAccessTokenSingleflight } from './refreshSingleflight.js';
 
 const OAUTH_REFRESH_SCHEDULER_INTERVAL_MS = 60_000;
@@ -37,6 +38,12 @@ function shouldRefreshOauthAccount(input: {
 }): boolean {
   if ((input.account.status || 'active') !== 'active') return false;
   if ((input.site.status || 'active') !== 'active') return false;
+  if (!isOauthRefreshStateRoutable(input.account)) return false;
+
+  const retryAtMs = input.account.oauthRefreshRetryAt
+    ? Date.parse(input.account.oauthRefreshRetryAt)
+    : NaN;
+  if (Number.isFinite(retryAtMs) && retryAtMs > input.nowMs) return false;
 
   const oauth = getOauthInfoFromAccount(input.account);
   if (!oauth?.refreshToken) return false;
@@ -74,9 +81,15 @@ export async function executeOauthTokenAutoRefreshPass(input: {
     }
 
     try {
-      await refreshOauthAccessTokenSingleflight(row.accounts.id);
+      await refreshOauthAccessTokenSingleflight(row.accounts.id, {
+        reason: 'scheduled',
+      });
       refreshedAccountIds.push(row.accounts.id);
     } catch (error) {
+      if (isOauthRefreshDeferredError(error)) {
+        skipped += 1;
+        continue;
+      }
       failedAccountIds.push(row.accounts.id);
       console.warn(
         `[oauth-refresh] failed to refresh account ${row.accounts.id}: ${(error as Error)?.message || 'unknown error'}`,

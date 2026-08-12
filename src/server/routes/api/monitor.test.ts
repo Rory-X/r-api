@@ -50,6 +50,17 @@ describe('monitor routes', () => {
       success: false,
       message: 'Invalid ldohCookie. Expected string or null.',
     });
+
+    const aihubResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/monitor/config',
+      payload: { aihubCookie: 123 },
+    });
+    expect(aihubResponse.statusCode).toBe(400);
+    expect(aihubResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid aihubCookie. Expected string or null.',
+    });
   });
 
   it('accepts null monitor cookie payloads and clears the stored cookie', async () => {
@@ -80,5 +91,42 @@ describe('monitor routes', () => {
       .where(eq(schema.settings.key, 'monitor_ldoh_cookie'))
       .get();
     expect(saved?.value).toBe('""');
+  });
+
+  it('stores AIHub and LDOH OAuth cookies independently', async () => {
+    const initial = await app.inject({ method: 'GET', url: '/api/monitor/config' });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({
+      ldohCookieConfigured: false,
+      aihubCookieConfigured: false,
+    });
+
+    const aihubSaved = await app.inject({
+      method: 'PUT',
+      url: '/api/monitor/config',
+      payload: { aihubCookie: 'ld_auth_session=aihub-abcdefghijklmnopqrstuvwxyz' },
+    });
+    expect(aihubSaved.statusCode).toBe(200);
+    expect(aihubSaved.json()).toMatchObject({
+      success: true,
+      ldohCookieConfigured: false,
+      aihubCookieConfigured: true,
+    });
+
+    const ldohSaved = await app.inject({
+      method: 'PUT',
+      url: '/api/monitor/config',
+      payload: { ldohCookie: 'ld_auth_session=ldoh-abcdefghijklmnopqrstuvwxyz' },
+    });
+    expect(ldohSaved.statusCode).toBe(200);
+    expect(ldohSaved.json()).toMatchObject({
+      success: true,
+      ldohCookieConfigured: true,
+      aihubCookieConfigured: true,
+    });
+
+    const aihub = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'monitor_aihub_cookie')).get();
+    expect(aihub?.value).toBe('"ld_auth_session=aihub-abcdefghijklmnopqrstuvwxyz"');
   });
 });

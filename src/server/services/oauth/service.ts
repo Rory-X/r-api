@@ -22,12 +22,11 @@ import {
   type OAuthProviderId,
   type OAuthProviderDefinition,
 } from './providers.js';
-import { ensureOauthProviderSite } from './oauthSiteRegistry.js';
+import { clearOauthProviderSiteDeletion, ensureOauthProviderSite } from './oauthSiteRegistry.js';
 import {
+  buildOauthCredentialPayload,
   buildOauthInfo,
-  buildOauthInfoFromAccount,
   buildStoredOauthState,
-  buildStoredOauthStateFromAccount,
   getOauthInfoFromAccount,
   type OauthInfo,
 } from './oauthAccount.js';
@@ -36,12 +35,17 @@ import {
   type OauthExtraConfigInput,
   type OauthIdentityCarrierLike,
 } from './codexAccount.js';
-import { resolveOauthAccountProxyUrl, resolveOauthProviderProxyUrl } from './requestProxy.js';
+import { resolveOauthProviderProxyUrl } from './requestProxy.js';
 import { ensureOauthIdentityBackfill } from './oauthIdentityBackfill.js';
 import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './quota.js';
 import {
+  refreshOauthAccessTokenCoordinated,
+  type RefreshOauthAccessTokenOptions,
+} from './refreshCoordinator.js';
+import {
   listOauthRouteUnitsByAccountIds,
 } from './routeUnitService.js';
+import { publishTokenRouterCacheInvalidation } from '../tokenRouterCacheInvalidation.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
@@ -388,6 +392,14 @@ async function revertPersistedOauthAccount(input: {
       oauthProvider: input.previousAccount!.oauthProvider,
       oauthAccountKey: input.previousAccount!.oauthAccountKey,
       oauthProjectId: input.previousAccount!.oauthProjectId,
+      oauthCredentialPayload: input.previousAccount!.oauthCredentialPayload,
+      oauthCredentialVersion: input.previousAccount!.oauthCredentialVersion,
+      oauthRefreshState: input.previousAccount!.oauthRefreshState,
+      oauthRefreshFailureCount: input.previousAccount!.oauthRefreshFailureCount,
+      oauthRefreshRetryAt: input.previousAccount!.oauthRefreshRetryAt,
+      oauthRefreshLastAttemptAt: input.previousAccount!.oauthRefreshLastAttemptAt,
+      oauthRefreshLastSuccessAt: input.previousAccount!.oauthRefreshLastSuccessAt,
+      oauthRefreshLastError: input.previousAccount!.oauthRefreshLastError,
       extraConfig: input.previousAccount!.extraConfig,
       updatedAt: input.previousAccount!.updatedAt,
     }).where(eq(schema.accounts.id, input.previousAccount!.id)).run();
@@ -632,6 +644,7 @@ async function upsertOauthAccount(input: {
     ...(input.useSystemProxy !== undefined ? { useSystemProxy: input.useSystemProxy } : {}),
     oauth: buildStoredOauthState(oauth),
   });
+  const oauthCredentialPayload = buildOauthCredentialPayload(oauth);
 
   if (existing) {
     await db.update(schema.accounts).set({
@@ -644,9 +657,18 @@ async function upsertOauthAccount(input: {
       oauthProvider: input.definition.metadata.provider,
       oauthAccountKey: oauth.accountKey || oauth.accountId || null,
       oauthProjectId: oauth.projectId || null,
+      oauthCredentialPayload,
+      oauthCredentialVersion: sql`coalesce(${schema.accounts.oauthCredentialVersion}, 0) + 1`,
+      oauthRefreshState: 'ready',
+      oauthRefreshFailureCount: 0,
+      oauthRefreshRetryAt: null,
+      oauthRefreshLastAttemptAt: null,
+      oauthRefreshLastSuccessAt: new Date().toISOString(),
+      oauthRefreshLastError: null,
       extraConfig,
       updatedAt: new Date().toISOString(),
     }).where(eq(schema.accounts.id, existing.id)).run();
+    publishTokenRouterCacheInvalidation();
     return {
       account: await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get(),
       site,
@@ -668,6 +690,11 @@ async function upsertOauthAccount(input: {
       oauthProvider: input.definition.metadata.provider,
       oauthAccountKey: oauth.accountKey || oauth.accountId || null,
       oauthProjectId: oauth.projectId || null,
+      oauthCredentialPayload,
+      oauthCredentialVersion: 1,
+      oauthRefreshState: 'ready',
+      oauthRefreshFailureCount: 0,
+      oauthRefreshLastSuccessAt: new Date().toISOString(),
       extraConfig,
       isPinned: false,
       sortOrder: await getNextAccountSortOrder(),
@@ -675,6 +702,7 @@ async function upsertOauthAccount(input: {
     insertErrorMessage: `failed to create oauth account: ${input.definition.metadata.provider}`,
     loadErrorMessage: `failed to load created oauth account: ${input.definition.metadata.provider}`,
   });
+  publishTokenRouterCacheInvalidation();
   return { account: created, site, created: true, previousAccount: null };
 }
 
@@ -711,6 +739,7 @@ export async function startOauthProviderFlow(input: {
   if (callbackServerState.attempted && !callbackServerState.ready) {
     throw new Error(`${input.provider} oauth callback listener is unavailable: ${callbackServerState.error || 'unknown error'}`);
   }
+  await clearOauthProviderSiteDeletion(definition.metadata.provider);
   const session = createOauthSession({
     provider: input.provider,
     redirectUri,
@@ -1060,6 +1089,7 @@ export async function importOauthConnectionsFromNativeJson(input: {
       if (!definition) {
         throw new Error(`unsupported oauth provider: ${resolvedIdentity.provider}`);
       }
+      await clearOauthProviderSiteDeletion(definition.metadata.provider);
       const persisted = await activatePersistedOauthAccount({
         definition,
         exchange: resolvedIdentity.exchange,
@@ -1207,73 +1237,18 @@ export function buildCodexOauthProviderHeaders(input: {
   }) || {};
 }
 
-export async function refreshOauthAccessToken(accountId: number) {
-  const account = await db.select().from(schema.accounts)
-    .where(eq(schema.accounts.id, accountId))
-    .get();
-  if (!account) {
-    throw new Error('oauth account not found');
-  }
-  const oauth = getOauthInfoFromAccount(account);
-  if (!oauth?.refreshToken) {
-    throw new Error('oauth refresh token missing');
-  }
-  const definition = getOAuthProviderDefinition(oauth.provider);
-  if (!definition) {
-    throw new Error(`unsupported oauth provider: ${oauth.provider}`);
-  }
-
-  const refreshed = await definition.refreshAccessToken({
-    refreshToken: oauth.refreshToken,
-    oauth: {
-      projectId: oauth.projectId,
-      providerData: oauth.providerData,
-    },
-    proxyUrl: await resolveOauthAccountProxyUrl({
-      siteId: account.siteId,
-      extraConfig: account.extraConfig,
-    }),
-  });
-  const nextOauth = buildOauthInfoFromAccount(account, {
-    provider: oauth.provider,
-    accountId: refreshed.accountId || oauth.accountId,
-    accountKey: refreshed.accountKey || oauth.accountKey || refreshed.accountId || oauth.accountId,
-    email: refreshed.email || oauth.email,
-    planType: refreshed.planType || oauth.planType,
-    projectId: refreshed.projectId || oauth.projectId,
-    refreshToken: refreshed.refreshToken || oauth.refreshToken,
-    tokenExpiresAt: refreshed.tokenExpiresAt || oauth.tokenExpiresAt,
-    idToken: refreshed.idToken || oauth.idToken,
-    providerData: {
-      ...(oauth.providerData || {}),
-      ...(refreshed.providerData || {}),
-    },
-  });
-  const extraConfig = mergeAccountExtraConfig(account.extraConfig, {
-    credentialMode: 'session',
-    oauth: buildStoredOauthStateFromAccount(account, nextOauth),
-  });
-
-  await db.update(schema.accounts).set({
-    accessToken: refreshed.accessToken,
-    oauthProvider: oauth.provider,
-    oauthAccountKey: nextOauth.accountKey || nextOauth.accountId || null,
-    oauthProjectId: nextOauth.projectId || null,
-    extraConfig,
-    status: 'active',
-    updatedAt: new Date().toISOString(),
-  }).where(eq(schema.accounts.id, accountId)).run();
-
-  return {
-    accountId,
-    accessToken: refreshed.accessToken,
-    accountKey: nextOauth.accountKey || nextOauth.accountId,
-    extraConfig,
-  };
+export async function refreshOauthAccessToken(
+  accountId: number,
+  options: RefreshOauthAccessTokenOptions = {},
+) {
+  return refreshOauthAccessTokenCoordinated(accountId, options);
 }
 
-export async function refreshCodexOauthAccessToken(accountId: number) {
-  return refreshOauthAccessToken(accountId);
+export async function refreshCodexOauthAccessToken(
+  accountId: number,
+  options: RefreshOauthAccessTokenOptions = {},
+) {
+  return refreshOauthAccessToken(accountId, options);
 }
 
 export type { OAuthProviderMetadata };

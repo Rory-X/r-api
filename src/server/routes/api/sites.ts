@@ -5,7 +5,10 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
-import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
+import {
+  invalidateTokenRouterCache,
+  listSiteRuntimeHealthSnapshots,
+} from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import {
@@ -19,6 +22,11 @@ import { getSiteInitializationPreset } from '../../../shared/siteInitializationP
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
+import { listSiteAdapterContracts, getSiteAdapterContract } from '../../services/platforms/siteAdapterContract.js';
+import {
+  clearOauthProviderSiteDeletionForSite,
+  markOauthProviderSiteDeleted,
+} from '../../services/oauth/oauthSiteRegistry.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -90,6 +98,36 @@ function normalizeOptionalExternalCheckinUrl(input: unknown): {
     return { valid: false, present: true, url: null };
   }
   return { valid: true, present: true, url: parsed.toString().replace(/\/+$/, '') };
+}
+
+function normalizeOptionalHomepageUrl(input: unknown): {
+  valid: boolean;
+  present: boolean;
+  url: string | null;
+} {
+  if (input === undefined) {
+    return { valid: true, present: false, url: null };
+  }
+  if (input === null) {
+    return { valid: true, present: true, url: null };
+  }
+  if (typeof input !== 'string') {
+    return { valid: false, present: true, url: null };
+  }
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { valid: true, present: true, url: null };
+  }
+  const normalized = analyzePrimarySiteUrl(trimmed).persistedUrl;
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { valid: false, present: true, url: null };
+    }
+  } catch {
+    return { valid: false, present: true, url: null };
+  }
+  return { valid: true, present: true, url: normalized };
 }
 
 type ErrorLike = {
@@ -433,27 +471,42 @@ export async function sitesRoutes(app: FastifyInstance) {
       .filter((id) => Number.isFinite(id) && id > 0);
   }
 
+  // Read-only capability registry for the WebUI. This is metadata only; it never probes an upstream.
+  app.get('/api/sites/adapters', async () => ({
+    adapters: listSiteAdapterContracts(),
+  }));
+
   // List all sites
   app.get('/api/sites', async () => {
-    const siteRows = await db.select().from(schema.sites).all();
+    const [siteRows, accountRows, runtimeHealthSnapshots] = await Promise.all([
+      db.select().from(schema.sites).all(),
+      db.select({
+        siteId: schema.accounts.siteId,
+        balance: schema.accounts.balance,
+        extraConfig: schema.accounts.extraConfig,
+      }).from(schema.accounts).all(),
+      listSiteRuntimeHealthSnapshots(),
+    ]);
     const siteRowsWithApiEndpoints = await attachSiteApiEndpoints(siteRows);
-    const accountRows = await db.select({
-      siteId: schema.accounts.siteId,
-      balance: schema.accounts.balance,
-      extraConfig: schema.accounts.extraConfig,
-    }).from(schema.accounts).all();
 
     const totalBalanceBySiteId: Record<number, number> = {};
     const subscriptionBySiteId: Record<number, SiteSubscriptionAggregate | undefined> = {};
+    const runtimeHealthBySiteId = new Map<number, typeof runtimeHealthSnapshots>();
     for (const row of accountRows) {
       totalBalanceBySiteId[row.siteId] = roundMetric((totalBalanceBySiteId[row.siteId] || 0) + Number(row.balance || 0));
       subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
+    }
+    for (const snapshot of runtimeHealthSnapshots) {
+      const current = runtimeHealthBySiteId.get(snapshot.siteId) || [];
+      current.push(snapshot);
+      runtimeHealthBySiteId.set(snapshot.siteId, current);
     }
 
     return siteRowsWithApiEndpoints.map((site) => ({
       ...site,
       totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
       subscriptionSummary: subscriptionBySiteId[site.id] || null,
+      runtimeHealth: runtimeHealthBySiteId.get(site.id) || [],
     }));
   });
 
@@ -467,6 +520,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     const {
       name,
       url,
+      homepageUrl,
       platform,
       initializationPresetId,
       proxyUrl,
@@ -494,6 +548,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedExternalCheckinUrl = normalizeOptionalExternalCheckinUrl(externalCheckinUrl);
     if (!normalizedExternalCheckinUrl.valid) {
       return reply.code(400).send({ error: 'Invalid externalCheckinUrl. Expected a valid http(s) URL.' });
+    }
+    const normalizedHomepageUrl = normalizeOptionalHomepageUrl(homepageUrl);
+    if (!normalizedHomepageUrl.valid) {
+      return reply.code(400).send({ error: 'Invalid homepageUrl. Expected a valid http(s) URL.' });
     }
     const normalizedPinned = normalizePinnedFlag(isPinned);
     if (isPinned !== undefined && normalizedPinned === null) {
@@ -556,10 +614,13 @@ export async function sitesRoutes(app: FastifyInstance) {
         const siteInsert = await tx.insert(schema.sites).values({
           name,
           url: canonicalUrl,
+          homepageUrl: normalizedHomepageUrl.url ?? canonicalUrl,
           platform: detectedPlatform,
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
           customHeaders: normalizedCustomHeaders.customHeaders,
+          codexFingerprintEnabled: (createBody as Record<string, unknown>).codexFingerprintEnabled === true
+            || (createBody as Record<string, unknown>).codexFingerprintEnabled === 1,
           externalCheckinUrl: normalizedExternalCheckinUrl.url,
           status: normalizedStatus ?? 'active',
           isPinned: normalizedPinned ?? false,
@@ -593,6 +654,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!result) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
+    await clearOauthProviderSiteDeletionForSite(result);
     invalidateSiteCaches();
     return {
       ...result,
@@ -634,6 +696,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedExternalCheckinUrl = normalizeOptionalExternalCheckinUrl(body.externalCheckinUrl);
     if (!normalizedExternalCheckinUrl.valid) {
       return reply.code(400).send({ error: 'Invalid externalCheckinUrl. Expected a valid http(s) URL.' });
+    }
+    const normalizedHomepageUrl = normalizeOptionalHomepageUrl(body.homepageUrl);
+    if (!normalizedHomepageUrl.valid) {
+      return reply.code(400).send({ error: 'Invalid homepageUrl. Expected a valid http(s) URL.' });
     }
     const normalizedPinned = normalizePinnedFlag(body.isPinned);
     if (body.isPinned !== undefined && normalizedPinned === null) {
@@ -679,6 +745,7 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = nextUrl;
+    if (normalizedHomepageUrl.present) updates.homepageUrl = normalizedHomepageUrl.url;
     if (body.platform !== undefined) updates.platform = nextPlatform;
     if (normalizedProxyUrl.present) updates.proxyUrl = normalizedProxyUrl.proxyUrl;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
@@ -695,6 +762,9 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (anyBody.postRefreshProbeLatencyThresholdMs !== undefined) {
       const ms = Number(anyBody.postRefreshProbeLatencyThresholdMs);
       updates.postRefreshProbeLatencyThresholdMs = Number.isFinite(ms) && ms >= 0 ? Math.trunc(ms) : 0;
+    }
+    if (anyBody.codexFingerprintEnabled !== undefined) {
+      updates.codexFingerprintEnabled = anyBody.codexFingerprintEnabled === true || anyBody.codexFingerprintEnabled === 1;
     }
     updates.updatedAt = new Date().toISOString();
     try {
@@ -727,6 +797,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
+    await clearOauthProviderSiteDeletionForSite({ platform: nextPlatform, url: nextUrl });
+
     invalidateSiteCaches();
 
     return await loadSiteWithApiEndpoints(id);
@@ -735,7 +807,13 @@ export async function sitesRoutes(app: FastifyInstance) {
   // Delete a site
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async (request) => {
     const id = parseInt(request.params.id);
-    await db.delete(schema.sites).where(eq(schema.sites.id, id)).run();
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (existingSite) {
+      await db.transaction(async (tx) => {
+        await markOauthProviderSiteDeleted(existingSite, tx);
+        await tx.delete(schema.sites).where(eq(schema.sites.id, id)).run();
+      });
+    }
     invalidateSiteCaches();
     return { success: true };
   });
@@ -767,7 +845,10 @@ export async function sitesRoutes(app: FastifyInstance) {
 
       try {
         if (action === 'delete') {
-          await db.delete(schema.sites).where(eq(schema.sites.id, id)).run();
+          await db.transaction(async (tx) => {
+            await markOauthProviderSiteDeleted(existingSite, tx);
+            await tx.delete(schema.sites).where(eq(schema.sites.id, id)).run();
+          });
         } else if (action === 'enableSystemProxy') {
           await db.update(schema.sites)
             .set({ useSystemProxy: true, updatedAt: new Date().toISOString() })
@@ -968,6 +1049,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const result = await detectSite(parsedBody.data.url);
-    return result || { error: 'Could not detect platform' };
+    if (!result) return { error: 'Could not detect platform' };
+    return {
+      ...result,
+      contract: getSiteAdapterContract(result.platform),
+    };
   });
 }

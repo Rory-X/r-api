@@ -11,6 +11,7 @@ import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { mergeHeadersWithSiteCustomHeaders } from './siteCustomHeaders.js';
 import { resolveProxyUrlFromExtraConfig } from './accountExtraConfig.js';
 import { stripTrailingSlashes } from './urlNormalization.js';
+import { buildUpstreamAgentOptions } from './upstreamHttpTransport.js';
 
 const SITE_PROXY_CACHE_TTL_MS = 3_000;
 const SUPPORTED_PROXY_PROTOCOLS = new Set([
@@ -171,7 +172,10 @@ function getDispatcherByProxyUrl(proxyUrl: string, skipCache = false): Dispatche
     const parsedProxyUrl = new URL(normalized);
     const dispatcher = SOCKS_PROXY_PROTOCOLS.has(parsedProxyUrl.protocol.toLowerCase())
       ? createSocksDispatcher(parsedProxyUrl)
-      : new ProxyAgent(normalized);
+      : new ProxyAgent({
+        ...buildUpstreamAgentOptions(),
+        uri: normalized,
+      });
     if (!skipCache) {
       dispatcherCache.set(normalized, dispatcher);
     }
@@ -422,7 +426,7 @@ export async function withSiteProxyRequestInit(
     return nextOptions;
   }
 
-  const dispatcher = getDispatcherByProxyUrl(proxyUrl, alsOverride != null);
+  const dispatcher = getDispatcherByProxyUrl(proxyUrl);
   if (!dispatcher) {
     return nextOptions;
   }
@@ -472,8 +476,7 @@ export function withSiteRecordProxyRequestInit(
   const accountNormalized = normalizeSiteProxyUrl(accountProxyUrl) ?? accountProxyOverride.getStore();
   const siteProxyUrl = resolveProxyUrlForSite(site);
   const proxyUrl = accountNormalized || siteProxyUrl;
-  const isAccountOverride = !!accountNormalized && accountNormalized !== siteProxyUrl;
-  return withExplicitProxyRequestInit(proxyUrl, nextOptions, isAccountOverride);
+  return withExplicitProxyRequestInit(proxyUrl, nextOptions);
 }
 
 export function resolveChannelProxyUrl(

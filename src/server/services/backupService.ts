@@ -52,11 +52,25 @@ type CheckinLogRow = typeof schema.checkinLogs.$inferSelect;
 type DownstreamApiKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
 
-type BackupAccountRow = Omit<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>
-  & Partial<Pick<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>>;
+type BackupAccountOptionalField =
+  | 'balanceUsed'
+  | 'lastCheckinAt'
+  | 'lastBalanceRefresh'
+  | 'oauthCredentialPayload'
+  | 'oauthCredentialVersion'
+  | 'oauthRefreshState'
+  | 'oauthRefreshFailureCount'
+  | 'oauthRefreshRetryAt'
+  | 'oauthRefreshLastAttemptAt'
+  | 'oauthRefreshLastSuccessAt'
+  | 'oauthRefreshLastError';
+
+type BackupAccountRow = Omit<AccountRow, BackupAccountOptionalField>
+  & Partial<Pick<AccountRow, BackupAccountOptionalField>>;
 
 type BackupRouteChannelRow = Omit<RouteChannelRow,
-  'successCount'
+  'sortOrder'
+  | 'successCount'
   | 'failCount'
   | 'totalLatencyMs'
   | 'totalCost'
@@ -67,7 +81,8 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
   | 'cooldownLevel'
   | 'cooldownUntil'
 > & Partial<Pick<RouteChannelRow,
-  'successCount'
+  'sortOrder'
+  | 'successCount'
   | 'failCount'
   | 'totalLatencyMs'
   | 'totalCost'
@@ -94,6 +109,7 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
   | 'expiresAt'
   | 'maxCost'
   | 'maxRequests'
+  | 'maxConcurrency'
   | 'supportedModels'
   | 'allowedRouteIds'
   | 'siteWeightMultipliers'
@@ -233,6 +249,7 @@ interface BackupImportResult {
 const EXCLUDED_SETTING_KEYS = new Set<string>([
   // Keep current admin login credential unchanged to avoid accidental lock-out.
   'auth_token',
+  'admin_password_hash',
   // Runtime database selection is environment-bound and must not be propagated by backups.
   'db_type',
   'db_url',
@@ -292,6 +309,19 @@ function normalizeLegacyQuota(raw: unknown): number {
   // Convert obvious raw values to display currency units.
   if (value >= 10_000) return value / 500_000;
   return value;
+}
+
+function normalizeImportedOauthRefreshState(value: unknown): string {
+  const normalized = asString(value).toLowerCase();
+  if (
+    normalized === 'ready'
+    || normalized === 'transient_error'
+    || normalized === 'reauthorization_required'
+    || normalized === 'refresh_unknown'
+  ) {
+    return normalized;
+  }
+  return 'idle';
 }
 
 function resolveImportedOauthColumns(row: Pick<AccountRow, 'oauthProvider' | 'oauthAccountKey' | 'oauthProjectId' | 'extraConfig'>) {
@@ -748,11 +778,13 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       id: siteId,
       name: asString(input.name) || normalizedUrl,
       url: normalizedUrl,
+      homepageUrl: normalizedUrl,
       externalCheckinUrl: null,
       platform: input.platform,
       proxyUrl: null,
       useSystemProxy: false,
       customHeaders: null,
+      codexFingerprintEnabled: false,
       status: 'active',
       isPinned: false,
       sortOrder: section.sites.length,
@@ -967,7 +999,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
   if (!rows) return null;
 
   const sites: SiteRow[] = [];
-  const accounts: AccountRow[] = [];
+  const accounts: BackupAccountRow[] = [];
   const accountTokens: AccountTokenRow[] = [];
   const tokenRoutes: TokenRouteRow[] = [];
   const routeChannels: RouteChannelRow[] = [];
@@ -995,11 +1027,13 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         id: siteId,
         name: siteName,
         url: siteUrl,
+        homepageUrl: siteUrl,
         externalCheckinUrl: null,
         platform,
         proxyUrl: null,
         useSystemProxy: false,
         customHeaders: null,
+        codexFingerprintEnabled: false,
         status: 'active',
         isPinned: false,
         sortOrder: sites.length,
@@ -1360,6 +1394,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       usedCost: _usedCost,
       usedRequests: _usedRequests,
       lastUsedAt: _lastUsedAt,
+      policyVersion: _policyVersion,
       createdAt: _createdAt,
       updatedAt: _updatedAt,
       ...row
@@ -1535,15 +1570,23 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
+    await tx.delete(schema.modelSyncStates).run();
+    await tx.delete(schema.oauthRefreshLeases).run();
+    await tx.delete(schema.oauthRefreshProviderStates).run();
     await tx.delete(schema.accountTokens).run();
+    await tx.delete(schema.credentialVaultItems).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.sites).run();
 
     for (const row of section.sites) {
+      const homepageUrl = Object.prototype.hasOwnProperty.call(row, 'homepageUrl')
+        ? row.homepageUrl ?? null
+        : row.url;
       await tx.insert(schema.sites).values({
         id: row.id,
         name: row.name,
         url: row.url,
+        homepageUrl,
         externalCheckinUrl: row.externalCheckinUrl ?? null,
         platform: row.platform,
         proxyUrl: row.proxyUrl ?? null,
@@ -1592,6 +1635,14 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         oauthProvider: oauthColumns.oauthProvider,
         oauthAccountKey: oauthColumns.oauthAccountKey,
         oauthProjectId: oauthColumns.oauthProjectId,
+        oauthCredentialPayload: row.oauthCredentialPayload ?? null,
+        oauthCredentialVersion: Math.max(1, Math.trunc(asNumber(row.oauthCredentialVersion, 1))),
+        oauthRefreshState: normalizeImportedOauthRefreshState(row.oauthRefreshState),
+        oauthRefreshFailureCount: Math.max(0, Math.trunc(asNumber(row.oauthRefreshFailureCount, 0))),
+        oauthRefreshRetryAt: row.oauthRefreshRetryAt ?? null,
+        oauthRefreshLastAttemptAt: row.oauthRefreshLastAttemptAt ?? null,
+        oauthRefreshLastSuccessAt: row.oauthRefreshLastSuccessAt ?? null,
+        oauthRefreshLastError: row.oauthRefreshLastError ?? null,
         balance: row.balance,
         balanceUsed: runtimeAccount?.balanceUsed ?? row.balanceUsed,
         quota: row.quota,
@@ -1660,9 +1711,12 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         tokenId: row.tokenId,
         sourceModel: row.sourceModel ?? null,
         priority: row.priority,
+        sortOrder: row.sortOrder ?? 0,
         weight: row.weight,
         enabled: row.enabled,
         manualOverride: row.manualOverride,
+        retryOwner: row.retryOwner ?? 'cooperative',
+        upstreamRetryMode: row.upstreamRetryMode ?? 'unknown',
         successCount: runtimeChannel?.successCount ?? row.successCount,
         failCount: runtimeChannel?.failCount ?? row.failCount,
         totalLatencyMs: runtimeChannel?.totalLatencyMs ?? row.totalLatencyMs,
@@ -1780,6 +1834,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           usedCost: runtimeDownstream?.usedCost ?? row.usedCost ?? 0,
           maxRequests: row.maxRequests ?? null,
           usedRequests: runtimeDownstream?.usedRequests ?? row.usedRequests ?? 0,
+          maxConcurrency: row.maxConcurrency ?? null,
+          policyVersion: 1,
           supportedModels: row.supportedModels ?? null,
           allowedRouteIds: row.allowedRouteIds ?? null,
           siteWeightMultipliers: row.siteWeightMultipliers ?? null,

@@ -1,12 +1,21 @@
 import { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
 import { fetch } from 'undici';
-import { config, normalizeTokenRouterFailureCooldownMaxSec } from '../../config.js';
+import {
+  config,
+  normalizeNotificationDeliveryPolicy,
+  normalizeTokenRouterFailureCooldownMaxSec,
+} from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
-import { updateBalanceRefreshCron, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
+import {
+  updateBalanceRefreshCron,
+  updateCheckinSchedule,
+  updateCheckinSchedulePolicy,
+  updateLogCleanupSettings,
+} from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
 import {
   exportBackup,
@@ -45,6 +54,9 @@ import {
   stopModelAvailabilityProbeScheduler,
 } from '../../services/modelAvailabilityProbeService.js';
 import { parsePayloadRulesConfigInput } from '../../services/payloadRules.js';
+import { normalizeBalanceRoutingPolicy } from '../../services/balanceRoutingPolicy.js';
+import { normalizeCheckinSchedulePolicy } from '../../services/checkinSchedulePolicy.js';
+import { normalizeFirstByteRoutingPolicy } from '../../../shared/firstByteRoutingPolicy.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
@@ -70,6 +82,13 @@ interface RuntimeSettingsBody {
   checkinCron?: string;
   checkinScheduleMode?: 'cron' | 'interval';
   checkinIntervalHours?: number;
+  checkinSchedulePolicy?: {
+    timeZone?: string;
+    windowStart?: string;
+    windowEnd?: string;
+    jitterMinutes?: number;
+    catchUp?: boolean;
+  };
   balanceRefreshCron?: string;
   logCleanupCron?: string;
   logCleanupUsageLogsEnabled?: boolean;
@@ -96,15 +115,28 @@ interface RuntimeSettingsBody {
   smtpFrom?: string;
   smtpTo?: string;
   notifyCooldownSec?: number;
+  notifyDeliveryPolicy?: 'prefer_delivery' | 'prefer_no_duplicate';
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
+  firstByteRoutingPolicy?: {
+    enabled?: boolean;
+    baselineMs?: number;
+    penaltyWindowMs?: number;
+    maxPenaltyRatio?: number;
+    minSamples?: number;
+  };
   tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: Partial<RoutingWeights>;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
+  balanceRoutingPolicy?: {
+    mode?: 'observe_only' | 'soft_avoid' | 'hard_block';
+    threshold?: number;
+    softAvoidMultiplier?: number;
+  };
 }
 
 interface DatabaseMigrationBody {
@@ -332,6 +364,27 @@ function isValidTelegramMessageThreadId(raw: string): boolean {
   return /^[1-9]\d*$/.test(raw);
 }
 
+function validateCheckinSchedulePolicyInput(value: NonNullable<RuntimeSettingsBody['checkinSchedulePolicy']>): string | null {
+  if (value.timeZone !== undefined && value.timeZone.trim()) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: value.timeZone.trim() }).format();
+    } catch {
+      return '签到时区无效，请填写 IANA 时区，例如 Asia/Shanghai';
+    }
+  }
+  for (const [label, clock] of [['开始时间', value.windowStart], ['结束时间', value.windowEnd]] as const) {
+    if (clock !== undefined && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(clock.trim())) {
+      return `签到${label}无效，请使用 HH:mm 格式`;
+    }
+  }
+  if (value.jitterMinutes !== undefined) {
+    if (!Number.isInteger(value.jitterMinutes) || value.jitterMinutes < 0 || value.jitterMinutes > 180) {
+      return '签到最大抖动必须是 0 到 180 的整数分钟';
+    }
+  }
+  return null;
+}
+
 function applyImportedSettingToRuntime(key: string, value: unknown) {
   switch (key) {
     case 'checkin_cron': {
@@ -364,6 +417,10 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
         cronExpr: config.checkinCron,
         intervalHours: config.checkinIntervalHours,
       });
+      return;
+    }
+    case 'checkin_schedule_policy': {
+      updateCheckinSchedulePolicy(value);
       return;
     }
     case 'balance_refresh_cron': {
@@ -668,6 +725,10 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.notifyCooldownSec = Math.trunc(n);
       return;
     }
+    case 'notify_delivery_policy': {
+      config.notifyDeliveryPolicy = normalizeNotificationDeliveryPolicy(value);
+      return;
+    }
     case 'admin_ip_allowlist': {
       config.adminIpAllowlist = toStringList(value);
       return;
@@ -696,10 +757,18 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(n));
       return;
     }
+    case 'first_byte_routing_policy': {
+      config.firstByteRoutingPolicy = normalizeFirstByteRoutingPolicy(value);
+      return;
+    }
     case 'token_router_failure_cooldown_max_sec': {
       const normalized = normalizeTokenRouterFailureCooldownMaxSec(value);
       if (normalized == null) return;
       config.tokenRouterFailureCooldownMaxSec = normalized;
+      return;
+    }
+    case 'balance_routing_policy': {
+      config.balanceRoutingPolicy = normalizeBalanceRoutingPolicy(value);
       return;
     }
     case 'post_refresh_probe_enabled':
@@ -716,6 +785,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     checkinCron: config.checkinCron,
     checkinScheduleMode: config.checkinScheduleMode,
     checkinIntervalHours: config.checkinIntervalHours,
+    checkinSchedulePolicy: config.checkinSchedulePolicy,
     balanceRefreshCron: config.balanceRefreshCron,
     logCleanupCron: config.logCleanupCron,
     logCleanupUsageLogsEnabled: config.logCleanupUsageLogsEnabled,
@@ -738,7 +808,9 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
+    firstByteRoutingPolicy: config.firstByteRoutingPolicy,
     tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
+    balanceRoutingPolicy: config.balanceRoutingPolicy,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
     barkUrl: config.barkUrl,
@@ -761,6 +833,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     smtpFrom: config.smtpFrom,
     smtpTo: config.smtpTo,
     notifyCooldownSec: config.notifyCooldownSec,
+    notifyDeliveryPolicy: config.notifyDeliveryPolicy,
     adminIpAllowlist: config.adminIpAllowlist,
     currentAdminIp,
     serverTimeZone: getResolvedTimeZone(),
@@ -844,7 +917,7 @@ function buildRuntimeDatabaseState(saved: RuntimeDatabaseConfig | null) {
 
 export async function settingsRoutes(app: FastifyInstance) {
   await app.get('/api/settings/runtime', async (request) => {
-    const currentAdminIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+    const currentAdminIp = extractClientIp(request.ip);
     return getRuntimeSettingsResponse(currentAdminIp);
   });
 
@@ -908,7 +981,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
     const body = parsedBody.data as RuntimeSettingsBody;
     const changedLabels: string[] = [];
-    const currentRequestIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+    const currentRequestIp = extractClientIp(request.ip);
     let pendingPayloadRules: typeof config.payloadRules | undefined;
 
     const webhookTouched = body.webhookUrl !== undefined || body.webhookEnabled !== undefined;
@@ -988,7 +1061,15 @@ export async function settingsRoutes(app: FastifyInstance) {
 
     const checkinScheduleTouched = body.checkinCron !== undefined
       || body.checkinScheduleMode !== undefined
-      || body.checkinIntervalHours !== undefined;
+      || body.checkinIntervalHours !== undefined
+      || body.checkinSchedulePolicy !== undefined;
+
+    if (body.checkinSchedulePolicy !== undefined) {
+      const schedulePolicyError = validateCheckinSchedulePolicyInput(body.checkinSchedulePolicy);
+      if (schedulePolicyError) {
+        return reply.code(400).send({ success: false, message: schedulePolicyError });
+      }
+    }
 
     if (body.checkinCron !== undefined) {
       if (!cron.validate(body.checkinCron)) {
@@ -1029,6 +1110,17 @@ export async function settingsRoutes(app: FastifyInstance) {
       const nextCheckinIntervalHours = body.checkinIntervalHours !== undefined
         ? Math.trunc(Number(body.checkinIntervalHours))
         : config.checkinIntervalHours;
+      const nextCheckinSchedulePolicy = body.checkinSchedulePolicy !== undefined
+        ? normalizeCheckinSchedulePolicy({
+          ...config.checkinSchedulePolicy,
+          ...body.checkinSchedulePolicy,
+        })
+        : config.checkinSchedulePolicy;
+
+      if (JSON.stringify(nextCheckinSchedulePolicy) !== JSON.stringify(config.checkinSchedulePolicy)) {
+        changedLabels.push('签到时间窗口与抖动策略');
+      }
+      config.checkinSchedulePolicy = nextCheckinSchedulePolicy;
 
       updateCheckinSchedule({
         mode: nextCheckinScheduleMode,
@@ -1038,6 +1130,9 @@ export async function settingsRoutes(app: FastifyInstance) {
       config.checkinCron = nextCheckinCron;
       config.checkinScheduleMode = nextCheckinScheduleMode;
       config.checkinIntervalHours = nextCheckinIntervalHours;
+      if (body.checkinSchedulePolicy !== undefined) {
+        upsertSetting('checkin_schedule_policy', nextCheckinSchedulePolicy);
+      }
       upsertSetting('checkin_cron', config.checkinCron);
       upsertSetting('checkin_schedule_mode', config.checkinScheduleMode);
       upsertSetting('checkin_interval_hours', config.checkinIntervalHours);
@@ -1647,6 +1742,21 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('notify_cooldown_sec', config.notifyCooldownSec);
     }
 
+    if (body.notifyDeliveryPolicy !== undefined) {
+      if (body.notifyDeliveryPolicy !== 'prefer_delivery' && body.notifyDeliveryPolicy !== 'prefer_no_duplicate') {
+        return reply.code(400).send({
+          success: false,
+          message: '通知投递策略必须是 prefer_delivery 或 prefer_no_duplicate',
+        });
+      }
+      const nextPolicy = normalizeNotificationDeliveryPolicy(body.notifyDeliveryPolicy);
+      if (nextPolicy !== config.notifyDeliveryPolicy) {
+        changedLabels.push('通知投递策略');
+      }
+      config.notifyDeliveryPolicy = nextPolicy;
+      upsertSetting('notify_delivery_policy', config.notifyDeliveryPolicy);
+    }
+
     if (body.adminIpAllowlist !== undefined) {
       const nextAllowlist = toStringList(body.adminIpAllowlist);
       const invalidAllowlistEntries = findInvalidIpAllowlistEntries(nextAllowlist);
@@ -1684,6 +1794,15 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('routing_weights', nextWeights);
     }
 
+    if (body.balanceRoutingPolicy !== undefined) {
+      const nextPolicy = normalizeBalanceRoutingPolicy(body.balanceRoutingPolicy);
+      if (JSON.stringify(nextPolicy) !== JSON.stringify(config.balanceRoutingPolicy)) {
+        changedLabels.push('余额路由策略');
+      }
+      config.balanceRoutingPolicy = nextPolicy;
+      upsertSetting('balance_routing_policy', nextPolicy);
+    }
+
     if (body.routingFallbackUnitCost !== undefined) {
       const nextRoutingFallbackUnitCost = Number(body.routingFallbackUnitCost);
       if (!Number.isFinite(nextRoutingFallbackUnitCost) || nextRoutingFallbackUnitCost <= 0) {
@@ -1708,6 +1827,15 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.proxyFirstByteTimeoutSec = normalized;
       upsertSetting('proxy_first_byte_timeout_sec', normalized);
+    }
+
+    if (body.firstByteRoutingPolicy !== undefined) {
+      const nextFirstByteRoutingPolicy = normalizeFirstByteRoutingPolicy(body.firstByteRoutingPolicy);
+      if (JSON.stringify(nextFirstByteRoutingPolicy) !== JSON.stringify(config.firstByteRoutingPolicy)) {
+        changedLabels.push('首字调度策略');
+      }
+      config.firstByteRoutingPolicy = nextFirstByteRoutingPolicy;
+      upsertSetting('first_byte_routing_policy', nextFirstByteRoutingPolicy);
     }
 
     if (body.tokenRouterFailureCooldownMaxSec !== undefined) {

@@ -1,8 +1,28 @@
 import { isIP } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../config.js';
-import { authorizeDownstreamToken, consumeManagedKeyRequest } from '../services/downstreamApiKeyService.js';
+import {
+  acquireDownstreamConcurrencyLease,
+  authorizeDownstreamToken,
+  consumeManagedKeyRequest,
+  resolveDownstreamPolicySnapshot,
+  verifyDownstreamPolicySnapshotActive,
+  type DownstreamPolicyActiveResult,
+  type DownstreamPolicySnapshot,
+} from '../services/downstreamApiKeyService.js';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY, type DownstreamRoutingPolicy } from '../services/downstreamPolicyTypes.js';
+import {
+  ADMIN_CSRF_HEADER_NAME,
+  authenticateAdminSessionRequest,
+  verifyAdminCredential,
+  verifyAdminCsrfToken,
+  type AdminSession,
+} from '../services/adminAuthService.js';
+
+export type AdminAuthContext =
+  | { method: 'bearer'; session: null }
+  | { method: 'session'; session: AdminSession };
 
 export interface ProxyAuthContext {
   token: string;
@@ -10,6 +30,7 @@ export interface ProxyAuthContext {
   keyId: number | null;
   keyName: string;
   policy: DownstreamRoutingPolicy;
+  snapshot: DownstreamPolicySnapshot;
 }
 
 export interface ProxyResourceOwner {
@@ -18,6 +39,43 @@ export interface ProxyResourceOwner {
 }
 
 const proxyAuthContextByRequest = new WeakMap<FastifyRequest, ProxyAuthContext>();
+const proxyConcurrencyReleaseByRequest = new WeakMap<FastifyRequest, () => Promise<void>>();
+const adminAuthContextByRequest = new WeakMap<FastifyRequest, AdminAuthContext>();
+const PROXY_AUTH_HANDOFF_HEADER = 'x-metapi-internal-auth-handoff';
+const PROXY_AUTH_HANDOFF_TTL_MS = 30_000;
+const proxyAuthHandoffs = new Map<string, { context: ProxyAuthContext; expiresAtMs: number }>();
+const ADMIN_BEARER_FAILURE_LIMIT = 10;
+const ADMIN_BEARER_FAILURE_WINDOW_MS = 60_000;
+const ADMIN_BEARER_FAILURE_MAX_CLIENTS = 10_000;
+const adminBearerFailures = new Map<string, { count: number; resetAt: number }>();
+
+function pruneExpiredProxyAuthHandoffs(nowMs = Date.now()): void {
+  for (const [handoffId, handoff] of proxyAuthHandoffs) {
+    if (handoff.expiresAtMs > nowMs) continue;
+    proxyAuthHandoffs.delete(handoffId);
+  }
+}
+
+function takeProxyAuthHandoff(request: FastifyRequest): ProxyAuthContext | null {
+  const raw = request.headers[PROXY_AUTH_HANDOFF_HEADER];
+  const handoffId = typeof raw === 'string' ? raw.trim() : '';
+  if (!handoffId) return null;
+  pruneExpiredProxyAuthHandoffs();
+  const handoff = proxyAuthHandoffs.get(handoffId);
+  if (!handoff) return null;
+  proxyAuthHandoffs.delete(handoffId);
+  return handoff.context;
+}
+
+export function createProxyAuthHandoffHeaders(context: ProxyAuthContext): Record<string, string> {
+  pruneExpiredProxyAuthHandoffs();
+  const handoffId = randomUUID();
+  proxyAuthHandoffs.set(handoffId, {
+    context,
+    expiresAtMs: Date.now() + PROXY_AUTH_HANDOFF_TTL_MS,
+  });
+  return { [PROXY_AUTH_HANDOFF_HEADER]: handoffId };
+}
 
 type ParsedAllowlistEntry =
   | { kind: 'exact'; normalizedIp: string }
@@ -79,15 +137,7 @@ export function findInvalidIpAllowlistEntries(allowlist: string[]): string[] {
   return allowlist.filter((item) => parseAllowlistEntry(item) === null);
 }
 
-export function extractClientIp(remoteIp: string | null | undefined, xForwardedFor?: string | string[] | undefined): string {
-  if (Array.isArray(xForwardedFor)) {
-    const first = xForwardedFor.find((item) => item && item.trim().length > 0);
-    if (first) {
-      return normalizeIp(first.split(',')[0]);
-    }
-  } else if (typeof xForwardedFor === 'string' && xForwardedFor.trim().length > 0) {
-    return normalizeIp(xForwardedFor.split(',')[0]);
-  }
+export function extractClientIp(remoteIp: string | null | undefined): string {
   return normalizeIp(remoteIp);
 }
 
@@ -106,26 +156,111 @@ export function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
   });
 }
 
+export function getAdminAuthContext(request: FastifyRequest): AdminAuthContext | null {
+  return adminAuthContextByRequest.get(request) || null;
+}
+
+function readBearerCredential(request: FastifyRequest): string {
+  const authorization = typeof request.headers.authorization === 'string'
+    ? request.headers.authorization.trim()
+    : '';
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
+  return match?.[1]?.trim() || '';
+}
+
+function readCsrfToken(request: FastifyRequest): string {
+  const raw = request.headers[ADMIN_CSRF_HEADER_NAME];
+  if (Array.isArray(raw)) return String(raw[0] || '').trim();
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function methodRequiresCsrf(method: string): boolean {
+  const normalized = (method || '').trim().toUpperCase();
+  return normalized !== 'GET' && normalized !== 'HEAD' && normalized !== 'OPTIONS';
+}
+
+function getAdminBearerFailureRetryAfter(clientIp: string, nowMs = Date.now()): number | null {
+  const entry = adminBearerFailures.get(clientIp);
+  if (!entry) return null;
+  if (entry.resetAt <= nowMs) {
+    adminBearerFailures.delete(clientIp);
+    return null;
+  }
+  if (entry.count < ADMIN_BEARER_FAILURE_LIMIT) return null;
+  return Math.max(1, Math.ceil((entry.resetAt - nowMs) / 1000));
+}
+
+function pruneAdminBearerFailures(nowMs: number): void {
+  for (const [clientIp, entry] of adminBearerFailures) {
+    if (entry.resetAt <= nowMs) adminBearerFailures.delete(clientIp);
+  }
+  while (adminBearerFailures.size >= ADMIN_BEARER_FAILURE_MAX_CLIENTS) {
+    const oldestClientIp = adminBearerFailures.keys().next().value as string | undefined;
+    if (!oldestClientIp) break;
+    adminBearerFailures.delete(oldestClientIp);
+  }
+}
+
+function recordAdminBearerFailure(clientIp: string, nowMs = Date.now()): void {
+  pruneAdminBearerFailures(nowMs);
+  const entry = adminBearerFailures.get(clientIp);
+  if (!entry || entry.resetAt <= nowMs) {
+    adminBearerFailures.set(clientIp, { count: 1, resetAt: nowMs + ADMIN_BEARER_FAILURE_WINDOW_MS });
+    return;
+  }
+  entry.count += 1;
+}
+
+export function resetAdminBearerFailureStore(): void {
+  adminBearerFailures.clear();
+}
+
 export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
-  const clientIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+  const clientIp = extractClientIp(request.ip);
   if (!isIpAllowed(clientIp, config.adminIpAllowlist)) {
     reply.code(403).send({ error: 'IP not allowed' });
     return;
   }
 
-  const auth = request.headers.authorization;
-  if (!auth) {
-    reply.code(401).send({ error: 'Missing Authorization header' });
+  const bearerCredential = readBearerCredential(request);
+  if (bearerCredential) {
+    const retryAfter = getAdminBearerFailureRetryAfter(clientIp);
+    if (retryAfter !== null) {
+      reply.header('Retry-After', String(retryAfter));
+      reply.code(429).send({ error: 'Too many invalid admin credentials', code: 'admin_auth_rate_limited' });
+      return;
+    }
+    if (!await verifyAdminCredential(bearerCredential)) {
+      recordAdminBearerFailure(clientIp);
+      reply.code(401).send({ error: 'Invalid admin credential', code: 'admin_auth_invalid' });
+      return;
+    }
+    adminBearerFailures.delete(clientIp);
+    adminAuthContextByRequest.set(request, { method: 'bearer', session: null });
     return;
   }
-  const token = auth.replace('Bearer ', '');
-  if (token !== config.authToken) {
-    reply.code(403).send({ error: 'Invalid token' });
+
+  const session = await authenticateAdminSessionRequest(request);
+  if (!session) {
+    reply.code(401).send({ error: 'Admin session required', code: 'admin_session_required' });
     return;
   }
+
+  if (methodRequiresCsrf(request.method) && !verifyAdminCsrfToken(session, readCsrfToken(request))) {
+    reply.code(403).send({ error: 'Invalid CSRF token', code: 'admin_csrf_invalid' });
+    return;
+  }
+
+  adminAuthContextByRequest.set(request, { method: 'session', session });
 }
 
 export async function proxyAuthMiddleware(request: FastifyRequest, reply: FastifyReply) {
+  const handedOffContext = takeProxyAuthHandoff(request);
+  if (handedOffContext) {
+    proxyAuthContextByRequest.set(request, handedOffContext);
+    return;
+  }
+
   const auth = typeof request.headers.authorization === 'string'
     ? request.headers.authorization
     : '';
@@ -157,8 +292,40 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
     return;
   }
 
-  if (authResult.source === 'managed' && authResult.key) {
-    await consumeManagedKeyRequest(authResult.key.id);
+  const snapshot = resolveDownstreamPolicySnapshot(authResult);
+  const leaseResult = await acquireDownstreamConcurrencyLease(snapshot);
+  if (!leaseResult.ok) {
+    if ('retryAfterSeconds' in leaseResult) {
+      reply.header('Retry-After', String(leaseResult.retryAfterSeconds));
+    }
+    reply.code(leaseResult.statusCode).send({ error: leaseResult.error });
+    return;
+  }
+
+  let released = false;
+  const releaseConcurrencyLease = async () => {
+    if (released) return;
+    released = true;
+    await leaseResult.lease?.release();
+  };
+  proxyConcurrencyReleaseByRequest.set(request, releaseConcurrencyLease);
+  reply.raw.once('finish', () => {
+    void releaseConcurrencyLease();
+  });
+  reply.raw.once('close', () => {
+    void releaseConcurrencyLease();
+  });
+  request.raw.once('aborted', () => {
+    void releaseConcurrencyLease();
+  });
+
+  try {
+    if (authResult.source === 'managed' && authResult.key) {
+      await consumeManagedKeyRequest(authResult.key.id);
+    }
+  } catch (error) {
+    await releaseConcurrencyLease();
+    throw error;
   }
 
   proxyAuthContextByRequest.set(request, {
@@ -166,12 +333,23 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
     source: authResult.source,
     keyId: authResult.key?.id ?? null,
     keyName: authResult.key?.name || 'global',
-    policy: authResult.policy || EMPTY_DOWNSTREAM_ROUTING_POLICY,
+    policy: snapshot.policy || EMPTY_DOWNSTREAM_ROUTING_POLICY,
+    snapshot,
   });
 }
 
 export function getProxyAuthContext(request: FastifyRequest): ProxyAuthContext | null {
   return proxyAuthContextByRequest.get(request) || null;
+}
+
+export async function verifyProxyAuthContextActive(request: FastifyRequest): Promise<DownstreamPolicyActiveResult> {
+  const auth = getProxyAuthContext(request);
+  if (!auth) return { ok: true };
+  return await verifyDownstreamPolicySnapshotActive(auth.snapshot);
+}
+
+export async function releaseProxyConcurrencyLease(request: FastifyRequest): Promise<void> {
+  await proxyConcurrencyReleaseByRequest.get(request)?.();
 }
 
 export function getProxyResourceOwner(request: FastifyRequest): ProxyResourceOwner | null {

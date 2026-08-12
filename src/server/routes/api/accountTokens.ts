@@ -493,7 +493,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
     if (isApiKeyConnection(row.accounts)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持创建账号令牌' });
+      return reply.code(400).send({ success: false, message: 'API Key 连接不支持创建上游 API Token' });
     }
 
     const tokenValue = (body.token || '').trim();
@@ -618,7 +618,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     appendTokenSyncEvent(syncResult);
 
     if (syncResult.status === 'failed') {
-      return reply.code(502).send({ success: false, message: syncResult.message || '同步站点令牌失败' });
+      return reply.code(502).send({ success: false, message: syncResult.message || '同步上游 Token 失败' });
     }
     if (syncResult.status === 'skipped') {
       return reply.code(502).send({ success: false, message: syncResult.message || '站点未返回可用令牌' });
@@ -654,7 +654,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
     if (isApiKeyConnection(row.accounts)) {
-      return { success: false, message: 'API Key 连接不支持管理账号令牌' };
+      return { success: false, message: 'API Key 连接不支持管理上游 API Token' };
     }
 
     const existing = row.account_tokens;
@@ -722,7 +722,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           continue;
         }
         if (isApiKeyConnection(owner)) {
-          failedItems.push({ id, message: 'API Key 连接不支持管理账号令牌' });
+          failedItems.push({ id, message: 'API Key 连接不支持管理上游 API Token' });
           continue;
         }
 
@@ -783,7 +783,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
     if (isApiKeyConnection(owner)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
+      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理上游 API Token' });
     }
 
     const body = parsedBody.data;
@@ -858,7 +858,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
     if (isApiKeyConnection(owner)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
+      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理上游 API Token' });
     }
     if (isMaskedPendingAccountToken(tokenRow)) {
       return reply.code(400).send({ success: false, message: '待补全令牌不能设为默认，请先补全明文 token' });
@@ -887,7 +887,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
     if (isApiKeyConnection(row.accounts)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
+      return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理上游 API Token' });
     }
 
     if (isMaskedPendingAccountToken(row.account_tokens) || isMaskedTokenValue(row.account_tokens.token)) {
@@ -923,7 +923,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
     if (isApiKeyConnection(row.accounts)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持拉取账号令牌分组' });
+      return reply.code(400).send({ success: false, message: 'API Key 连接不支持拉取上游 Token 分组' });
     }
 
     const account = row.accounts;
@@ -961,7 +961,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (!result.success) {
       const statusCode = result.message === '令牌不存在'
         ? 404
-        : (result.message === 'API Key 连接不支持管理账号令牌' ? 400 : 502);
+        : (result.message === 'API Key 连接不支持管理上游 API Token' ? 400 : 502);
       return reply.code(statusCode).send({ success: false, message: result.message });
     }
     return { success: true };
@@ -985,7 +985,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const result = await executeAccountTokenSync(row);
     appendTokenSyncEvent(result);
     if (result.status === 'skipped' && result.reason === 'apikey_connection') {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持同步账号令牌' });
+      return reply.code(400).send({ success: false, message: 'API Key 连接不支持同步上游 API Token' });
     }
     if (result.status === 'failed' && result.reason === 'unsupported_platform') {
       return reply.code(400).send({ success: false, message: result.message });
@@ -1011,25 +1011,25 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const { task, reused } = startBackgroundTask(
       {
         type: 'token',
-        title: '同步全部账号令牌',
+        title: '同步全部面板账号的上游 API Token',
         dedupeKey: 'sync-all-account-tokens',
         notifyOnFailure: true,
         successTitle: (currentTask) => {
           const summary = (currentTask.result as any)?.summary;
-          if (!summary) return '同步全部账号令牌已完成';
-          return `同步全部账号令牌已完成（成功${summary.synced}/跳过${summary.skipped}/失败${summary.failed}）`;
+          if (!summary) return '全部面板账号的上游 API Token 同步已完成';
+          return `全部面板账号的上游 API Token 同步已完成（成功${summary.synced}/跳过${summary.skipped}/失败${summary.failed}）`;
         },
-        failureTitle: () => '同步全部账号令牌失败',
+        failureTitle: () => '全部面板账号的上游 API Token 同步失败',
         successMessage: (currentTask) => {
           const summary = (currentTask.result as any)?.summary;
           const results = (currentTask.result as any)?.results as SyncExecutionResult[] | undefined;
-          if (!summary) return '全部账号令牌同步任务已完成';
+          if (!summary) return '全部面板账号的上游 API Token 同步任务已完成';
           const detail = buildTokenSyncTaskDetailMessage(Array.isArray(results) ? results : []);
           return detail
-            ? `全部账号令牌同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}\n${detail}`
-            : `全部账号令牌同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}`;
+            ? `全部面板账号的上游 API Token 同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}\n${detail}`
+            : `全部面板账号的上游 API Token 同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}`;
         },
-        failureMessage: (currentTask) => `全部账号令牌同步失败：${currentTask.error || 'unknown error'}`,
+        failureMessage: (currentTask) => `全部面板账号的上游 API Token 同步失败：${currentTask.error || 'unknown error'}`,
       },
       async () => executeSyncAllAccountTokens(),
     );
@@ -1042,7 +1042,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       status: task.status,
       message: reused
         ? '令牌同步任务执行中，请稍后查看程序日志'
-        : '已开始全部账号令牌同步，请稍后查看程序日志',
+        : '已开始同步全部面板账号的上游 API Token，请稍后查看程序日志',
     });
   });
 

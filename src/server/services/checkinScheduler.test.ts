@@ -6,6 +6,7 @@ const scheduleMock = vi.fn(() => ({
 }));
 const validateMock = vi.fn(() => true);
 const allMock = vi.fn();
+const accountRowsMock = vi.fn(() => [] as any[]);
 
 vi.mock('node-cron', () => ({
   default: {
@@ -18,7 +19,7 @@ vi.mock('../db/index.js', () => {
   const queryChain = {
     where: () => queryChain,
     get: () => undefined,
-    all: () => [],
+    all: () => accountRowsMock(),
     from: () => queryChain,
     innerJoin: () => queryChain,
   };
@@ -29,8 +30,8 @@ vi.mock('../db/index.js', () => {
     },
     schema: {
       settings: { key: 'key' },
-      accounts: { checkinEnabled: 'checkinEnabled', status: 'status' },
-      sites: { id: 'id' },
+      accounts: { checkinEnabled: 'checkinEnabled', status: 'status', siteId: 'siteId' },
+      sites: { id: 'id', status: 'status' },
     },
   };
 });
@@ -46,6 +47,8 @@ describe('checkinScheduler', () => {
     scheduleMock.mockClear();
     validateMock.mockClear();
     allMock.mockReset();
+    accountRowsMock.mockReset();
+    accountRowsMock.mockReturnValue([]);
   });
 
   afterEach(async () => {
@@ -58,6 +61,14 @@ describe('checkinScheduler', () => {
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
     const scheduler = await import('./checkinScheduler.js');
+    const { config } = await import('../config.js');
+    config.checkinSchedulePolicy = {
+      timeZone: 'UTC',
+      windowStart: '08:00',
+      windowEnd: '09:00',
+      jitterMinutes: 0,
+      catchUp: false,
+    };
 
     scheduler.updateCheckinSchedule({
       mode: 'cron',
@@ -91,5 +102,66 @@ describe('checkinScheduler', () => {
       { id: 2, lastCheckinAt: '2026-03-20T05:59:59.000Z' },
       { id: 3, lastCheckinAt: '2026-03-20T06:30:00.000Z' },
     ], 6, now)).toEqual([1, 2]);
+  });
+
+  it('does not start a second automatic pass while the first pass is still running', async () => {
+    const scheduler = await import('./checkinScheduler.js');
+    const { config } = await import('../config.js');
+    config.checkinIntervalHours = 6;
+    config.checkinSchedulePolicy = {
+      timeZone: 'UTC',
+      windowStart: '00:00',
+      windowEnd: '23:59',
+      jitterMinutes: 0,
+      catchUp: true,
+    };
+    accountRowsMock.mockReturnValue([{
+      accounts: {
+        id: 11,
+        siteId: 7,
+        checkinEnabled: true,
+        status: 'active',
+        lastCheckinAt: null,
+      },
+      sites: { id: 7, status: 'active' },
+    }]);
+
+    let resolveFirst: (value: any[]) => void = () => {};
+    allMock.mockImplementationOnce(() => new Promise<any[]>((resolve) => {
+      resolveFirst = resolve;
+    }));
+
+    const now = new Date('2026-08-04T08:00:00.000Z');
+    const first = scheduler.__runCheckinPassForTests({ mode: 'interval', now });
+    await Promise.resolve();
+    const second = scheduler.__runCheckinPassForTests({ mode: 'interval', now });
+    await second;
+
+    expect(allMock).toHaveBeenCalledTimes(1);
+    resolveFirst([]);
+    await first;
+  });
+
+  it('suppresses a repeated cron attempt for the same local day', async () => {
+    const scheduler = await import('./checkinScheduler.js');
+    const now = new Date('2026-08-04T08:00:00.000Z');
+    const attemptDays = new Map([[4, '2026-08-04']]);
+
+    expect(scheduler.selectDueCheckinAccountIds([
+      { id: 4, lastCheckinAt: '2026-08-03T08:00:00.000Z' },
+      { id: 5, lastCheckinAt: '2026-08-03T08:00:00.000Z' },
+    ], {
+      mode: 'cron',
+      intervalHours: 6,
+      now,
+      attemptDayState: attemptDays,
+      policy: {
+        timeZone: 'UTC',
+        windowStart: '08:00',
+        windowEnd: '09:00',
+        jitterMinutes: 0,
+        catchUp: true,
+      },
+    })).toEqual([5]);
   });
 });

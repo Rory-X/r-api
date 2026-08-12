@@ -35,6 +35,11 @@ import {
   validateGeminiCliOauthConnection,
 } from './platformDiscoveryRegistry.js';
 import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
+import { getSiteAdapterContract } from './platforms/siteAdapterContract.js';
+import {
+  reconcileModelSyncPolicy,
+  restoreModelAvailabilitySnapshot,
+} from './modelSyncPolicyService.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
@@ -361,7 +366,10 @@ async function retryOauthModelDiscoveryWithRefresh<T>(input: {
       throw error;
     }
 
-    await refreshOauthAccessTokenSingleflight(discoveryAccount.id);
+    await refreshOauthAccessTokenSingleflight(discoveryAccount.id, {
+      reason: 'model_discovery',
+      failedAccessToken: discoveryAccount.accessToken,
+    });
     const refreshedAccount = await db.select().from(schema.accounts)
       .where(eq(schema.accounts.id, discoveryAccount.id))
       .get();
@@ -516,6 +524,10 @@ async function runPostRefreshProbeIfEnabled(params: {
 }): Promise<ModelRefreshSuccessResult['postProbeResult']> {
   if (!params.site.postRefreshProbeEnabled) return undefined;
   if (params.discoveredModels.length === 0) return undefined;
+  // Active inference probes are opt-in at both layers: the site setting and
+  // the adapter contract must explicitly allow them. Management-only sites
+  // must never be probed as a side effect of model synchronization.
+  if (getSiteAdapterContract(params.site.platform).probePolicy !== 'explicit_only') return undefined;
 
   const scope = (params.site.postRefreshProbeScope === 'all' ? 'all' : 'single') as 'single' | 'all';
 
@@ -888,7 +900,10 @@ export async function refreshModelsForAccount(
         if (!shouldRetryModelDiscoveryWithOauthRefresh(error)) {
           throw error;
         }
-        const refreshed = await refreshOauthAccessTokenSingleflight(discoveryAccount.id);
+        const refreshed = await refreshOauthAccessTokenSingleflight(discoveryAccount.id, {
+          reason: 'model_discovery',
+          failedAccessToken: discoveryAccount.accessToken,
+        });
         if (!refreshed?.extraConfig) {
           throw error;
         }
@@ -1060,6 +1075,13 @@ export async function refreshModelsForAccount(
 
   if (!adapter) {
     return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
+  }
+
+  const adapterContract = typeof (adapter as { getContract?: unknown }).getContract === 'function'
+    ? adapter.getContract()
+    : getSiteAdapterContract(site.platform);
+  if (!adapterContract.operations.models) {
+    return buildSkippedRefreshResult(accountId, 'adapter_or_status', '站点适配器未声明模型同步能力');
   }
 
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
@@ -1293,6 +1315,54 @@ export async function refreshModelsForAccount(
   });
 }
 
+/**
+ * Public model refresh entry point. The existing adapter discovery flow remains
+ * authoritative; this wrapper protects the last known model set from a
+ * transient management endpoint failure and applies the adapter retirement
+ * threshold after a successful discovery.
+ */
+export async function refreshModelsForAccountWithPolicy(
+  accountId: number,
+  options?: { allowInactive?: boolean },
+): Promise<ModelRefreshResult> {
+  const previousRows = await db.select().from(schema.modelAvailability).where(and(
+    eq(schema.modelAvailability.accountId, accountId),
+    eq(schema.modelAvailability.isManual, false),
+  )).all();
+
+  let result: ModelRefreshResult;
+  try {
+    result = await refreshModelsForAccount(accountId, options);
+  } catch (error) {
+    await restoreModelAvailabilitySnapshot({ accountId, rows: previousRows });
+    throw error;
+  }
+
+  if (result.status !== 'success') {
+    await restoreModelAvailabilitySnapshot({ accountId, rows: previousRows });
+    return result;
+  }
+
+  const currentRows = await db.select().from(schema.modelAvailability).where(and(
+    eq(schema.modelAvailability.accountId, accountId),
+    eq(schema.modelAvailability.isManual, false),
+  )).all();
+  const accountRow = await db.select({ siteId: schema.accounts.siteId })
+    .from(schema.accounts).where(eq(schema.accounts.id, accountId)).get();
+  const site = accountRow
+    ? await db.select({ platform: schema.sites.platform }).from(schema.sites)
+      .where(eq(schema.sites.id, accountRow.siteId)).get()
+    : null;
+  const contract = getSiteAdapterContract(site?.platform || 'unknown');
+  await reconcileModelSyncPolicy({
+    accountId,
+    previousRows,
+    discoveredModels: currentRows.map((row) => row.modelName),
+    retireMissingAfterConsecutiveRuns: contract.modelSync.retireMissingAfterConsecutiveRuns,
+  });
+  return result;
+}
+
 async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]> {
   const accounts = await db.select({ id: schema.accounts.id }).from(schema.accounts)
     .where(eq(schema.accounts.status, 'active'))
@@ -1301,7 +1371,7 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
   const results: ModelRefreshResult[] = [];
   for (let offset = 0; offset < accounts.length; offset += MODEL_REFRESH_BATCH_SIZE) {
     const batch = accounts.slice(offset, offset + MODEL_REFRESH_BATCH_SIZE);
-    const batchResults = await Promise.all(batch.map(async (account) => refreshModelsForAccount(account.id)));
+    const batchResults = await Promise.all(batch.map(async (account) => refreshModelsForAccountWithPolicy(account.id)));
     results.push(...batchResults);
   }
   return results;
@@ -1464,6 +1534,10 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
 
     const routeChannels = channels.filter((channel) => channel.routeId === route.id);
+    let nextSortOrder = routeChannels.reduce(
+      (max, channel) => (channel.priority ?? 0) === 0 ? Math.max(max, (channel.sortOrder ?? 0) + 1) : max,
+      0,
+    );
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
@@ -1476,6 +1550,7 @@ export async function rebuildTokenRoutesFromAvailability() {
         tokenId: candidate.tokenId,
         oauthRouteUnitId: candidate.oauthRouteUnitId,
         priority: 0,
+        sortOrder: nextSortOrder,
         weight: 10,
         enabled: true,
         manualOverride: false,
@@ -1485,6 +1560,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
       if (!created) continue;
       channels.push(created);
+      nextSortOrder += 1;
       createdChannels++;
       desiredKeys.add(candidateKey);
     }

@@ -94,9 +94,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(verifyTokenMock).not.toHaveBeenCalled();
   });
 
-  it('rotates API key verification across configured ai endpoints after a retryable failure', async () => {
+  it('rotates API key verification across configured ai endpoints after a transport failure', async () => {
     getModelsMock
-      .mockRejectedValueOnce(new Error('HTTP 502: temporary upstream failure'))
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNRESET'))
       .mockResolvedValueOnce(['gpt-4o-mini']);
 
     const site = await db.insert(schema.sites).values({
@@ -144,7 +144,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     const firstEndpoint = endpoints.find((item) => item.url === 'https://api-a.example.com');
     const secondEndpoint = endpoints.find((item) => item.url === 'https://api-b.example.com');
     expect(firstEndpoint?.cooldownUntil).toBeTruthy();
-    expect(firstEndpoint?.lastFailureReason).toContain('HTTP 502');
+    expect(firstEndpoint?.lastFailureReason).toContain('ECONNRESET');
     expect(secondEndpoint?.lastSelectedAt).toBeTruthy();
   });
 
@@ -224,9 +224,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'sk-nihao-create', undefined);
   });
 
-  it('rotates API key account creation across configured ai endpoints after a retryable failure', async () => {
+  it('rotates API key account creation across configured ai endpoints after a transport failure', async () => {
     getModelsMock
-      .mockRejectedValueOnce(new Error('HTTP 502: temporary upstream failure'))
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNRESET'))
       .mockResolvedValueOnce(['gpt-4o-mini']);
 
     const site = await db.insert(schema.sites).values({
