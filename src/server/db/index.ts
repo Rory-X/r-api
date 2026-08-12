@@ -26,6 +26,8 @@ type SqlMethod = 'all' | 'get' | 'run' | 'values' | 'execute';
 const TABLES_WITH_NUMERIC_ID = new Set([
   'sites',
   'accounts',
+  'credential_vault_items',
+  'oauth_refresh_leases',
   'account_tokens',
   'checkin_logs',
   'model_availability',
@@ -38,9 +40,14 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'proxy_logs',
   'proxy_debug_traces',
   'proxy_debug_attempts',
+  'proxy_requests',
+  'proxy_request_attempts',
   'proxy_video_tasks',
   'proxy_files',
   'downstream_api_keys',
+  'downstream_api_key_leases',
+  'notification_outbox',
+  'bridge_continuation_events',
   'site_announcements',
   'events',
 ]);
@@ -573,6 +580,8 @@ function ensureDownstreamApiKeySchema() {
       used_cost real DEFAULT 0,
       max_requests integer,
       used_requests integer DEFAULT 0,
+      max_concurrency integer,
+      policy_version integer NOT NULL DEFAULT 1,
       supported_models text,
       allowed_route_ids text,
       site_weight_multipliers text,
@@ -606,6 +615,15 @@ function ensureDownstreamApiKeySchema() {
   if (!tableColumnExists('downstream_api_keys', 'tags')) {
     execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN tags text;');
   }
+
+  if (!tableColumnExists('downstream_api_keys', 'max_concurrency')) {
+    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN max_concurrency integer;');
+  }
+
+  if (!tableColumnExists('downstream_api_keys', 'policy_version')) {
+    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN policy_version integer NOT NULL DEFAULT 1;');
+  }
+
 }
 
 function ensureProxyLogBillingDetailsSchema() {

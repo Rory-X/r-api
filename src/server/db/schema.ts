@@ -5,11 +5,13 @@ export const sites = sqliteTable('sites', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   url: text('url').notNull(),
+  homepageUrl: text('homepage_url'),
   externalCheckinUrl: text('external_checkin_url'),
   platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api' | 'openai' | 'claude' | 'gemini' | 'codex' | 'gemini-cli' | 'antigravity'
   proxyUrl: text('proxy_url'),
   useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).default(false),
   customHeaders: text('custom_headers'),
+  codexFingerprintEnabled: integer('codex_fingerprint_enabled', { mode: 'boolean' }).default(false),
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
@@ -74,6 +76,14 @@ export const accounts = sqliteTable('accounts', {
   oauthProvider: text('oauth_provider'),
   oauthAccountKey: text('oauth_account_key'),
   oauthProjectId: text('oauth_project_id'),
+  oauthCredentialPayload: text('oauth_credential_payload'), // JSON StoredOauthState; canonical OAuth credential runtime state
+  oauthCredentialVersion: integer('oauth_credential_version').notNull().default(1),
+  oauthRefreshState: text('oauth_refresh_state').notNull().default('idle'),
+  oauthRefreshFailureCount: integer('oauth_refresh_failure_count').notNull().default(0),
+  oauthRefreshRetryAt: text('oauth_refresh_retry_at'),
+  oauthRefreshLastAttemptAt: text('oauth_refresh_last_attempt_at'),
+  oauthRefreshLastSuccessAt: text('oauth_refresh_last_success_at'),
+  oauthRefreshLastError: text('oauth_refresh_last_error'),
   extraConfig: text('extra_config'), // JSON string
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
@@ -83,6 +93,527 @@ export const accounts = sqliteTable('accounts', {
   siteStatusIdx: index('accounts_site_status_idx').on(table.siteId, table.status),
   oauthProviderIdx: index('accounts_oauth_provider_idx').on(table.oauthProvider),
   oauthIdentityIdx: index('accounts_oauth_identity_idx').on(table.oauthProvider, table.oauthAccountKey, table.oauthProjectId),
+  oauthRefreshStateIdx: index('accounts_oauth_refresh_state_idx').on(table.oauthRefreshState),
+  oauthRefreshRetryAtIdx: index('accounts_oauth_refresh_retry_at_idx').on(table.oauthRefreshRetryAt),
+}));
+
+/**
+ * Encrypted credential references owned by the control plane.
+ * Secret material is never returned by admin APIs; consumers resolve it only inside the server.
+ */
+export const credentialVaultItems = sqliteTable('credential_vault_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+  name: text('name').notNull(),
+  kind: text('kind').notNull(),
+  status: text('status').notNull().default('active'),
+  ciphertext: text('ciphertext').notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  metadata: text('metadata'),
+  expiresAt: text('expires_at'),
+  lastUsedAt: text('last_used_at'),
+  revokedAt: text('revoked_at'),
+  version: integer('version').notNull().default(1),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteIdIdx: index('credential_vault_items_site_id_idx').on(table.siteId),
+  accountIdIdx: index('credential_vault_items_account_id_idx').on(table.accountId),
+  statusIdx: index('credential_vault_items_status_idx').on(table.status),
+  fingerprintIdx: index('credential_vault_items_fingerprint_idx').on(table.fingerprint),
+  expiresAtIdx: index('credential_vault_items_expires_at_idx').on(table.expiresAt),
+}));
+
+/**
+ * Short-lived browser credential recovery handoffs.
+ * Token material is stored only as hashes; the captured fields are written to
+ * credentialVaultItems inside the completion transaction and never stored here.
+ */
+export const browserCredentialRecoveryTasks = sqliteTable('browser_credential_recovery_tasks', {
+  id: text('id').primaryKey(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+  mode: text('mode').notNull(),
+  status: text('status').notNull().default('pending'),
+  credentialName: text('credential_name').notNull(),
+  credentialKind: text('credential_kind').notNull().default('browser_storage'),
+  adapterPlatform: text('adapter_platform').notNull(),
+  targetUrl: text('target_url').notNull(),
+  contractSnapshot: text('contract_snapshot').notNull(),
+  taskTokenHash: text('task_token_hash'),
+  claimTokenHash: text('claim_token_hash'),
+  claimedBy: text('claimed_by'),
+  claimedAt: text('claimed_at'),
+  completedAt: text('completed_at'),
+  cancelledAt: text('cancelled_at'),
+  resultCredentialId: integer('result_credential_id').references(() => credentialVaultItems.id, { onDelete: 'set null' }),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteIdIdx: index('browser_credential_recovery_tasks_site_id_idx').on(table.siteId),
+  accountIdIdx: index('browser_credential_recovery_tasks_account_id_idx').on(table.accountId),
+  statusIdx: index('browser_credential_recovery_tasks_status_idx').on(table.status),
+  expiresAtIdx: index('browser_credential_recovery_tasks_expires_at_idx').on(table.expiresAt),
+  taskTokenHashUnique: uniqueIndex('browser_credential_recovery_tasks_task_token_hash_unique').on(table.taskTokenHash),
+  claimTokenHashUnique: uniqueIndex('browser_credential_recovery_tasks_claim_token_hash_unique').on(table.claimTokenHash),
+}));
+
+export const localConnectorDevices = sqliteTable('local_connector_devices', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  platform: text('platform').notNull(),
+  version: text('version'),
+  status: text('status').notNull().default('active'),
+  tokenHash: text('token_hash').notNull(),
+  scopes: text('scopes').notNull(),
+  capabilities: text('capabilities'),
+  pairedAt: text('paired_at').notNull(),
+  lastSeenAt: text('last_seen_at'),
+  revokedAt: text('revoked_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex('local_connector_devices_token_hash_unique').on(table.tokenHash),
+  statusIdx: index('local_connector_devices_status_idx').on(table.status),
+  lastSeenAtIdx: index('local_connector_devices_last_seen_at_idx').on(table.lastSeenAt),
+}));
+
+export const localConnectorThreads = sqliteTable('local_connector_threads', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
+  threadId: text('thread_id').notNull(),
+  title: text('title'),
+  observationSource: text('observation_source').notNull().default('connector_app_server'),
+  controlState: text('control_state').notNull().default('available'),
+  threadStatus: text('thread_status').notNull().default('unknown'),
+  activeFlags: text('active_flags').notNull().default('[]'),
+  activeTurnId: text('active_turn_id'),
+  lastEventKind: text('last_event_kind').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  deviceThreadUnique: uniqueIndex('local_connector_threads_device_thread_unique')
+    .on(table.deviceId, table.threadId),
+  deviceLastSeenIdx: index('local_connector_threads_device_last_seen_idx')
+    .on(table.deviceId, table.lastSeenAt),
+  lastSeenAtIdx: index('local_connector_threads_last_seen_at_idx').on(table.lastSeenAt),
+}));
+
+export const localConnectorPairings = sqliteTable('local_connector_pairings', {
+  id: text('id').primaryKey(),
+  deviceName: text('device_name').notNull(),
+  requestedScopes: text('requested_scopes').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  status: text('status').notNull().default('pending'),
+  claimedDeviceId: text('claimed_device_id').references(() => localConnectorDevices.id, { onDelete: 'set null' }),
+  expiresAt: text('expires_at').notNull(),
+  claimedAt: text('claimed_at'),
+  cancelledAt: text('cancelled_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex('local_connector_pairings_token_hash_unique').on(table.tokenHash),
+  statusExpiresIdx: index('local_connector_pairings_status_expires_idx').on(table.status, table.expiresAt),
+  claimedDeviceIdx: index('local_connector_pairings_claimed_device_idx').on(table.claimedDeviceId),
+}));
+
+/**
+ * Durable bridge continuation state. `active_slot = 1` is unique per session;
+ * terminal rows clear the slot so audit history can remain alongside a new task.
+ */
+export const bridgeContinuationTasks = sqliteTable('bridge_continuation_tasks', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').references(() => localConnectorDevices.id, { onDelete: 'set null' }),
+  sessionKey: text('session_key').notNull(),
+  activeSlot: integer('active_slot'),
+  threadId: text('thread_id').notNull(),
+  taskKind: text('task_kind').notNull().default('automatic'),
+  submissionMode: text('submission_mode'),
+  pendingMethod: text('pending_method'),
+  requestSource: text('request_source'),
+  requestedBy: text('requested_by'),
+  sourceAdapterId: text('source_adapter_id'),
+  requestIdempotencyKeyHash: text('request_idempotency_key_hash'),
+  promptFingerprint: text('prompt_fingerprint'),
+  status: text('status').notNull(),
+  reason: text('reason').notNull(),
+  policySnapshot: text('policy_snapshot').notNull(),
+  policyFingerprint: text('policy_fingerprint').notNull(),
+  continuationCount: integer('continuation_count').notNull().default(0),
+  startedAt: text('started_at').notNull(),
+  nextRunAt: text('next_run_at'),
+  threadStatus: text('thread_status').notNull().default('unknown'),
+  activeFlags: text('active_flags').notNull().default('[]'),
+  activeTurnId: text('active_turn_id'),
+  lastFailureClass: text('last_failure_class'),
+  lastFailureSource: text('last_failure_source'),
+  lastFailureRecoverability: text('last_failure_recoverability'),
+  lastCodexErrorCode: text('last_codex_error_code'),
+  lastHttpStatusCode: integer('last_http_status_code'),
+  lastMessageSummary: text('last_message_summary'),
+  lastMessageFingerprint: text('last_message_fingerprint'),
+  lastWillRetry: integer('last_will_retry', { mode: 'boolean' }),
+  lastFailureTurnTerminal: integer('last_failure_turn_terminal', { mode: 'boolean' }).notNull().default(false),
+  retryAfterMs: integer('retry_after_ms'),
+  pendingRouteAction: text('pending_route_action'),
+  pendingPrompt: text('pending_prompt'),
+  stateVersion: integer('state_version').notNull().default(1),
+  stoppedAt: text('stopped_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  sessionActiveUnique: uniqueIndex('bridge_continuation_tasks_session_active_unique')
+    .on(table.sessionKey, table.activeSlot),
+  deviceIdIdx: index('bridge_continuation_tasks_device_id_idx').on(table.deviceId),
+  threadIdIdx: index('bridge_continuation_tasks_thread_id_idx').on(table.threadId),
+  statusNextRunIdx: index('bridge_continuation_tasks_status_next_run_idx').on(table.status, table.nextRunAt),
+  policyFingerprintIdx: index('bridge_continuation_tasks_policy_fingerprint_idx').on(table.policyFingerprint),
+  requestIdempotencyKeyUnique: uniqueIndex('bridge_continuation_tasks_request_idempotency_key_unique')
+    .on(table.requestIdempotencyKeyHash),
+  continuationCountNonNegative: check(
+    'bridge_continuation_tasks_continuation_count_non_negative',
+    sql`${table.continuationCount} >= 0`,
+  ),
+  stateVersionPositive: check('bridge_continuation_tasks_state_version_positive', sql`${table.stateVersion} > 0`),
+  activeSlotValid: check(
+    'bridge_continuation_tasks_active_slot_valid',
+    sql`${table.activeSlot} is null or ${table.activeSlot} = 1`,
+  ),
+}));
+
+export const bridgeContinuationLeases = sqliteTable('bridge_continuation_leases', {
+  sessionKey: text('session_key').primaryKey(),
+  taskId: text('task_id').notNull().references(() => bridgeContinuationTasks.id, { onDelete: 'cascade' }),
+  ownerId: text('owner_id').notNull(),
+  leaseTokenHash: text('lease_token_hash').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  taskIdUnique: uniqueIndex('bridge_continuation_leases_task_id_unique').on(table.taskId),
+  leaseTokenHashUnique: uniqueIndex('bridge_continuation_leases_token_hash_unique').on(table.leaseTokenHash),
+  expiresAtIdx: index('bridge_continuation_leases_expires_at_idx').on(table.expiresAt),
+}));
+
+export const bridgeContinuationEvents = sqliteTable('bridge_continuation_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  taskId: text('task_id').notNull().references(() => bridgeContinuationTasks.id, { onDelete: 'cascade' }),
+  deliveryId: text('delivery_id'),
+  eventType: text('event_type').notNull(),
+  fromStatus: text('from_status'),
+  toStatus: text('to_status').notNull(),
+  reason: text('reason').notNull(),
+  metadata: text('metadata'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  deliveryIdUnique: uniqueIndex('bridge_continuation_events_delivery_id_unique').on(table.deliveryId),
+  taskCreatedIdx: index('bridge_continuation_events_task_created_idx').on(table.taskId, table.createdAt),
+  eventTypeCreatedIdx: index('bridge_continuation_events_type_created_idx').on(table.eventType, table.createdAt),
+}));
+
+export const interactionRequests = sqliteTable('interaction_requests', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
+  sourceRequestKey: text('source_request_key').notNull(),
+  connectionId: text('connection_id').notNull(),
+  sourceRequestId: text('source_request_id').notNull(),
+  kind: text('kind').notNull(),
+  method: text('method').notNull(),
+  threadId: text('thread_id'),
+  turnId: text('turn_id'),
+  itemId: text('item_id'),
+  requestPayload: text('request_payload').notNull(),
+  requestFingerprint: text('request_fingerprint').notNull(),
+  status: text('status').notNull(),
+  reason: text('reason').notNull(),
+  responsePayload: text('response_payload'),
+  responseFingerprint: text('response_fingerprint'),
+  responseSource: text('response_source'),
+  responseOperatorId: text('response_operator_id'),
+  responseIdempotencyKeyHash: text('response_idempotency_key_hash'),
+  responseCommittedAt: text('response_committed_at'),
+  responseDeliveryCount: integer('response_delivery_count').notNull().default(0),
+  responseDeliveredAt: text('response_delivered_at'),
+  resolvedAt: text('resolved_at'),
+  cancelledAt: text('cancelled_at'),
+  expiresAt: text('expires_at').notNull(),
+  stateVersion: integer('state_version').notNull().default(1),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  sourceRequestKeyUnique: uniqueIndex('interaction_requests_source_request_key_unique').on(table.sourceRequestKey),
+  deviceStatusIdx: index('interaction_requests_device_status_idx').on(table.deviceId, table.status),
+  threadCreatedIdx: index('interaction_requests_thread_created_idx').on(table.threadId, table.createdAt),
+  statusExpiresIdx: index('interaction_requests_status_expires_idx').on(table.status, table.expiresAt),
+  responseIdempotencyIdx: index('interaction_requests_response_idempotency_idx').on(table.responseIdempotencyKeyHash),
+  deliveryCountNonNegative: check(
+    'interaction_requests_delivery_count_non_negative',
+    sql`${table.responseDeliveryCount} >= 0`,
+  ),
+  stateVersionPositive: check('interaction_requests_state_version_positive', sql`${table.stateVersion} > 0`),
+}));
+
+export const interactionEvents = sqliteTable('interaction_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  interactionId: text('interaction_id').notNull().references(() => interactionRequests.id, { onDelete: 'cascade' }),
+  deliveryId: text('delivery_id'),
+  eventType: text('event_type').notNull(),
+  fromStatus: text('from_status'),
+  toStatus: text('to_status').notNull(),
+  actorKind: text('actor_kind').notNull(),
+  actorId: text('actor_id'),
+  metadata: text('metadata'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  deliveryIdUnique: uniqueIndex('interaction_events_delivery_id_unique').on(table.deliveryId),
+  interactionCreatedIdx: index('interaction_events_interaction_created_idx').on(table.interactionId, table.createdAt),
+  eventTypeCreatedIdx: index('interaction_events_type_created_idx').on(table.eventType, table.createdAt),
+}));
+
+export const interactionAdapters = sqliteTable('interaction_adapters', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').references(() => localConnectorDevices.id, { onDelete: 'set null' }),
+  kind: text('kind').notNull(),
+  name: text('name').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  appId: text('app_id').notNull(),
+  appSecretCredentialId: integer('app_secret_credential_id')
+    .references(() => credentialVaultItems.id, { onDelete: 'set null' }),
+  verificationTokenCredentialId: integer('verification_token_credential_id')
+    .references(() => credentialVaultItems.id, { onDelete: 'set null' }),
+  encryptKeyCredentialId: integer('encrypt_key_credential_id')
+    .references(() => credentialVaultItems.id, { onDelete: 'set null' }),
+  apiBaseUrl: text('api_base_url').notNull().default('https://open.feishu.cn'),
+  receiveIdType: text('receive_id_type').notNull().default('chat_id'),
+  receiveId: text('receive_id').notNull(),
+  consoleBaseUrl: text('console_base_url'),
+  operatorAllowlist: text('operator_allowlist').notNull().default('[]'),
+  lastDispatchAt: text('last_dispatch_at'),
+  lastCallbackAt: text('last_callback_at'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  kindNameUnique: uniqueIndex('interaction_adapters_kind_name_unique').on(table.kind, table.name),
+  enabledKindIdx: index('interaction_adapters_enabled_kind_idx').on(table.enabled, table.kind),
+  deviceEnabledKindIdx: index('interaction_adapters_device_enabled_kind_idx')
+    .on(table.deviceId, table.enabled, table.kind),
+}));
+
+/**
+ * Durable one-to-one mapping between a Codex thread and a Feishu topic.
+ * The first completion card becomes the topic root; later cards reply to it.
+ */
+export const feishuTopicBindings = sqliteTable('feishu_topic_bindings', {
+  id: text('id').primaryKey(),
+  adapterId: text('adapter_id').notNull().references(() => interactionAdapters.id, { onDelete: 'cascade' }),
+  deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
+  codexThreadId: text('codex_thread_id').notNull(),
+  rootMessageId: text('root_message_id'),
+  feishuThreadId: text('feishu_thread_id'),
+  lastMessageId: text('last_message_id'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  adapterDeviceThreadUnique: uniqueIndex('feishu_topic_bindings_adapter_device_thread_unique')
+    .on(table.adapterId, table.deviceId, table.codexThreadId),
+  adapterRootMessageUnique: uniqueIndex('feishu_topic_bindings_adapter_root_message_unique')
+    .on(table.adapterId, table.rootMessageId),
+  adapterFeishuThreadUnique: uniqueIndex('feishu_topic_bindings_adapter_feishu_thread_unique')
+    .on(table.adapterId, table.feishuThreadId),
+  deviceThreadIdx: index('feishu_topic_bindings_device_thread_idx')
+    .on(table.deviceId, table.codexThreadId),
+}));
+
+export const interactionPromptCards = sqliteTable('interaction_prompt_cards', {
+  id: text('id').primaryKey(),
+  adapterId: text('adapter_id').notNull().references(() => interactionAdapters.id, { onDelete: 'cascade' }),
+  deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
+  threadId: text('thread_id').notNull(),
+  contextTaskId: text('context_task_id').references(() => bridgeContinuationTasks.id, { onDelete: 'set null' }),
+  status: text('status').notNull().default('pending'),
+  expiresAt: text('expires_at').notNull(),
+  requestedBy: text('requested_by').notNull(),
+  requestIdempotencyKeyHash: text('request_idempotency_key_hash').notNull(),
+  requestFingerprint: text('request_fingerprint').notNull(),
+  consumedTaskId: text('consumed_task_id').references(() => bridgeContinuationTasks.id, { onDelete: 'set null' }),
+  consumedBy: text('consumed_by'),
+  consumedAt: text('consumed_at'),
+  stateVersion: integer('state_version').notNull().default(1),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  idempotencyKeyUnique: uniqueIndex('interaction_prompt_cards_idempotency_key_unique')
+    .on(table.requestIdempotencyKeyHash),
+  adapterStatusExpiresIdx: index('interaction_prompt_cards_adapter_status_expires_idx')
+    .on(table.adapterId, table.status, table.expiresAt),
+  deviceThreadCreatedIdx: index('interaction_prompt_cards_device_thread_created_idx')
+    .on(table.deviceId, table.threadId, table.createdAt),
+  stateVersionPositive: check('interaction_prompt_cards_state_version_positive', sql`${table.stateVersion} > 0`),
+}));
+
+export const interactionDispatches = sqliteTable('interaction_dispatches', {
+  id: text('id').primaryKey(),
+  subjectKind: text('subject_kind').notNull().default('interaction'),
+  interactionId: text('interaction_id').references(() => interactionRequests.id, { onDelete: 'cascade' }),
+  promptCardId: text('prompt_card_id').references(() => interactionPromptCards.id, { onDelete: 'cascade' }),
+  adapterId: text('adapter_id').notNull().references(() => interactionAdapters.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  nextAttemptAt: text('next_attempt_at').notNull(),
+  leaseOwner: text('lease_owner'),
+  leaseToken: text('lease_token'),
+  leaseExpiresAt: text('lease_expires_at'),
+  externalMessageId: text('external_message_id'),
+  cardFingerprint: text('card_fingerprint'),
+  lastError: text('last_error'),
+  deliveredAt: text('delivered_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  interactionAdapterUnique: uniqueIndex('interaction_dispatches_interaction_adapter_unique')
+    .on(table.interactionId, table.adapterId),
+  promptCardAdapterUnique: uniqueIndex('interaction_dispatches_prompt_card_adapter_unique')
+    .on(table.promptCardId, table.adapterId),
+  statusNextAttemptIdx: index('interaction_dispatches_status_next_attempt_idx').on(table.status, table.nextAttemptAt),
+  adapterCreatedIdx: index('interaction_dispatches_adapter_created_idx').on(table.adapterId, table.createdAt),
+  subjectKindCheck: check(
+    'interaction_dispatches_subject_kind_check',
+    sql`(${table.subjectKind} = 'interaction' and ${table.interactionId} is not null and ${table.promptCardId} is null)
+      or (${table.subjectKind} = 'prompt_card' and ${table.interactionId} is null and ${table.promptCardId} is not null)`,
+  ),
+  attemptCountNonNegative: check(
+    'interaction_dispatches_attempt_count_non_negative',
+    sql`${table.attemptCount} >= 0`,
+  ),
+}));
+
+export const interactionCardUpdates = sqliteTable('interaction_card_updates', {
+  id: text('id').primaryKey(),
+  dispatchId: text('dispatch_id').notNull()
+    .references(() => interactionDispatches.id, { onDelete: 'cascade' }),
+  subjectRevision: integer('subject_revision').notNull(),
+  targetStatus: text('target_status').notNull(),
+  cardFingerprint: text('card_fingerprint').notNull(),
+  status: text('status').notNull().default('pending'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  nextAttemptAt: text('next_attempt_at').notNull(),
+  deadlineAt: text('deadline_at').notNull(),
+  leaseOwner: text('lease_owner'),
+  leaseToken: text('lease_token'),
+  leaseExpiresAt: text('lease_expires_at'),
+  lastError: text('last_error'),
+  deliveredAt: text('delivered_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  dispatchFingerprintUnique: uniqueIndex('interaction_card_updates_dispatch_fingerprint_unique')
+    .on(table.dispatchId, table.cardFingerprint),
+  statusNextAttemptIdx: index('interaction_card_updates_status_next_attempt_idx')
+    .on(table.status, table.nextAttemptAt),
+  dispatchCreatedIdx: index('interaction_card_updates_dispatch_created_idx')
+    .on(table.dispatchId, table.createdAt),
+  deadlineIdx: index('interaction_card_updates_deadline_idx').on(table.deadlineAt),
+  subjectRevisionPositive: check(
+    'interaction_card_updates_subject_revision_positive',
+    sql`${table.subjectRevision} > 0`,
+  ),
+  attemptCountNonNegative: check(
+    'interaction_card_updates_attempt_count_non_negative',
+    sql`${table.attemptCount} >= 0`,
+  ),
+}));
+
+export const interactionActionTickets = sqliteTable('interaction_action_tickets', {
+  id: text('id').primaryKey(),
+  dispatchId: text('dispatch_id').notNull().references(() => interactionDispatches.id, { onDelete: 'cascade' }),
+  interactionId: text('interaction_id').references(() => interactionRequests.id, { onDelete: 'cascade' }),
+  promptCardId: text('prompt_card_id').references(() => interactionPromptCards.id, { onDelete: 'cascade' }),
+  adapterId: text('adapter_id').notNull().references(() => interactionAdapters.id, { onDelete: 'cascade' }),
+  actionKey: text('action_key').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  responsePayload: text('response_payload').notNull(),
+  status: text('status').notNull().default('pending'),
+  expiresAt: text('expires_at').notNull(),
+  consumedAt: text('consumed_at'),
+  consumedBy: text('consumed_by'),
+  stateVersion: integer('state_version').notNull().default(1),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  dispatchActionUnique: uniqueIndex('interaction_action_tickets_dispatch_action_unique')
+    .on(table.dispatchId, table.actionKey),
+  tokenHashUnique: uniqueIndex('interaction_action_tickets_token_hash_unique').on(table.tokenHash),
+  statusExpiresIdx: index('interaction_action_tickets_status_expires_idx').on(table.status, table.expiresAt),
+  interactionCreatedIdx: index('interaction_action_tickets_interaction_created_idx')
+    .on(table.interactionId, table.createdAt),
+  promptCardCreatedIdx: index('interaction_action_tickets_prompt_card_created_idx')
+    .on(table.promptCardId, table.createdAt),
+  subjectCheck: check(
+    'interaction_action_tickets_subject_check',
+    sql`(${table.interactionId} is not null and ${table.promptCardId} is null)
+      or (${table.interactionId} is null and ${table.promptCardId} is not null)`,
+  ),
+  stateVersionPositive: check('interaction_action_tickets_state_version_positive', sql`${table.stateVersion} > 0`),
+}));
+
+export const localConnectorActions = sqliteTable('local_connector_actions', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  operation: text('operation').notNull(),
+  status: text('status').notNull().default('pending'),
+  manifest: text('manifest').notNull(),
+  resultPayload: text('result_payload'),
+  backupRef: text('backup_ref'),
+  errorMessage: text('error_message'),
+  claimedAt: text('claimed_at'),
+  completedAt: text('completed_at'),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  deviceStatusIdx: index('local_connector_actions_device_status_idx').on(table.deviceId, table.status),
+  statusExpiresIdx: index('local_connector_actions_status_expires_idx').on(table.status, table.expiresAt),
+}));
+
+export const oauthRefreshLeases = sqliteTable('oauth_refresh_leases', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(),
+  providerSlot: integer('provider_slot').notNull(),
+  leaseToken: text('lease_token').notNull(),
+  leaseOwner: text('lease_owner').notNull(),
+  credentialVersion: integer('credential_version').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  accountUnique: uniqueIndex('oauth_refresh_leases_account_unique').on(table.accountId),
+  leaseTokenUnique: uniqueIndex('oauth_refresh_leases_token_unique').on(table.leaseToken),
+  providerSlotUnique: uniqueIndex('oauth_refresh_leases_provider_slot_unique').on(table.provider, table.providerSlot),
+  providerIdx: index('oauth_refresh_leases_provider_idx').on(table.provider),
+  expiresAtIdx: index('oauth_refresh_leases_expires_at_idx').on(table.expiresAt),
+  slotPositive: check('oauth_refresh_leases_slot_positive', sql`${table.providerSlot} > 0`),
+  credentialVersionPositive: check('oauth_refresh_leases_credential_version_positive', sql`${table.credentialVersion} > 0`),
+}));
+
+export const oauthRefreshProviderStates = sqliteTable('oauth_refresh_provider_states', {
+  provider: text('provider').primaryKey(),
+  nextAllowedAt: text('next_allowed_at'),
+  lastStartedAt: text('last_started_at'),
+  lastCompletedAt: text('last_completed_at'),
+  consecutiveFailureCount: integer('consecutive_failure_count').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  nextAllowedAtIdx: index('oauth_refresh_provider_states_next_allowed_at_idx').on(table.nextAllowedAt),
 }));
 
 export const accountTokens = sqliteTable('account_tokens', {
@@ -128,6 +659,27 @@ export const modelAvailability = sqliteTable('model_availability', {
   accountModelUnique: uniqueIndex('model_availability_account_model_unique').on(table.accountId, table.modelName),
   accountAvailableIdx: index('model_availability_account_available_idx').on(table.accountId, table.available),
   modelNameIdx: index('model_availability_model_name_idx').on(table.modelName),
+}));
+
+/**
+ * Durable model discovery observations. A model is only retired after the
+ * adapter contract's consecutive-missing threshold is reached.
+ */
+export const modelSyncStates = sqliteTable('model_sync_states', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  consecutiveMissing: integer('consecutive_missing').notNull().default(0),
+  lastSeenAt: text('last_seen_at'),
+  lastSyncAt: text('last_sync_at'),
+  status: text('status').notNull().default('active'), // 'active' | 'candidate_retired'
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  accountModelUnique: uniqueIndex('model_sync_states_account_model_unique').on(table.accountId, table.modelName),
+  accountStatusIdx: index('model_sync_states_account_status_idx').on(table.accountId, table.status),
+  lastSyncAtIdx: index('model_sync_states_last_sync_at_idx').on(table.lastSyncAt),
 }));
 
 export const tokenModelAvailability = sqliteTable('token_model_availability', {
@@ -217,9 +769,12 @@ export const routeChannels = sqliteTable('route_channels', {
   oauthRouteUnitId: integer('oauth_route_unit_id'),
   sourceModel: text('source_model'),
   priority: integer('priority').default(0),
+  sortOrder: integer('sort_order').notNull().default(0),
   weight: integer('weight').default(10),
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   manualOverride: integer('manual_override', { mode: 'boolean' }).default(false),
+  retryOwner: text('retry_owner').notNull().default('cooperative'),
+  upstreamRetryMode: text('upstream_retry_mode').notNull().default('unknown'),
   successCount: integer('success_count').default(0),
   failCount: integer('fail_count').default(0),
   totalLatencyMs: integer('total_latency_ms').default(0),
@@ -237,6 +792,7 @@ export const routeChannels = sqliteTable('route_channels', {
   oauthRouteUnitIdx: index('route_channels_oauth_route_unit_id_idx').on(table.oauthRouteUnitId),
   routeEnabledIdx: index('route_channels_route_enabled_idx').on(table.routeId, table.enabled),
   routeTokenIdx: index('route_channels_route_token_idx').on(table.routeId, table.tokenId),
+  routePrioritySortIdx: index('route_channels_route_priority_sort_idx').on(table.routeId, table.priority, table.sortOrder),
 }));
 
 export const proxyLogs = sqliteTable('proxy_logs', {
@@ -245,6 +801,8 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   channelId: integer('channel_id'),
   accountId: integer('account_id'),
   downstreamApiKeyId: integer('downstream_api_key_id'),
+  requestId: text('request_id'),
+  attemptId: text('attempt_id'),
   modelRequested: text('model_requested'),
   modelActual: text('model_actual'),
   status: text('status'), // 'success' | 'failed' | 'retried'
@@ -272,6 +830,8 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   downstreamKeyCreatedIdx: index('proxy_logs_downstream_api_key_created_at_idx').on(table.downstreamApiKeyId, table.createdAt),
   clientAppCreatedIdx: index('proxy_logs_client_app_id_created_at_idx').on(table.clientAppId, table.createdAt),
   clientFamilyCreatedIdx: index('proxy_logs_client_family_created_at_idx').on(table.clientFamily, table.createdAt),
+  requestCreatedIdx: index('proxy_logs_request_id_created_at_idx').on(table.requestId, table.createdAt),
+  attemptCreatedIdx: index('proxy_logs_attempt_id_created_at_idx').on(table.attemptId, table.createdAt),
 }));
 
 export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
@@ -280,6 +840,7 @@ export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
   clientKind: text('client_kind'),
   sessionId: text('session_id'),
   traceHint: text('trace_hint'),
+  requestId: text('request_id'),
   requestedModel: text('requested_model'),
   downstreamApiKeyId: integer('downstream_api_key_id'),
   requestHeadersJson: text('request_headers_json'),
@@ -306,12 +867,14 @@ export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
   sessionCreatedIdx: index('proxy_debug_traces_session_created_at_idx').on(table.sessionId, table.createdAt),
   modelCreatedIdx: index('proxy_debug_traces_model_created_at_idx').on(table.requestedModel, table.createdAt),
   finalStatusCreatedIdx: index('proxy_debug_traces_final_status_created_at_idx').on(table.finalStatus, table.createdAt),
+  requestIdIdx: index('proxy_debug_traces_request_id_idx').on(table.requestId),
 }));
 
 export const proxyDebugAttempts = sqliteTable('proxy_debug_attempts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   traceId: integer('trace_id').notNull().references(() => proxyDebugTraces.id, { onDelete: 'cascade' }),
   attemptIndex: integer('attempt_index').notNull(),
+  attemptId: text('attempt_id'),
   endpoint: text('endpoint').notNull(),
   requestPath: text('request_path').notNull(),
   targetUrl: text('target_url').notNull(),
@@ -330,6 +893,68 @@ export const proxyDebugAttempts = sqliteTable('proxy_debug_attempts', {
 }, (table) => ({
   traceAttemptUnique: uniqueIndex('proxy_debug_attempts_trace_attempt_unique').on(table.traceId, table.attemptIndex),
   traceCreatedIdx: index('proxy_debug_attempts_trace_created_at_idx').on(table.traceId, table.createdAt),
+  attemptIdIdx: index('proxy_debug_attempts_attempt_id_idx').on(table.attemptId),
+}));
+
+/**
+ * Durable request-level ledger. Debug traces are opt-in diagnostics; these
+ * records remain available for retry safety, restart recovery, and auditing.
+ */
+export const proxyRequests = sqliteTable('proxy_requests', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  requestId: text('request_id').notNull(),
+  requestedModel: text('requested_model').notNull(),
+  downstreamPath: text('downstream_path').notNull(),
+  clientKind: text('client_kind'),
+  sessionId: text('session_id'),
+  clientThreadId: text('client_thread_id'),
+  clientTurnId: text('client_turn_id'),
+  bridgeTaskId: text('bridge_task_id'),
+  bridgeRouteAction: text('bridge_route_action'),
+  bridgeContinuationNumber: integer('bridge_continuation_number'),
+  downstreamApiKeyId: integer('downstream_api_key_id'),
+  status: text('status').notNull().default('active'), // 'active' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
+  retryOwner: text('retry_owner').notNull().default('cooperative'),
+  replaySafety: text('replay_safety').notNull().default('safe_only'),
+  policySnapshotJson: text('policy_snapshot_json').notNull(),
+  retryBudgetJson: text('retry_budget_json').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  finishedAt: text('finished_at'),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  requestIdUnique: uniqueIndex('proxy_requests_request_id_unique').on(table.requestId),
+  statusUpdatedIdx: index('proxy_requests_status_updated_at_idx').on(table.status, table.updatedAt),
+  sessionCreatedIdx: index('proxy_requests_session_created_at_idx').on(table.sessionId, table.createdAt),
+  threadCreatedIdx: index('proxy_requests_thread_created_at_idx').on(table.clientThreadId, table.createdAt),
+  bridgeTaskCreatedIdx: index('proxy_requests_bridge_task_created_at_idx').on(table.bridgeTaskId, table.createdAt),
+  modelCreatedIdx: index('proxy_requests_model_created_at_idx').on(table.requestedModel, table.createdAt),
+}));
+
+export const proxyRequestAttempts = sqliteTable('proxy_request_attempts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  requestRowId: integer('request_row_id').notNull().references(() => proxyRequests.id, { onDelete: 'cascade' }),
+  attemptId: text('attempt_id').notNull(),
+  attemptIndex: integer('attempt_index').notNull(),
+  channelId: integer('channel_id'),
+  accountId: integer('account_id'),
+  tokenId: integer('token_id'),
+  endpoint: text('endpoint'),
+  requestPath: text('request_path'),
+  targetUrl: text('target_url'),
+  status: text('status').notNull().default('in_flight'), // 'in_flight' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
+  commitState: text('commit_state').notNull().default('not_started'),
+  errorScope: text('error_scope'),
+  statusCode: integer('status_code'),
+  errorSummary: text('error_summary'),
+  startedAt: text('started_at').default(sql`(datetime('now'))`),
+  finishedAt: text('finished_at'),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  requestAttemptUnique: uniqueIndex('proxy_request_attempts_request_attempt_unique').on(table.requestRowId, table.attemptIndex),
+  attemptIdUnique: uniqueIndex('proxy_request_attempts_attempt_id_unique').on(table.attemptId),
+  requestStatusIdx: index('proxy_request_attempts_request_status_idx').on(table.requestRowId, table.status),
+  channelStartedIdx: index('proxy_request_attempts_channel_started_at_idx').on(table.channelId, table.startedAt),
+  commitStateIdx: index('proxy_request_attempts_commit_state_idx').on(table.commitState, table.updatedAt),
 }));
 
 export const proxyVideoTasks = sqliteTable('proxy_video_tasks', {
@@ -377,6 +1002,52 @@ export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value'), // JSON
 });
+
+export const adminSessions = sqliteTable('admin_sessions', {
+  id: text('id').primaryKey(),
+  tokenHash: text('token_hash').notNull(),
+  csrfToken: text('csrf_token').notNull(),
+  clientIp: text('client_ip'),
+  userAgent: text('user_agent'),
+  secondFactorVerifiedAt: text('second_factor_verified_at'),
+  expiresAt: text('expires_at').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
+  revokedAt: text('revoked_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex('admin_sessions_token_hash_unique').on(table.tokenHash),
+  expiresAtIdx: index('admin_sessions_expires_at_idx').on(table.expiresAt),
+  revokedAtIdx: index('admin_sessions_revoked_at_idx').on(table.revokedAt),
+}));
+
+export const adminTotpConfigs = sqliteTable('admin_totp_configs', {
+  id: text('id').primaryKey(),
+  encryptedSecret: text('encrypted_secret').notNull(),
+  recoveryCodeHashes: text('recovery_code_hashes').notNull(),
+  lastAcceptedCounter: integer('last_accepted_counter'),
+  enabledAt: text('enabled_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+});
+
+export const adminAuthChallenges = sqliteTable('admin_auth_challenges', {
+  id: text('id').primaryKey(),
+  kind: text('kind').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  encryptedPayload: text('encrypted_payload'),
+  clientIp: text('client_ip'),
+  userAgent: text('user_agent'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  expiresAt: text('expires_at').notNull(),
+  consumedAt: text('consumed_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex('admin_auth_challenges_token_hash_unique').on(table.tokenHash),
+  expiresAtIdx: index('admin_auth_challenges_expires_at_idx').on(table.expiresAt),
+  consumedAtIdx: index('admin_auth_challenges_consumed_at_idx').on(table.consumedAt),
+}));
 
 export const adminSnapshots = sqliteTable('admin_snapshots', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -503,6 +1174,8 @@ export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   usedCost: real('used_cost').default(0),
   maxRequests: integer('max_requests'),
   usedRequests: integer('used_requests').default(0),
+  maxConcurrency: integer('max_concurrency'),
+  policyVersion: integer('policy_version').notNull().default(1),
   supportedModels: text('supported_models'), // JSON array<string>
   allowedRouteIds: text('allowed_route_ids'), // JSON array<number>
   siteWeightMultipliers: text('site_weight_multipliers'), // JSON object { [siteId]: multiplier }
@@ -516,6 +1189,22 @@ export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   nameIdx: index('downstream_api_keys_name_idx').on(table.name),
   enabledIdx: index('downstream_api_keys_enabled_idx').on(table.enabled),
   expiresAtIdx: index('downstream_api_keys_expires_at_idx').on(table.expiresAt),
+}));
+
+export const downstreamApiKeyLeases = sqliteTable('downstream_api_key_leases', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  downstreamApiKeyId: integer('downstream_api_key_id').notNull().references(() => downstreamApiKeys.id, { onDelete: 'cascade' }),
+  leaseToken: text('lease_token').notNull(),
+  slot: integer('slot').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  leaseTokenUnique: uniqueIndex('downstream_api_key_leases_token_unique').on(table.leaseToken),
+  keySlotUnique: uniqueIndex('downstream_api_key_leases_key_slot_unique').on(table.downstreamApiKeyId, table.slot),
+  keyIdIdx: index('downstream_api_key_leases_key_id_idx').on(table.downstreamApiKeyId),
+  expiresAtIdx: index('downstream_api_key_leases_expires_at_idx').on(table.expiresAt),
+  slotPositive: check('downstream_api_key_leases_slot_positive', sql`${table.slot} > 0`),
 }));
 
 export const siteAnnouncements = sqliteTable('site_announcements', {
@@ -556,4 +1245,49 @@ export const events = sqliteTable('events', {
   readCreatedIdx: index('events_read_created_at_idx').on(table.read, table.createdAt),
   typeCreatedIdx: index('events_type_created_at_idx').on(table.type, table.createdAt),
   createdAtIdx: index('events_created_at_idx').on(table.createdAt),
+}));
+
+export const notificationOutbox = sqliteTable('notification_outbox', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  notificationId: text('notification_id').notNull(),
+  idempotencyKeyHash: text('idempotency_key_hash'),
+  throttleSignature: text('throttle_signature'),
+  channel: text('channel').notNull(),
+  title: text('title').notNull(),
+  message: text('message').notNull(),
+  level: text('level').notNull().default('info'),
+  occurredAt: text('occurred_at').notNull(),
+  deliveryPolicy: text('delivery_policy').notNull().default('prefer_delivery'),
+  status: text('status').notNull().default('pending'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  nextAttemptAt: text('next_attempt_at'),
+  leaseOwner: text('lease_owner'),
+  leaseToken: text('lease_token'),
+  leaseExpiresAt: text('lease_expires_at'),
+  lastAttemptAt: text('last_attempt_at'),
+  lastOutcome: text('last_outcome'),
+  lastError: text('last_error'),
+  deliveredAt: text('delivered_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  notificationChannelUnique: uniqueIndex('notification_outbox_notification_channel_unique')
+    .on(table.notificationId, table.channel),
+  statusNextAttemptIdx: index('notification_outbox_status_next_attempt_idx')
+    .on(table.status, table.nextAttemptAt),
+  leaseExpiresAtIdx: index('notification_outbox_lease_expires_at_idx').on(table.leaseExpiresAt),
+  idempotencyKeyHashUnique: uniqueIndex('notification_outbox_idempotency_key_hash_unique')
+    .on(table.idempotencyKeyHash),
+  createdAtIdx: index('notification_outbox_created_at_idx').on(table.createdAt),
+}));
+
+export const notificationThrottleStates = sqliteTable('notification_throttle_states', {
+  signature: text('signature').primaryKey(),
+  lastEnqueuedAt: text('last_enqueued_at').notNull(),
+  suppressedCount: integer('suppressed_count').notNull().default(0),
+  version: integer('version').notNull().default(1),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  updatedAtIdx: index('notification_throttle_states_updated_at_idx').on(table.updatedAt),
 }));

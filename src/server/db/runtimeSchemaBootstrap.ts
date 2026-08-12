@@ -10,6 +10,7 @@ import {
 import {
   generateBootstrapSql,
   generateUpgradeSql,
+  isNullableRelaxation,
   type MysqlIndexPrefixRequirementMap,
 } from './schemaArtifactGenerator.js';
 import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
@@ -51,6 +52,8 @@ function isExistingSchemaObjectError(error: unknown): boolean {
 
   return code === 'ER_DUP_KEYNAME'
     || code === 'ER_DUP_FIELDNAME'
+    || code === 'ER_FK_DUP_NAME'
+    || code === '1826'
     || code === 'ER_TABLE_EXISTS_ERROR'
     || code === '42P07'
     || code === '42701'
@@ -58,6 +61,7 @@ function isExistingSchemaObjectError(error: unknown): boolean {
     || lowered.includes('already exists')
     || lowered.includes('duplicate column')
     || lowered.includes('duplicate key name')
+    || lowered.includes('duplicate foreign key constraint name')
     || lowered.includes('relation') && lowered.includes('already exists');
 }
 
@@ -210,7 +214,10 @@ function buildCompatibleRuntimeBaseline(
       Object.entries(liveTable.columns)
         .filter(([columnName, liveColumn]) => {
           const currentColumn = currentTable.columns[columnName];
-          return currentColumn && serializeColumn(currentColumn) === serializeColumn(liveColumn);
+          return currentColumn && (
+            serializeColumn(currentColumn) === serializeColumn(liveColumn)
+            || isNullableRelaxation(currentColumn, liveColumn)
+          );
         }),
     );
 

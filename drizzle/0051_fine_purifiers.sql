@@ -1,0 +1,1 @@
+ALTER TABLE `local_connector_threads` ADD `title` text;

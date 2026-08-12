@@ -1,0 +1,2 @@
+ALTER TABLE `bridge_continuation_events` ADD `delivery_id` text;--> statement-breakpoint
+CREATE UNIQUE INDEX `bridge_continuation_events_delivery_id_unique` ON `bridge_continuation_events` (`delivery_id`);

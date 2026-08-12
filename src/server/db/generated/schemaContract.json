@@ -203,6 +203,194 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "oauth_credential_payload": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_credential_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "oauth_refresh_state": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'idle'",
+          "primaryKey": false
+        },
+        "oauth_refresh_failure_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "oauth_refresh_retry_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_refresh_last_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_refresh_last_success_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_refresh_last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "admin_auth_challenges": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "encrypted_payload": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "client_ip": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "user_agent": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "attempt_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consumed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "admin_sessions": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "token_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "csrf_token": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "client_ip": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "user_agent": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_seen_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "revoked_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "second_factor_verified_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -245,6 +433,52 @@
           "primaryKey": false
         },
         "stale_until": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "admin_totp_configs": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "encrypted_secret": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recovery_code_hashes": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_accepted_counter": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled_at": {
           "logicalType": "datetime",
           "notNull": true,
           "defaultValue": null,
@@ -370,6 +604,484 @@
         }
       }
     },
+    "bridge_continuation_events": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "task_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "event_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "from_status": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "to_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reason": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "delivery_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "bridge_continuation_leases": {
+      "columns": {
+        "session_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "task_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "owner_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "bridge_continuation_tasks": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "session_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "active_slot": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "thread_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reason": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "policy_snapshot": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "policy_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "continuation_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "started_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "next_run_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "thread_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'unknown'",
+          "primaryKey": false
+        },
+        "active_flags": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'[]'",
+          "primaryKey": false
+        },
+        "active_turn_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_class": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_source": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_recoverability": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_codex_error_code": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_http_status_code": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_message_summary": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_message_fingerprint": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_will_retry": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_turn_terminal": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "false",
+          "primaryKey": false
+        },
+        "retry_after_ms": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "pending_route_action": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "pending_prompt": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "state_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "stopped_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "task_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'automatic'",
+          "primaryKey": false
+        },
+        "submission_mode": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "pending_method": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_source": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "requested_by": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_adapter_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_idempotency_key_hash": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "prompt_fingerprint": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "browser_credential_recovery_tasks": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "credential_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'browser_storage'",
+          "primaryKey": false
+        },
+        "adapter_platform": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "target_url": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "contract_snapshot": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "task_token_hash": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "claim_token_hash": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "claimed_by": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "claimed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "completed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cancelled_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "result_credential_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "error_code": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "error_message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "checkin_logs": {
       "columns": {
         "id": {
@@ -403,6 +1115,146 @@
           "primaryKey": false
         },
         "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "credential_vault_items": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'active'",
+          "primaryKey": false
+        },
+        "ciphertext": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_used_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "revoked_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "downstream_api_key_leases": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "slot": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
@@ -531,6 +1383,18 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "max_concurrency": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "policy_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
         }
       }
     },
@@ -588,6 +1452,1140 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "feishu_topic_bindings": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "adapter_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "codex_thread_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "root_message_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "feishu_thread_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_message_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_action_tickets": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "dispatch_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "interaction_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "prompt_card_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "adapter_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "action_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_payload": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consumed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consumed_by": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "state_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_adapters": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "app_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "app_secret_credential_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "verification_token_credential_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "encrypt_key_credential_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "api_base_url": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'https://open.feishu.cn'",
+          "primaryKey": false
+        },
+        "receive_id_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'chat_id'",
+          "primaryKey": false
+        },
+        "receive_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "console_base_url": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "operator_allowlist": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'[]'",
+          "primaryKey": false
+        },
+        "last_dispatch_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_callback_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_card_updates": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "dispatch_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "subject_revision": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "target_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "card_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "attempt_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "next_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "deadline_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "delivered_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_dispatches": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "subject_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'interaction'",
+          "primaryKey": false
+        },
+        "interaction_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "prompt_card_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "adapter_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "attempt_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "next_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "external_message_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "card_fingerprint": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "delivered_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_events": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "interaction_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "delivery_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "event_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "from_status": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "to_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "actor_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "actor_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_prompt_cards": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "adapter_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "thread_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "context_task_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "requested_by": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_idempotency_key_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consumed_task_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consumed_by": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consumed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "state_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "interaction_requests": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_request_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "connection_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_request_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "method": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "thread_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "turn_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "item_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_payload": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reason": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_payload": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_fingerprint": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_source": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_operator_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_idempotency_key_hash": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_committed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "response_delivery_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "response_delivered_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "resolved_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cancelled_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "state_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "local_connector_actions": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "operation": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "manifest": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "result_payload": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "backup_ref": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "error_message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "claimed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "completed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "local_connector_devices": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "platform": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "version": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'active'",
+          "primaryKey": false
+        },
+        "token_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scopes": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "capabilities": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "paired_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_seen_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "revoked_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "local_connector_pairings": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "device_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "requested_scopes": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_hash": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "claimed_device_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "claimed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cancelled_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "local_connector_threads": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "thread_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "thread_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'unknown'",
+          "primaryKey": false
+        },
+        "active_flags": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'[]'",
+          "primaryKey": false
+        },
+        "active_turn_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_event_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_seen_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "observation_source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'connector_app_server'",
+          "primaryKey": false
+        },
+        "control_state": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'available'",
+          "primaryKey": false
+        },
+        "title": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         }
       }
@@ -704,6 +2702,362 @@
           "logicalType": "integer",
           "notNull": true,
           "defaultValue": "0",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "model_sync_states": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consecutive_missing": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_seen_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_sync_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'active'",
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "notification_outbox": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "notification_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "idempotency_key_hash": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "throttle_signature": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "channel": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "title": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "message": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "level": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'info'",
+          "primaryKey": false
+        },
+        "occurred_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "delivery_policy": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'prefer_delivery'",
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "attempt_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "next_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_outcome": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "delivered_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "notification_throttle_states": {
+      "columns": {
+        "signature": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "last_enqueued_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "suppressed_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "oauth_refresh_leases": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider_slot": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "oauth_refresh_provider_states": {
+      "columns": {
+        "provider": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "next_allowed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_started_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_completed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consecutive_failure_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         },
         "created_at": {
@@ -981,6 +3335,12 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "attempt_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1140,6 +3500,12 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "request_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         }
       }
@@ -1371,6 +3737,254 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "request_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "attempt_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "proxy_request_attempts": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "request_row_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "attempt_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "attempt_index": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "channel_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "endpoint": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_path": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "target_url": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'in_flight'",
+          "primaryKey": false
+        },
+        "commit_state": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'not_started'",
+          "primaryKey": false
+        },
+        "error_scope": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status_code": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "error_summary": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "started_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "finished_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "proxy_requests": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "request_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "requested_model": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "downstream_path": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "client_kind": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "session_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'active'",
+          "primaryKey": false
+        },
+        "retry_owner": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'cooperative'",
+          "primaryKey": false
+        },
+        "replay_safety": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'safe_only'",
+          "primaryKey": false
+        },
+        "policy_snapshot_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "retry_budget_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "finished_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "client_thread_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "client_turn_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "bridge_task_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "bridge_route_action": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "bridge_continuation_number": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1588,6 +4202,24 @@
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
+          "primaryKey": false
+        },
+        "retry_owner": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'cooperative'",
+          "primaryKey": false
+        },
+        "upstream_retry_mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'unknown'",
+          "primaryKey": false
+        },
+        "sort_order": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
           "primaryKey": false
         }
       }
@@ -2113,6 +4745,18 @@
           "notNull": false,
           "defaultValue": "0",
           "primaryKey": false
+        },
+        "codex_fingerprint_enabled": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": "false",
+          "primaryKey": false
+        },
+        "homepage_url": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2278,6 +4922,22 @@
       "unique": false
     },
     {
+      "name": "accounts_oauth_refresh_retry_at_idx",
+      "table": "accounts",
+      "columns": [
+        "oauth_refresh_retry_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "accounts_oauth_refresh_state_idx",
+      "table": "accounts",
+      "columns": [
+        "oauth_refresh_state"
+      ],
+      "unique": false
+    },
+    {
       "name": "accounts_site_id_idx",
       "table": "accounts",
       "columns": [
@@ -2301,6 +4961,54 @@
         "status"
       ],
       "unique": false
+    },
+    {
+      "name": "admin_auth_challenges_consumed_at_idx",
+      "table": "admin_auth_challenges",
+      "columns": [
+        "consumed_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "admin_auth_challenges_expires_at_idx",
+      "table": "admin_auth_challenges",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "admin_auth_challenges_token_hash_unique",
+      "table": "admin_auth_challenges",
+      "columns": [
+        "token_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "admin_sessions_expires_at_idx",
+      "table": "admin_sessions",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "admin_sessions_revoked_at_idx",
+      "table": "admin_sessions",
+      "columns": [
+        "revoked_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "admin_sessions_token_hash_unique",
+      "table": "admin_sessions",
+      "columns": [
+        "token_hash"
+      ],
+      "unique": true
     },
     {
       "name": "admin_snapshots_expires_at_idx",
@@ -2344,6 +5052,154 @@
       "unique": false
     },
     {
+      "name": "bridge_continuation_events_delivery_id_unique",
+      "table": "bridge_continuation_events",
+      "columns": [
+        "delivery_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "bridge_continuation_events_task_created_idx",
+      "table": "bridge_continuation_events",
+      "columns": [
+        "task_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "bridge_continuation_events_type_created_idx",
+      "table": "bridge_continuation_events",
+      "columns": [
+        "event_type",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "bridge_continuation_leases_expires_at_idx",
+      "table": "bridge_continuation_leases",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "bridge_continuation_leases_task_id_unique",
+      "table": "bridge_continuation_leases",
+      "columns": [
+        "task_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "bridge_continuation_leases_token_hash_unique",
+      "table": "bridge_continuation_leases",
+      "columns": [
+        "lease_token_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "bridge_continuation_tasks_device_id_idx",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "device_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "bridge_continuation_tasks_policy_fingerprint_idx",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "policy_fingerprint"
+      ],
+      "unique": false
+    },
+    {
+      "name": "bridge_continuation_tasks_request_idempotency_key_unique",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "request_idempotency_key_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "bridge_continuation_tasks_session_active_unique",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "session_key",
+        "active_slot"
+      ],
+      "unique": true
+    },
+    {
+      "name": "bridge_continuation_tasks_status_next_run_idx",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "status",
+        "next_run_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "bridge_continuation_tasks_thread_id_idx",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "thread_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "browser_credential_recovery_tasks_account_id_idx",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "browser_credential_recovery_tasks_claim_token_hash_unique",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "claim_token_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "browser_credential_recovery_tasks_expires_at_idx",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "browser_credential_recovery_tasks_site_id_idx",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "browser_credential_recovery_tasks_status_idx",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "browser_credential_recovery_tasks_task_token_hash_unique",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "task_token_hash"
+      ],
+      "unique": true
+    },
+    {
       "name": "checkin_logs_account_created_at_idx",
       "table": "checkin_logs",
       "columns": [
@@ -2367,6 +5223,79 @@
         "status"
       ],
       "unique": false
+    },
+    {
+      "name": "credential_vault_items_account_id_idx",
+      "table": "credential_vault_items",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_vault_items_expires_at_idx",
+      "table": "credential_vault_items",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_vault_items_fingerprint_idx",
+      "table": "credential_vault_items",
+      "columns": [
+        "fingerprint"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_vault_items_site_id_idx",
+      "table": "credential_vault_items",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_vault_items_status_idx",
+      "table": "credential_vault_items",
+      "columns": [
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_api_key_leases_expires_at_idx",
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_api_key_leases_key_id_idx",
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "downstream_api_key_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_api_key_leases_key_slot_unique",
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "downstream_api_key_id",
+        "slot"
+      ],
+      "unique": true
+    },
+    {
+      "name": "downstream_api_key_leases_token_unique",
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "lease_token"
+      ],
+      "unique": true
     },
     {
       "name": "downstream_api_keys_enabled_idx",
@@ -2423,6 +5352,376 @@
       "columns": [
         "type",
         "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "feishu_topic_bindings_adapter_device_thread_unique",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id",
+        "device_id",
+        "codex_thread_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "feishu_topic_bindings_adapter_feishu_thread_unique",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id",
+        "feishu_thread_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "feishu_topic_bindings_adapter_root_message_unique",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id",
+        "root_message_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "feishu_topic_bindings_device_thread_idx",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "device_id",
+        "codex_thread_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_action_tickets_dispatch_action_unique",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "dispatch_id",
+        "action_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_action_tickets_interaction_created_idx",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "interaction_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_action_tickets_prompt_card_created_idx",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "prompt_card_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_action_tickets_status_expires_idx",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "status",
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_action_tickets_token_hash_unique",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "token_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_adapters_device_enabled_kind_idx",
+      "table": "interaction_adapters",
+      "columns": [
+        "device_id",
+        "enabled",
+        "kind"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_adapters_enabled_kind_idx",
+      "table": "interaction_adapters",
+      "columns": [
+        "enabled",
+        "kind"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_adapters_kind_name_unique",
+      "table": "interaction_adapters",
+      "columns": [
+        "kind",
+        "name"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_card_updates_deadline_idx",
+      "table": "interaction_card_updates",
+      "columns": [
+        "deadline_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_card_updates_dispatch_created_idx",
+      "table": "interaction_card_updates",
+      "columns": [
+        "dispatch_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_card_updates_dispatch_fingerprint_unique",
+      "table": "interaction_card_updates",
+      "columns": [
+        "dispatch_id",
+        "card_fingerprint"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_card_updates_status_next_attempt_idx",
+      "table": "interaction_card_updates",
+      "columns": [
+        "status",
+        "next_attempt_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_dispatches_adapter_created_idx",
+      "table": "interaction_dispatches",
+      "columns": [
+        "adapter_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_dispatches_interaction_adapter_unique",
+      "table": "interaction_dispatches",
+      "columns": [
+        "interaction_id",
+        "adapter_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_dispatches_prompt_card_adapter_unique",
+      "table": "interaction_dispatches",
+      "columns": [
+        "prompt_card_id",
+        "adapter_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_dispatches_status_next_attempt_idx",
+      "table": "interaction_dispatches",
+      "columns": [
+        "status",
+        "next_attempt_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_events_delivery_id_unique",
+      "table": "interaction_events",
+      "columns": [
+        "delivery_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_events_interaction_created_idx",
+      "table": "interaction_events",
+      "columns": [
+        "interaction_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_events_type_created_idx",
+      "table": "interaction_events",
+      "columns": [
+        "event_type",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_prompt_cards_adapter_status_expires_idx",
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "adapter_id",
+        "status",
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_prompt_cards_device_thread_created_idx",
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "device_id",
+        "thread_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_prompt_cards_idempotency_key_unique",
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "request_idempotency_key_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_requests_device_status_idx",
+      "table": "interaction_requests",
+      "columns": [
+        "device_id",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_requests_response_idempotency_idx",
+      "table": "interaction_requests",
+      "columns": [
+        "response_idempotency_key_hash"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_requests_source_request_key_unique",
+      "table": "interaction_requests",
+      "columns": [
+        "source_request_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "interaction_requests_status_expires_idx",
+      "table": "interaction_requests",
+      "columns": [
+        "status",
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "interaction_requests_thread_created_idx",
+      "table": "interaction_requests",
+      "columns": [
+        "thread_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_actions_device_status_idx",
+      "table": "local_connector_actions",
+      "columns": [
+        "device_id",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_actions_status_expires_idx",
+      "table": "local_connector_actions",
+      "columns": [
+        "status",
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_devices_last_seen_at_idx",
+      "table": "local_connector_devices",
+      "columns": [
+        "last_seen_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_devices_status_idx",
+      "table": "local_connector_devices",
+      "columns": [
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_devices_token_hash_unique",
+      "table": "local_connector_devices",
+      "columns": [
+        "token_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "local_connector_pairings_claimed_device_idx",
+      "table": "local_connector_pairings",
+      "columns": [
+        "claimed_device_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_pairings_status_expires_idx",
+      "table": "local_connector_pairings",
+      "columns": [
+        "status",
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_pairings_token_hash_unique",
+      "table": "local_connector_pairings",
+      "columns": [
+        "token_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "local_connector_threads_device_last_seen_idx",
+      "table": "local_connector_threads",
+      "columns": [
+        "device_id",
+        "last_seen_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "local_connector_threads_device_thread_unique",
+      "table": "local_connector_threads",
+      "columns": [
+        "device_id",
+        "thread_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "local_connector_threads_last_seen_at_idx",
+      "table": "local_connector_threads",
+      "columns": [
+        "last_seen_at"
       ],
       "unique": false
     },
@@ -2487,6 +5786,131 @@
       "unique": false
     },
     {
+      "name": "model_sync_states_account_model_unique",
+      "table": "model_sync_states",
+      "columns": [
+        "account_id",
+        "model_name"
+      ],
+      "unique": true
+    },
+    {
+      "name": "model_sync_states_account_status_idx",
+      "table": "model_sync_states",
+      "columns": [
+        "account_id",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "model_sync_states_last_sync_at_idx",
+      "table": "model_sync_states",
+      "columns": [
+        "last_sync_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "notification_outbox_created_at_idx",
+      "table": "notification_outbox",
+      "columns": [
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "notification_outbox_idempotency_key_hash_unique",
+      "table": "notification_outbox",
+      "columns": [
+        "idempotency_key_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "notification_outbox_lease_expires_at_idx",
+      "table": "notification_outbox",
+      "columns": [
+        "lease_expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "notification_outbox_notification_channel_unique",
+      "table": "notification_outbox",
+      "columns": [
+        "notification_id",
+        "channel"
+      ],
+      "unique": true
+    },
+    {
+      "name": "notification_outbox_status_next_attempt_idx",
+      "table": "notification_outbox",
+      "columns": [
+        "status",
+        "next_attempt_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "notification_throttle_states_updated_at_idx",
+      "table": "notification_throttle_states",
+      "columns": [
+        "updated_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "oauth_refresh_leases_account_unique",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "account_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "oauth_refresh_leases_expires_at_idx",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "oauth_refresh_leases_provider_idx",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "provider"
+      ],
+      "unique": false
+    },
+    {
+      "name": "oauth_refresh_leases_provider_slot_unique",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "provider",
+        "provider_slot"
+      ],
+      "unique": true
+    },
+    {
+      "name": "oauth_refresh_leases_token_unique",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "lease_token"
+      ],
+      "unique": true
+    },
+    {
+      "name": "oauth_refresh_provider_states_next_allowed_at_idx",
+      "table": "oauth_refresh_provider_states",
+      "columns": [
+        "next_allowed_at"
+      ],
+      "unique": false
+    },
+    {
       "name": "oauth_route_unit_members_account_unique",
       "table": "oauth_route_unit_members",
       "columns": [
@@ -2539,6 +5963,14 @@
       "unique": false
     },
     {
+      "name": "proxy_debug_attempts_attempt_id_idx",
+      "table": "proxy_debug_attempts",
+      "columns": [
+        "attempt_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "proxy_debug_attempts_trace_attempt_unique",
       "table": "proxy_debug_attempts",
       "columns": [
@@ -2583,6 +6015,14 @@
       "unique": false
     },
     {
+      "name": "proxy_debug_traces_request_id_idx",
+      "table": "proxy_debug_traces",
+      "columns": [
+        "request_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "proxy_debug_traces_session_created_at_idx",
       "table": "proxy_debug_traces",
       "columns": [
@@ -2614,6 +6054,15 @@
       "table": "proxy_logs",
       "columns": [
         "account_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_logs_attempt_id_created_at_idx",
+      "table": "proxy_logs",
+      "columns": [
+        "attempt_id",
         "created_at"
       ],
       "unique": false
@@ -2663,10 +6112,116 @@
       "unique": false
     },
     {
+      "name": "proxy_logs_request_id_created_at_idx",
+      "table": "proxy_logs",
+      "columns": [
+        "request_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
       "name": "proxy_logs_status_created_at_idx",
       "table": "proxy_logs",
       "columns": [
         "status",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_request_attempts_attempt_id_unique",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "attempt_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "proxy_request_attempts_channel_started_at_idx",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "channel_id",
+        "started_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_request_attempts_commit_state_idx",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "commit_state",
+        "updated_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_request_attempts_request_attempt_unique",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "request_row_id",
+        "attempt_index"
+      ],
+      "unique": true
+    },
+    {
+      "name": "proxy_request_attempts_request_status_idx",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "request_row_id",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_requests_bridge_task_created_at_idx",
+      "table": "proxy_requests",
+      "columns": [
+        "bridge_task_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_requests_model_created_at_idx",
+      "table": "proxy_requests",
+      "columns": [
+        "requested_model",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_requests_request_id_unique",
+      "table": "proxy_requests",
+      "columns": [
+        "request_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "proxy_requests_session_created_at_idx",
+      "table": "proxy_requests",
+      "columns": [
+        "session_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_requests_status_updated_at_idx",
+      "table": "proxy_requests",
+      "columns": [
+        "status",
+        "updated_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_requests_thread_created_at_idx",
+      "table": "proxy_requests",
+      "columns": [
+        "client_thread_id",
         "created_at"
       ],
       "unique": false
@@ -2725,6 +6280,16 @@
       "table": "route_channels",
       "columns": [
         "route_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_channels_route_priority_sort_idx",
+      "table": "route_channels",
+      "columns": [
+        "route_id",
+        "priority",
+        "sort_order"
       ],
       "unique": false
     },
@@ -2953,6 +6518,20 @@
   ],
   "uniques": [
     {
+      "name": "admin_auth_challenges_token_hash_unique",
+      "table": "admin_auth_challenges",
+      "columns": [
+        "token_hash"
+      ]
+    },
+    {
+      "name": "admin_sessions_token_hash_unique",
+      "table": "admin_sessions",
+      "columns": [
+        "token_hash"
+      ]
+    },
+    {
       "name": "admin_snapshots_namespace_key_unique",
       "table": "admin_snapshots",
       "columns": [
@@ -2961,10 +6540,190 @@
       ]
     },
     {
+      "name": "bridge_continuation_events_delivery_id_unique",
+      "table": "bridge_continuation_events",
+      "columns": [
+        "delivery_id"
+      ]
+    },
+    {
+      "name": "bridge_continuation_leases_task_id_unique",
+      "table": "bridge_continuation_leases",
+      "columns": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "bridge_continuation_leases_token_hash_unique",
+      "table": "bridge_continuation_leases",
+      "columns": [
+        "lease_token_hash"
+      ]
+    },
+    {
+      "name": "bridge_continuation_tasks_request_idempotency_key_unique",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "request_idempotency_key_hash"
+      ]
+    },
+    {
+      "name": "bridge_continuation_tasks_session_active_unique",
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "session_key",
+        "active_slot"
+      ]
+    },
+    {
+      "name": "browser_credential_recovery_tasks_claim_token_hash_unique",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "claim_token_hash"
+      ]
+    },
+    {
+      "name": "browser_credential_recovery_tasks_task_token_hash_unique",
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "task_token_hash"
+      ]
+    },
+    {
+      "name": "downstream_api_key_leases_key_slot_unique",
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "downstream_api_key_id",
+        "slot"
+      ]
+    },
+    {
+      "name": "downstream_api_key_leases_token_unique",
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "lease_token"
+      ]
+    },
+    {
       "name": "downstream_api_keys_key_unique",
       "table": "downstream_api_keys",
       "columns": [
         "key"
+      ]
+    },
+    {
+      "name": "feishu_topic_bindings_adapter_device_thread_unique",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id",
+        "device_id",
+        "codex_thread_id"
+      ]
+    },
+    {
+      "name": "feishu_topic_bindings_adapter_feishu_thread_unique",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id",
+        "feishu_thread_id"
+      ]
+    },
+    {
+      "name": "feishu_topic_bindings_adapter_root_message_unique",
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id",
+        "root_message_id"
+      ]
+    },
+    {
+      "name": "interaction_action_tickets_dispatch_action_unique",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "dispatch_id",
+        "action_key"
+      ]
+    },
+    {
+      "name": "interaction_action_tickets_token_hash_unique",
+      "table": "interaction_action_tickets",
+      "columns": [
+        "token_hash"
+      ]
+    },
+    {
+      "name": "interaction_adapters_kind_name_unique",
+      "table": "interaction_adapters",
+      "columns": [
+        "kind",
+        "name"
+      ]
+    },
+    {
+      "name": "interaction_card_updates_dispatch_fingerprint_unique",
+      "table": "interaction_card_updates",
+      "columns": [
+        "dispatch_id",
+        "card_fingerprint"
+      ]
+    },
+    {
+      "name": "interaction_dispatches_interaction_adapter_unique",
+      "table": "interaction_dispatches",
+      "columns": [
+        "interaction_id",
+        "adapter_id"
+      ]
+    },
+    {
+      "name": "interaction_dispatches_prompt_card_adapter_unique",
+      "table": "interaction_dispatches",
+      "columns": [
+        "prompt_card_id",
+        "adapter_id"
+      ]
+    },
+    {
+      "name": "interaction_events_delivery_id_unique",
+      "table": "interaction_events",
+      "columns": [
+        "delivery_id"
+      ]
+    },
+    {
+      "name": "interaction_prompt_cards_idempotency_key_unique",
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "request_idempotency_key_hash"
+      ]
+    },
+    {
+      "name": "interaction_requests_source_request_key_unique",
+      "table": "interaction_requests",
+      "columns": [
+        "source_request_key"
+      ]
+    },
+    {
+      "name": "local_connector_devices_token_hash_unique",
+      "table": "local_connector_devices",
+      "columns": [
+        "token_hash"
+      ]
+    },
+    {
+      "name": "local_connector_pairings_token_hash_unique",
+      "table": "local_connector_pairings",
+      "columns": [
+        "token_hash"
+      ]
+    },
+    {
+      "name": "local_connector_threads_device_thread_unique",
+      "table": "local_connector_threads",
+      "columns": [
+        "device_id",
+        "thread_id"
       ]
     },
     {
@@ -2982,6 +6741,51 @@
         "local_day",
         "site_id",
         "model"
+      ]
+    },
+    {
+      "name": "model_sync_states_account_model_unique",
+      "table": "model_sync_states",
+      "columns": [
+        "account_id",
+        "model_name"
+      ]
+    },
+    {
+      "name": "notification_outbox_idempotency_key_hash_unique",
+      "table": "notification_outbox",
+      "columns": [
+        "idempotency_key_hash"
+      ]
+    },
+    {
+      "name": "notification_outbox_notification_channel_unique",
+      "table": "notification_outbox",
+      "columns": [
+        "notification_id",
+        "channel"
+      ]
+    },
+    {
+      "name": "oauth_refresh_leases_account_unique",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "account_id"
+      ]
+    },
+    {
+      "name": "oauth_refresh_leases_provider_slot_unique",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "provider",
+        "provider_slot"
+      ]
+    },
+    {
+      "name": "oauth_refresh_leases_token_unique",
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "lease_token"
       ]
     },
     {
@@ -3012,6 +6816,28 @@
       "table": "proxy_files",
       "columns": [
         "public_id"
+      ]
+    },
+    {
+      "name": "proxy_request_attempts_attempt_id_unique",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "attempt_id"
+      ]
+    },
+    {
+      "name": "proxy_request_attempts_request_attempt_unique",
+      "table": "proxy_request_attempts",
+      "columns": [
+        "request_row_id",
+        "attempt_index"
+      ]
+    },
+    {
+      "name": "proxy_requests_request_id_unique",
+      "table": "proxy_requests",
+      "columns": [
+        "request_id"
       ]
     },
     {
@@ -3110,11 +6936,363 @@
       "onDelete": "CASCADE"
     },
     {
+      "table": "bridge_continuation_events",
+      "columns": [
+        "task_id"
+      ],
+      "referencedTable": "bridge_continuation_tasks",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "bridge_continuation_leases",
+      "columns": [
+        "task_id"
+      ],
+      "referencedTable": "bridge_continuation_tasks",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "bridge_continuation_tasks",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "result_credential_id"
+      ],
+      "referencedTable": "credential_vault_items",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "browser_credential_recovery_tasks",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
       "table": "checkin_logs",
       "columns": [
         "account_id"
       ],
       "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_vault_items",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "credential_vault_items",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "downstream_api_key_leases",
+      "columns": [
+        "downstream_api_key_id"
+      ],
+      "referencedTable": "downstream_api_keys",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "adapter_id"
+      ],
+      "referencedTable": "interaction_adapters",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "feishu_topic_bindings",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_action_tickets",
+      "columns": [
+        "adapter_id"
+      ],
+      "referencedTable": "interaction_adapters",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_action_tickets",
+      "columns": [
+        "dispatch_id"
+      ],
+      "referencedTable": "interaction_dispatches",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_action_tickets",
+      "columns": [
+        "interaction_id"
+      ],
+      "referencedTable": "interaction_requests",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_action_tickets",
+      "columns": [
+        "prompt_card_id"
+      ],
+      "referencedTable": "interaction_prompt_cards",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_adapters",
+      "columns": [
+        "app_secret_credential_id"
+      ],
+      "referencedTable": "credential_vault_items",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "interaction_adapters",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "interaction_adapters",
+      "columns": [
+        "encrypt_key_credential_id"
+      ],
+      "referencedTable": "credential_vault_items",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "interaction_adapters",
+      "columns": [
+        "verification_token_credential_id"
+      ],
+      "referencedTable": "credential_vault_items",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "interaction_card_updates",
+      "columns": [
+        "dispatch_id"
+      ],
+      "referencedTable": "interaction_dispatches",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_dispatches",
+      "columns": [
+        "adapter_id"
+      ],
+      "referencedTable": "interaction_adapters",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_dispatches",
+      "columns": [
+        "interaction_id"
+      ],
+      "referencedTable": "interaction_requests",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_dispatches",
+      "columns": [
+        "prompt_card_id"
+      ],
+      "referencedTable": "interaction_prompt_cards",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_events",
+      "columns": [
+        "interaction_id"
+      ],
+      "referencedTable": "interaction_requests",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "adapter_id"
+      ],
+      "referencedTable": "interaction_adapters",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "consumed_task_id"
+      ],
+      "referencedTable": "bridge_continuation_tasks",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "context_task_id"
+      ],
+      "referencedTable": "bridge_continuation_tasks",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "interaction_prompt_cards",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "interaction_requests",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "local_connector_actions",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "local_connector_pairings",
+      "columns": [
+        "claimed_device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "local_connector_threads",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
       "referencedColumns": [
         "id"
       ],
@@ -3137,6 +7315,28 @@
         "site_id"
       ],
       "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "model_sync_states",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "oauth_refresh_leases",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
       "referencedColumns": [
         "id"
       ],
@@ -3181,6 +7381,17 @@
         "trace_id"
       ],
       "referencedTable": "proxy_debug_traces",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "proxy_request_attempts",
+      "columns": [
+        "request_row_id"
+      ],
+      "referencedTable": "proxy_requests",
       "referencedColumns": [
         "id"
       ],

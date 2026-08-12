@@ -164,6 +164,76 @@ describe('schema artifact generator', () => {
     );
   });
 
+  it('generates a safe nullable relaxation without allowing other column mutations', () => {
+    const previousContract: SchemaContract = {
+      tables: {
+        interaction_dispatches: {
+          columns: {
+            interaction_id: makeColumn({ notNull: true }),
+          },
+        },
+      },
+      indexes: [],
+      uniques: [],
+      foreignKeys: [],
+    };
+    const currentContract: SchemaContract = {
+      ...previousContract,
+      tables: {
+        interaction_dispatches: {
+          columns: {
+            interaction_id: makeColumn({ notNull: false }),
+          },
+        },
+      },
+    };
+
+    expect(generateUpgradeSql('mysql', currentContract, previousContract)).toContain(
+      'ALTER TABLE `interaction_dispatches` MODIFY COLUMN `interaction_id` TEXT NULL',
+    );
+    expect(generateUpgradeSql('postgres', currentContract, previousContract)).toContain(
+      'ALTER TABLE "interaction_dispatches" ALTER COLUMN "interaction_id" DROP NOT NULL',
+    );
+
+    const changedType = structuredClone(currentContract);
+    changedType.tables.interaction_dispatches.columns.interaction_id.logicalType = 'integer';
+    expect(() => generateUpgradeSql('postgres', changedType, previousContract)).toThrow(/non-additive schema diff/i);
+  });
+
+  it('adds foreign keys introduced on an existing table', () => {
+    const previousContract: SchemaContract = {
+      tables: {
+        parents: { columns: { id: makeColumn({ notNull: true, primaryKey: true }) } },
+        children: {
+          columns: {
+            id: makeColumn({ notNull: true, primaryKey: true }),
+            parent_id: makeColumn(),
+          },
+        },
+      },
+      indexes: [],
+      uniques: [],
+      foreignKeys: [],
+    };
+    const currentContract: SchemaContract = {
+      ...previousContract,
+      foreignKeys: [{
+        table: 'children',
+        columns: ['parent_id'],
+        referencedTable: 'parents',
+        referencedColumns: ['id'],
+        onDelete: 'cascade',
+      }],
+    };
+
+    expect(generateUpgradeSql('mysql', currentContract, previousContract)).toMatch(
+      /ALTER TABLE `children` ADD CONSTRAINT `[^`]+` FOREIGN KEY \(`parent_id`\) REFERENCES `parents`\(`id`\) ON DELETE CASCADE/,
+    );
+    expect(generateUpgradeSql('postgres', currentContract, previousContract)).toMatch(
+      /ALTER TABLE "children" ADD CONSTRAINT "[^"]+" FOREIGN KEY \("parent_id"\) REFERENCES "parents"\("id"\) ON DELETE CASCADE/,
+    );
+  });
+
   it('rejects destructive diffs when generating additive upgrades', () => {
     const current = readSchemaContract();
     const previous = structuredClone(current);

@@ -100,6 +100,34 @@ describe('runtime schema bootstrap', () => {
     expect(statements.some((sqlText) => sqlText.includes('CREATE UNIQUE INDEX `proxy_files_public_id_unique`'))).toBe(true);
   });
 
+  it.each([
+    ['mysql', 'ALTER TABLE `interaction_dispatches` MODIFY COLUMN `interaction_id` TEXT NULL'],
+    ['postgres', 'ALTER TABLE "interaction_dispatches" ALTER COLUMN "interaction_id" DROP NOT NULL'],
+  ] as const)('relaxes live NOT NULL columns without trying to add a duplicate column for %s', (dialect, expected) => {
+    const current: SchemaContract = {
+      tables: {
+        interaction_dispatches: {
+          columns: { interaction_id: makeColumn({ notNull: false }) },
+        },
+      },
+      indexes: [],
+      uniques: [],
+      foreignKeys: [],
+    };
+    const live: SchemaContract = {
+      ...current,
+      tables: {
+        interaction_dispatches: {
+          columns: { interaction_id: makeColumn({ notNull: true }) },
+        },
+      },
+    };
+
+    const statements = __runtimeSchemaBootstrapTestUtils.buildExternalUpgradeStatements(dialect, current, live);
+    expect(statements).toContain(expected);
+    expect(statements.some((sqlText) => sqlText.includes('ADD COLUMN'))).toBe(false);
+  });
+
   it('ignores duplicate mysql index and column errors when replaying additive schema statements', async () => {
     const executedSql: string[] = [];
     const duplicateColumnSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
@@ -135,6 +163,48 @@ describe('runtime schema bootstrap', () => {
 
     expect(executedSql).toContain(duplicateColumnSql);
     expect(executedSql).toContain(duplicateIndexSql);
+  });
+
+  it('ignores a duplicate mysql foreign-key name during concurrent runtime upgrades', async () => {
+    const executedSql: string[] = [];
+    const current: SchemaContract = {
+      tables: {
+        parents: { columns: { id: makeColumn({ notNull: true, primaryKey: true }) } },
+        children: {
+          columns: {
+            id: makeColumn({ notNull: true, primaryKey: true }),
+            parent_id: makeColumn(),
+          },
+        },
+      },
+      indexes: [],
+      uniques: [],
+      foreignKeys: [{
+        table: 'children',
+        columns: ['parent_id'],
+        referencedTable: 'parents',
+        referencedColumns: ['id'],
+        onDelete: 'cascade',
+      }],
+    };
+    const live = { ...current, foreignKeys: [] };
+    const targetSql = __runtimeSchemaBootstrapTestUtils.buildExternalUpgradeStatements('mysql', current, live)
+      .find((sqlText) => sqlText.includes('ADD CONSTRAINT'));
+    expect(targetSql).toBeDefined();
+
+    await expect(ensureRuntimeDatabaseSchema({
+      ...createStubClient('mysql', executedSql),
+      execute: async (sqlText: string) => {
+        executedSql.push(sqlText);
+        if (sqlText === targetSql) {
+          const error = new Error('Duplicate foreign key constraint name') as Error & { code?: string };
+          error.code = 'ER_FK_DUP_NAME';
+          throw error;
+        }
+        return [];
+      },
+    }, { currentContract: current, liveContract: live })).resolves.toBeUndefined();
+    expect(executedSql).toContain(targetSql);
   });
 
   it('ignores postgres relation-already-exists errors when replaying additive schema statements', async () => {

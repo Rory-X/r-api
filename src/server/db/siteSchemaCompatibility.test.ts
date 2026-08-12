@@ -36,10 +36,13 @@ describe('ensureSiteSchemaCompatibility', () => {
     {
       dialect: 'sqlite' as const,
       expectedSql: [
+        'ALTER TABLE sites ADD COLUMN homepage_url text;',
         'ALTER TABLE sites ADD COLUMN proxy_url text;',
         'ALTER TABLE sites ADD COLUMN use_system_proxy integer DEFAULT 0;',
         'UPDATE sites SET use_system_proxy = 0 WHERE use_system_proxy IS NULL;',
         'ALTER TABLE sites ADD COLUMN custom_headers text;',
+        'ALTER TABLE sites ADD COLUMN codex_fingerprint_enabled integer DEFAULT 0;',
+        'UPDATE sites SET codex_fingerprint_enabled = 0 WHERE codex_fingerprint_enabled IS NULL;',
         'ALTER TABLE sites ADD COLUMN external_checkin_url text;',
         'ALTER TABLE sites ADD COLUMN global_weight real DEFAULT 1;',
         'UPDATE sites SET global_weight = 1 WHERE global_weight IS NULL OR global_weight <= 0;',
@@ -55,10 +58,13 @@ describe('ensureSiteSchemaCompatibility', () => {
     {
       dialect: 'postgres' as const,
       expectedSql: [
+        'ALTER TABLE "sites" ADD COLUMN "homepage_url" TEXT',
         'ALTER TABLE "sites" ADD COLUMN "proxy_url" TEXT',
         'ALTER TABLE "sites" ADD COLUMN "use_system_proxy" BOOLEAN DEFAULT FALSE',
         'UPDATE "sites" SET "use_system_proxy" = FALSE WHERE "use_system_proxy" IS NULL',
         'ALTER TABLE "sites" ADD COLUMN "custom_headers" TEXT',
+        'ALTER TABLE "sites" ADD COLUMN "codex_fingerprint_enabled" BOOLEAN DEFAULT FALSE',
+        'UPDATE "sites" SET "codex_fingerprint_enabled" = FALSE WHERE "codex_fingerprint_enabled" IS NULL',
         'ALTER TABLE "sites" ADD COLUMN "external_checkin_url" TEXT',
         'ALTER TABLE "sites" ADD COLUMN "global_weight" DOUBLE PRECISION DEFAULT 1',
         'UPDATE "sites" SET "global_weight" = 1 WHERE "global_weight" IS NULL OR "global_weight" <= 0',
@@ -74,10 +80,13 @@ describe('ensureSiteSchemaCompatibility', () => {
     {
       dialect: 'mysql' as const,
       expectedSql: [
+        'ALTER TABLE `sites` ADD COLUMN `homepage_url` TEXT NULL',
         'ALTER TABLE `sites` ADD COLUMN `proxy_url` TEXT NULL',
         'ALTER TABLE `sites` ADD COLUMN `use_system_proxy` BOOLEAN DEFAULT FALSE',
         'UPDATE `sites` SET `use_system_proxy` = FALSE WHERE `use_system_proxy` IS NULL',
         'ALTER TABLE `sites` ADD COLUMN `custom_headers` TEXT NULL',
+        'ALTER TABLE `sites` ADD COLUMN `codex_fingerprint_enabled` BOOLEAN DEFAULT FALSE',
+        'UPDATE `sites` SET `codex_fingerprint_enabled` = FALSE WHERE `codex_fingerprint_enabled` IS NULL',
         'ALTER TABLE `sites` ADD COLUMN `external_checkin_url` TEXT NULL',
         'ALTER TABLE `sites` ADD COLUMN `global_weight` DOUBLE DEFAULT 1',
         'UPDATE `sites` SET `global_weight` = 1 WHERE `global_weight` IS NULL OR `global_weight` <= 0',

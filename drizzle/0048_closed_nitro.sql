@@ -1,0 +1,2 @@
+ALTER TABLE `route_channels` ADD `sort_order` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+CREATE INDEX `route_channels_route_priority_sort_idx` ON `route_channels` (`route_id`,`priority`,`sort_order`);

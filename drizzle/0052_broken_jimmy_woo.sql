@@ -1,0 +1,1 @@
+ALTER TABLE `sites` ADD `codex_fingerprint_enabled` integer DEFAULT false;

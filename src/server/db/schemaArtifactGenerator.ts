@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -261,6 +262,18 @@ function serializeForeignKey(foreignKey: SchemaContractForeignKey): string {
   ].join('|');
 }
 
+export function isNullableRelaxation(
+  currentColumn: SchemaContractColumn,
+  previousColumn: SchemaContractColumn,
+): boolean {
+  return previousColumn.notNull
+    && !currentColumn.notNull
+    && currentColumn.logicalType === previousColumn.logicalType
+    && currentColumn.defaultValue === previousColumn.defaultValue
+    && !currentColumn.primaryKey
+    && currentColumn.primaryKey === previousColumn.primaryKey;
+}
+
 function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContract: SchemaContract): void {
   const violations: string[] = [];
 
@@ -278,7 +291,10 @@ function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContr
         continue;
       }
 
-      if (serializeColumn(currentColumn) !== serializeColumn(previousColumn)) {
+      if (
+        serializeColumn(currentColumn) !== serializeColumn(previousColumn)
+        && !isNullableRelaxation(currentColumn, previousColumn)
+      ) {
         violations.push(`changed column ${tableName}.${columnName}`);
       }
     }
@@ -348,6 +364,34 @@ function buildAddColumnStatement(
   return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column)}`;
 }
 
+function buildRelaxNotNullStatement(
+  dialect: Dialect,
+  tableName: string,
+  columnName: string,
+  column: SchemaContractColumn,
+): string {
+  if (dialect === 'mysql') {
+    const sqlType = mapColumnType(dialect, columnName, column);
+    const defaultValue = formatDefaultValue(dialect, column);
+    return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} MODIFY COLUMN ${quoteIdentifier(dialect, columnName)} ${sqlType} NULL${defaultValue}`;
+  }
+  return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ALTER COLUMN ${quoteIdentifier(dialect, columnName)} DROP NOT NULL`;
+}
+
+function foreignKeyConstraintName(foreignKey: SchemaContractForeignKey): string {
+  const base = `${foreignKey.table}_${foreignKey.columns.join('_')}_${foreignKey.referencedTable}_fk`;
+  if (base.length <= 63) return base;
+  const digest = createHash('sha256').update(serializeForeignKey(foreignKey)).digest('hex').slice(0, 10);
+  return `${base.slice(0, 52)}_${digest}`;
+}
+
+function buildAddForeignKeyStatement(
+  dialect: Dialect,
+  foreignKey: SchemaContractForeignKey,
+): string {
+  return `ALTER TABLE ${quoteIdentifier(dialect, foreignKey.table)} ADD CONSTRAINT ${quoteIdentifier(dialect, foreignKeyConstraintName(foreignKey))} ${buildForeignKeyClause(dialect, foreignKey)}`;
+}
+
 export function generateUpgradeSql(
   dialect: SqlDialect,
   currentContract: SchemaContract,
@@ -373,6 +417,7 @@ export function generateUpgradeSql(
     .map((tableName) => buildCreateTableStatement(dialect, tableName, currentContract));
 
   const addColumnStatements: string[] = [];
+  const relaxNotNullStatements: string[] = [];
   for (const tableName of currentTableNames) {
     if (!previousTableNames.has(tableName)) {
       continue;
@@ -381,7 +426,11 @@ export function generateUpgradeSql(
     const previousColumns = previousContract.tables[tableName]?.columns ?? {};
     const currentColumns = currentContract.tables[tableName]?.columns ?? {};
     for (const [columnName, column] of Object.entries(currentColumns)) {
-      if (previousColumns[columnName]) {
+      const previousColumn = previousColumns[columnName];
+      if (previousColumn) {
+        if (isNullableRelaxation(column, previousColumn) && dialect !== 'sqlite') {
+          relaxNotNullStatements.push(buildRelaxNotNullStatement(dialect, tableName, columnName, column));
+        }
         continue;
       }
       addColumnStatements.push(buildAddColumnStatement(dialect, tableName, columnName, column));
@@ -404,7 +453,24 @@ export function generateUpgradeSql(
     .sort((left, right) => left.name.localeCompare(right.name, 'en'))
     .map((index) => buildIndexStatement(dialect, index, currentContract, options));
 
-  const statements = [...addedTableStatements, ...addColumnStatements, ...uniqueStatements, ...indexStatements];
+  const previousForeignKeys = new Set(previousContract.foreignKeys.map(serializeForeignKey));
+  const foreignKeyStatements = dialect === 'sqlite'
+    ? []
+    : currentContract.foreignKeys
+      .filter((foreignKey) => !addedTableNames.includes(foreignKey.table))
+      .filter((foreignKey) => !previousForeignKeys.has(serializeForeignKey(foreignKey)))
+      .slice()
+      .sort((left, right) => serializeForeignKey(left).localeCompare(serializeForeignKey(right), 'en'))
+      .map((foreignKey) => buildAddForeignKeyStatement(dialect, foreignKey));
+
+  const statements = [
+    ...addedTableStatements,
+    ...relaxNotNullStatements,
+    ...addColumnStatements,
+    ...foreignKeyStatements,
+    ...uniqueStatements,
+    ...indexStatements,
+  ];
   if (statements.length === 0) {
     return `-- no schema changes detected for ${dialect}\n`;
   }

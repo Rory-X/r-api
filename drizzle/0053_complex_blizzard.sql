@@ -1,0 +1,1 @@
+ALTER TABLE `sites` ADD `homepage_url` text;

@@ -1,0 +1,2 @@
+ALTER TABLE `local_connector_threads` ADD `observation_source` text DEFAULT 'connector_app_server' NOT NULL;--> statement-breakpoint
+ALTER TABLE `local_connector_threads` ADD `control_state` text DEFAULT 'available' NOT NULL;

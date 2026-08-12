@@ -21,6 +21,14 @@ export type SiteTableCompatibilitySpec = {
 
 export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
   {
+    column: 'homepage_url',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN homepage_url text;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `homepage_url` TEXT NULL',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "homepage_url" TEXT',
+    },
+  },
+  {
     column: 'proxy_url',
     addSql: {
       sqlite: 'ALTER TABLE sites ADD COLUMN proxy_url text;',
@@ -47,6 +55,19 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
       sqlite: 'ALTER TABLE sites ADD COLUMN custom_headers text;',
       mysql: 'ALTER TABLE `sites` ADD COLUMN `custom_headers` TEXT NULL',
       postgres: 'ALTER TABLE "sites" ADD COLUMN "custom_headers" TEXT',
+    },
+  },
+  {
+    column: 'codex_fingerprint_enabled',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN codex_fingerprint_enabled integer DEFAULT 0;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `codex_fingerprint_enabled` BOOLEAN DEFAULT FALSE',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "codex_fingerprint_enabled" BOOLEAN DEFAULT FALSE',
+    },
+    normalizeSql: {
+      sqlite: 'UPDATE sites SET codex_fingerprint_enabled = 0 WHERE codex_fingerprint_enabled IS NULL;',
+      mysql: 'UPDATE `sites` SET `codex_fingerprint_enabled` = FALSE WHERE `codex_fingerprint_enabled` IS NULL',
+      postgres: 'UPDATE "sites" SET "codex_fingerprint_enabled" = FALSE WHERE "codex_fingerprint_enabled" IS NULL',
     },
   },
   {
