@@ -872,7 +872,7 @@ export default function ImportExport() {
         <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.75 }}>
           <div>1. 导入连接分区会覆盖备份中的站点、账号、令牌、路由、禁用模型、手工模型和下游 Key 配置。</div>
           <div>2. 覆盖备份中的连接/路由/策略配置，但会保留本机日志、公告、缓存和统计。</div>
-          <div>3. 为避免锁死管理界面，管理员登录令牌（`auth_token`）不会从备份导入。</div>
+          <div>3. 为避免锁死管理界面，管理员 Argon2id 登录凭据不会从备份导入。</div>
           <div>4. 建议先导出一份"全部备份"再执行导入操作。</div>
         </div>
       </div>

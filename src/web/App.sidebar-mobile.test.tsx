@@ -10,8 +10,9 @@ const { apiMock, authSessionMock } = vi.hoisted(() => ({
   },
   authSessionMock: {
     hasValidAuthSession: vi.fn(),
-    persistAuthSession: vi.fn(),
     clearAuthSession: vi.fn(),
+    clearLegacyAuthSession: vi.fn(),
+    onAuthSessionExpired: vi.fn(() => () => {}),
   },
 }));
 
@@ -29,8 +30,9 @@ vi.mock('./api.js', () => ({
 
 vi.mock('./authSession.js', () => ({
   hasValidAuthSession: authSessionMock.hasValidAuthSession,
-  persistAuthSession: authSessionMock.persistAuthSession,
   clearAuthSession: authSessionMock.clearAuthSession,
+  clearLegacyAuthSession: authSessionMock.clearLegacyAuthSession,
+  onAuthSessionExpired: authSessionMock.onAuthSessionExpired,
 }));
 
 vi.mock('./components/SearchModal.js', () => ({

@@ -15,6 +15,8 @@ type MonitorSite = {
 type MonitorConfig = {
   ldohCookieConfigured: boolean;
   ldohCookieMasked?: string;
+  aihubCookieConfigured: boolean;
+  aihubCookieMasked?: string;
 };
 
 const MONITOR_SITES: MonitorSite[] = [
@@ -31,6 +33,13 @@ const MONITOR_SITES: MonitorSite[] = [
     description: 'LDOH 监控面板',
     requiresLinuxDoOAuth: true,
   },
+  {
+    id: 'aihub-top',
+    name: 'aihub.top',
+    url: 'https://aihub.top',
+    description: 'AIHub 控制台监控',
+    requiresLinuxDoOAuth: true,
+  },
 ];
 
 export default function Monitors() {
@@ -39,7 +48,10 @@ export default function Monitors() {
   const [reloadSeed, setReloadSeed] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [showFallbackHint, setShowFallbackHint] = useState(false);
-  const [monitorConfig, setMonitorConfig] = useState<MonitorConfig>({ ldohCookieConfigured: false });
+  const [monitorConfig, setMonitorConfig] = useState<MonitorConfig>({
+    ldohCookieConfigured: false,
+    aihubCookieConfigured: false,
+  });
   const [cookieInput, setCookieInput] = useState('');
   const [savingCookie, setSavingCookie] = useState(false);
 
@@ -54,6 +66,8 @@ export default function Monitors() {
       setMonitorConfig({
         ldohCookieConfigured: !!res?.ldohCookieConfigured,
         ldohCookieMasked: typeof res?.ldohCookieMasked === 'string' ? res.ldohCookieMasked : '',
+        aihubCookieConfigured: !!res?.aihubCookieConfigured,
+        aihubCookieMasked: typeof res?.aihubCookieMasked === 'string' ? res.aihubCookieMasked : '',
       });
     } catch (err: any) {
       toast.error(err?.message || '加载监控配置失败');
@@ -62,13 +76,13 @@ export default function Monitors() {
 
   useEffect(() => {
     void loadMonitorConfig();
-    // Set HttpOnly monitor auth cookie for iframe proxy.
     void api.initMonitorSession().catch(() => {});
   }, []);
 
   useEffect(() => {
     setLoaded(false);
     setShowFallbackHint(false);
+    setCookieInput('');
     const timer = window.setTimeout(() => {
       setShowFallbackHint(true);
     }, 4500);
@@ -76,21 +90,36 @@ export default function Monitors() {
     return () => window.clearTimeout(timer);
   }, [activeSiteId, reloadSeed]);
 
-  const usingCookieProxy = activeSite.id === 'ldoh-105117' && monitorConfig.ldohCookieConfigured;
+  const usingCookieProxy = Boolean(activeSite.requiresLinuxDoOAuth) && (
+    activeSite.id === 'ldoh-105117'
+      ? monitorConfig.ldohCookieConfigured
+      : activeSite.id === 'aihub-top'
+        ? monitorConfig.aihubCookieConfigured
+        : false
+  );
+  const activeCookieMasked = activeSite.id === 'aihub-top'
+    ? monitorConfig.aihubCookieMasked
+    : monitorConfig.ldohCookieMasked;
   const oauthHintPresence = useAnimatedVisibility(Boolean(activeSite.requiresLinuxDoOAuth), 220);
   const fallbackHintPresence = useAnimatedVisibility(showFallbackHint && !loaded, 180);
   const directSiteUrl = `${activeSite.url.replace(/\/$/, '')}/`;
-  const iframeUrl = usingCookieProxy ? '/monitor-proxy/ldoh/' : directSiteUrl;
+  const proxySiteUrl = activeSite.id === 'aihub-top' ? '/monitor-proxy/aihub/' : '/monitor-proxy/ldoh/';
+  const iframeUrl = usingCookieProxy ? proxySiteUrl : directSiteUrl;
+  const openSiteUrl = usingCookieProxy ? proxySiteUrl : directSiteUrl;
   const ldohOauthUrl = `${directSiteUrl}api/oauth/initiate?returnTo=%2F`;
 
   const handleSaveCookie = async () => {
     setSavingCookie(true);
     try {
-      await api.updateMonitorConfig({ ldohCookie: cookieInput.trim() || null });
+      await api.updateMonitorConfig(
+        activeSite.id === 'aihub-top'
+          ? { aihubCookie: cookieInput.trim() || null }
+          : { ldohCookie: cookieInput.trim() || null },
+      );
       await loadMonitorConfig();
       setCookieInput('');
       setReloadSeed((prev) => prev + 1);
-      toast.success('LDOH Cookie 已更新');
+      toast.success(`${activeSite.name} Cookie 已更新`);
     } catch (err: any) {
       toast.error(err?.message || '保存 Cookie 失败');
     } finally {
@@ -125,7 +154,7 @@ export default function Monitors() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => window.open(directSiteUrl, '_blank', 'noopener,noreferrer')}
+            onClick={() => window.open(openSiteUrl, '_blank', 'noopener,noreferrer')}
             data-tooltip="在新窗口直接打开目标站点"
             aria-label="在新窗口直接打开目标站点"
           >
@@ -163,7 +192,7 @@ export default function Monitors() {
             {usingCookieProxy && (
               <>
                 当前使用服务端代理访问，不依赖跨站第三方 Cookie。<br />
-                已保存 Cookie：{monitorConfig.ldohCookieMasked || '(已配置)'}<br />
+                已保存 Cookie：{activeCookieMasked || '(已配置)'}<br />
               </>
             )}
             Cookie 过期后请重新粘贴保存。
@@ -200,7 +229,7 @@ export default function Monitors() {
                 type="button"
                 className="btn btn-ghost"
                 style={{ border: '1px solid var(--color-border)' }}
-                onClick={() => window.open('/monitor-proxy/ldoh/', '_blank', 'noopener,noreferrer')}
+                onClick={() => window.open(proxySiteUrl, '_blank', 'noopener,noreferrer')}
               >
                 通过代理打开
               </button>

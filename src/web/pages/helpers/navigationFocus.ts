@@ -5,6 +5,8 @@ const FOCUS_ANNOUNCEMENT_ID_KEY = 'focusAnnouncementId';
 const FOCUS_ACCOUNT_ID_KEY = 'focusAccountId';
 const FOCUS_TOKEN_ID_KEY = 'focusTokenId';
 const OPEN_REBIND_KEY = 'openRebind';
+const CHANNEL_SITES_PATH = '/channels/sites';
+const CHANNEL_CONNECTIONS_PATH = '/channels/connections';
 
 function normalizePositiveId(input: unknown): number | null {
   const value = Number.parseInt(String(input ?? ''), 10);
@@ -14,8 +16,8 @@ function normalizePositiveId(input: unknown): number | null {
 
 export function buildSiteFocusPath(siteId: number): string {
   const normalizedId = normalizePositiveId(siteId);
-  if (!normalizedId) return '/sites';
-  return `/sites?${FOCUS_SITE_ID_KEY}=${normalizedId}`;
+  if (!normalizedId) return CHANNEL_SITES_PATH;
+  return `${CHANNEL_SITES_PATH}?${FOCUS_SITE_ID_KEY}=${normalizedId}`;
 }
 
 export function buildAnnouncementFocusPath(announcementId: number): string {
@@ -29,21 +31,21 @@ export function buildAccountFocusPath(
   options?: { openRebind?: boolean; segment?: 'session' | 'apikey' | 'tokens' },
 ): string {
   const normalizedId = normalizePositiveId(accountId);
-  if (!normalizedId) return '/accounts';
+  if (!normalizedId) return CHANNEL_CONNECTIONS_PATH;
   const params = new URLSearchParams();
   if (options?.segment && options.segment !== 'session') params.set('segment', options.segment);
   params.set(FOCUS_ACCOUNT_ID_KEY, String(normalizedId));
   if (options?.openRebind) params.set(OPEN_REBIND_KEY, '1');
-  return `/accounts?${params.toString()}`;
+  return `${CHANNEL_CONNECTIONS_PATH}?${params.toString()}`;
 }
 
 export function buildTokenFocusPath(tokenId: number): string {
   const normalizedId = normalizePositiveId(tokenId);
-  if (!normalizedId) return '/accounts?segment=tokens';
+  if (!normalizedId) return `${CHANNEL_CONNECTIONS_PATH}?segment=tokens`;
   const params = new URLSearchParams();
   params.set('segment', 'tokens');
   params.set(FOCUS_TOKEN_ID_KEY, String(normalizedId));
-  return `/accounts?${params.toString()}`;
+  return `${CHANNEL_CONNECTIONS_PATH}?${params.toString()}`;
 }
 
 export function readFocusSiteId(search: string): number | null {

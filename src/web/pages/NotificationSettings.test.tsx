@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
+import { Disclosure, Select, Switch } from '../components/ui/index.js';
 import NotificationSettings from './NotificationSettings.js';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -9,6 +10,8 @@ const { apiMock } = vi.hoisted(() => ({
     getRuntimeSettings: vi.fn(),
     updateRuntimeSettings: vi.fn(),
     testNotification: vi.fn(),
+    getNotificationOutbox: vi.fn(),
+    retryNotificationOutbox: vi.fn(),
   },
 }));
 
@@ -61,6 +64,12 @@ describe('NotificationSettings', () => {
       telegramBotTokenMasked: '1234****token',
     });
     apiMock.testNotification.mockResolvedValue({ success: true });
+    apiMock.getNotificationOutbox.mockResolvedValue({
+      policy: 'prefer_delivery',
+      rows: [],
+      summary: {},
+    });
+    apiMock.retryNotificationOutbox.mockResolvedValue({ success: true, queued: 0 });
   });
 
   afterEach(() => {
@@ -152,20 +161,13 @@ describe('NotificationSettings', () => {
       });
       await flushMicrotasks();
 
-      const allCheckboxes = root.root.findAll((node) => (
-        node.type === 'input' && node.props.type === 'checkbox'
+      const proxySwitch = root.root.find((node) => (
+        node.type === Switch && node.props.label === '使用系统代理'
       ));
-      const proxyCheckbox = allCheckboxes.find((node) => {
-        const parent = node.parent;
-        if (!parent) return false;
-        const text = collectText(parent);
-        return text.includes('使用系统代理');
-      });
-      expect(proxyCheckbox).toBeTruthy();
-      expect(proxyCheckbox!.props.checked).toBe(false);
+      expect(proxySwitch.props.checked).toBe(false);
 
       await act(async () => {
-        proxyCheckbox!.props.onChange({ target: { checked: true } });
+        proxySwitch.props.onChange(true);
       });
 
       const saveButton = root.root.find((node) => (
@@ -181,6 +183,174 @@ describe('NotificationSettings', () => {
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith(expect.objectContaining({
         telegramUseSystemProxy: true,
       }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('loads global delivery policy and requeues unknown outbox entries', async () => {
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      webhookUrl: '',
+      barkUrl: '',
+      webhookEnabled: true,
+      barkEnabled: true,
+      serverChanEnabled: false,
+      telegramEnabled: false,
+      telegramApiBaseUrl: 'https://api.telegram.org',
+      telegramChatId: '',
+      telegramBotTokenMasked: '',
+      telegramUseSystemProxy: false,
+      telegramMessageThreadId: '',
+      smtpEnabled: false,
+      smtpHost: '',
+      smtpPort: 587,
+      smtpSecure: false,
+      smtpUser: '',
+      smtpFrom: '',
+      smtpTo: '',
+      notifyCooldownSec: 300,
+      notifyDeliveryPolicy: 'prefer_no_duplicate',
+    });
+    apiMock.getNotificationOutbox.mockResolvedValue({
+      policy: 'prefer_no_duplicate',
+      rows: [{
+        id: 11,
+        channel: 'feishu',
+        title: '审批提醒',
+        message: '需要人工确认',
+        level: 'warning',
+        status: 'delivery_unknown',
+        attemptCount: 2,
+        lastError: '网络超时',
+        createdAt: '2026-08-03T08:00:00.000Z',
+      }],
+      summary: { delivery_unknown: 1 },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <NotificationSettings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const policySelect = root.root.find((node) => (
+        node.type === Select && node.props['aria-label'] === '通知投递策略'
+      ));
+      expect(policySelect.props.value).toBe('prefer_no_duplicate');
+      expect(collectText(root.root)).toContain('投递未知');
+      expect(collectText(root.root)).toContain('审批提醒');
+
+      const retryButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node) === '重试'
+      ));
+      await act(async () => {
+        retryButton.props.onClick();
+      });
+      await flushMicrotasks();
+      expect(apiMock.retryNotificationOutbox).toHaveBeenCalledWith(11);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps the settings page to five recent deliveries and loads full history on demand', async () => {
+    const row = (id: number) => ({
+      id,
+      channel: 'feishu',
+      title: `通知 ${id}`,
+      message: `投递内容 ${id}`,
+      level: 'info',
+      status: 'delivered' as const,
+      attemptCount: 1,
+      createdAt: `2026-08-12T08:${String(id).padStart(2, '0')}:00.000Z`,
+    });
+    apiMock.getNotificationOutbox
+      .mockResolvedValueOnce({
+        policy: 'prefer_delivery',
+        rows: [row(12), row(11), row(10), row(9), row(8)],
+        summary: { delivered: 12 },
+        page: { limit: 5, offset: 0, total: 12, hasMore: true },
+      })
+      .mockResolvedValueOnce({
+        policy: 'prefer_delivery',
+        rows: Array.from({ length: 12 }, (_, index) => row(12 - index)),
+        summary: { delivered: 12 },
+        page: { limit: 20, offset: 0, total: 12, hasMore: false },
+      });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <NotificationSettings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getNotificationOutbox).toHaveBeenNthCalledWith(1, { limit: 5, offset: 0 });
+      expect(collectText(root.root)).not.toContain('通知 7');
+
+      const viewAll = root.root.find((node) => (
+        node.type === 'button' && collectText(node).includes('查看全部投递（12）')
+      ));
+      await act(async () => { viewAll.props.onClick(); });
+      await flushMicrotasks();
+
+      expect(apiMock.getNotificationOutbox).toHaveBeenNthCalledWith(2, { limit: 20, offset: 0 });
+      expect(collectText(root.root)).toContain('通知 7');
+      expect(collectText(root.root)).toContain('共 12 条');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not present unconfigured channels as enabled and keeps low-frequency options collapsed', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <NotificationSettings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const webhookSwitch = root.root.find((node) => (
+        node.type === Switch && node.props.label === '启用 Webhook'
+      ));
+      const barkSwitch = root.root.find((node) => (
+        node.type === Switch && node.props.label === '启用 Bark'
+      ));
+      const serverChanSwitch = root.root.find((node) => (
+        node.type === Switch && node.props.label === '启用 Server酱'
+      ));
+
+      expect(webhookSwitch.props.checked).toBe(false);
+      expect(barkSwitch.props.checked).toBe(false);
+      expect(serverChanSwitch.props.checked).toBe(false);
+
+      const collapsedSections = root.root.findAll((node) => node.type === Disclosure);
+      expect(collapsedSections).toHaveLength(3);
+      expect(collapsedSections.every((section) => section.props.defaultOpen !== true && section.props.open !== true)).toBe(true);
+      expect(collectText(root.root)).toContain('更多渠道');
+      expect(collectText(root.root)).toContain('高级设置');
+      expect(collectText(root.root)).toContain('邮件通知');
     } finally {
       root?.unmount();
     }

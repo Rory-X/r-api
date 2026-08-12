@@ -12,7 +12,7 @@ describe('SiteBadgeLink', () => {
     );
 
     const link = root.root.findByType('a');
-    expect(String(link.props.href || '')).toContain('/sites?focusSiteId=7');
+    expect(String(link.props.href || '')).toContain('/channels/sites?focusSiteId=7');
     expect(String(link.props.className || '')).toContain('badge-link');
     expect(root.root.findByProps({ className: 'badge badge-muted' }).children.join('')).toContain('Demo Site');
 

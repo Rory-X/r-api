@@ -167,7 +167,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
   return (
     <div
       className="chart-container animate-fade-in"
-      style={{ padding: 20 }}
+      style={{ width: '100%', height: '100%', padding: 20 }}
     >
       {/* Header */}
       <div

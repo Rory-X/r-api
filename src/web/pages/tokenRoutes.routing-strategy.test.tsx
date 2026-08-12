@@ -9,8 +9,11 @@ const { apiMock, getBrandMock } = vi.hoisted(() => ({
     getRoutesSummary: vi.fn(),
     getRouteChannels: vi.fn(),
     getModelTokenCandidates: vi.fn(),
+    getRouteDecision: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
+    getRuntimeSettings: vi.fn(),
+    updateRuntimeSettings: vi.fn(),
     updateRoute: vi.fn(),
   },
   getBrandMock: vi.fn(),
@@ -68,13 +71,51 @@ describe('TokenRoutes routing strategy updates', () => {
       ]);
     apiMock.getRouteChannels.mockResolvedValue([]);
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
+    apiMock.getRouteDecision.mockResolvedValue({ decision: null });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      firstByteRoutingPolicy: {
+        enabled: true,
+        baselineMs: 2_500,
+        penaltyWindowMs: 10_000,
+        maxPenaltyRatio: 0.65,
+        minSamples: 5,
+      },
+      routingWeights: {},
+    });
+    apiMock.updateRuntimeSettings.mockResolvedValue({ success: true });
     apiMock.updateRoute.mockResolvedValue({});
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('promotes global scheduling policy to a first-level route workspace view', async () => {
+    let root!: ReturnType<typeof create>;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes?view=strategy']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const pageText = collectText(root.root);
+      expect(pageText).toContain('路由编排');
+      expect(pageText).toContain('调度策略');
+      expect(pageText).toContain('历史首字时间调度');
+      expect(pageText).toContain('当前请求保护');
+      expect(pageText).not.toContain('搜索模型路由...');
+      expect(apiMock.getRuntimeSettings).toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
   });
 
   it('keeps the optimistic routing strategy when refresh fails after a successful save', async () => {
@@ -104,9 +145,7 @@ describe('TokenRoutes routing strategy updates', () => {
 
       const roundRobinOption = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).startsWith('轮询')
+        && node.props['data-strategy'] === 'round_robin'
       ));
 
       await act(async () => {
@@ -117,13 +156,12 @@ describe('TokenRoutes routing strategy updates', () => {
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'round_robin' });
       expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
 
-      const strategyTrigger = root.root.find((node) => (
+      const selectedStrategy = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-        && collectText(node).includes('轮询')
+        && node.props['data-strategy'] === 'round_robin'
       ));
-      expect(collectText(strategyTrigger)).toContain('轮询');
+      expect(collectText(selectedStrategy)).toBe('自动轮询');
+      expect(selectedStrategy.props['aria-checked']).toBe(true);
     } finally {
       root?.unmount();
     }
@@ -156,9 +194,7 @@ describe('TokenRoutes routing strategy updates', () => {
 
       const stableFirstOption = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).startsWith('稳定优先')
+        && node.props['data-strategy'] === 'stable_first'
       ));
 
       await act(async () => {
@@ -168,13 +204,59 @@ describe('TokenRoutes routing strategy updates', () => {
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'stable_first' });
 
-      const strategyTrigger = root.root.find((node) => (
+      const selectedStrategy = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-        && collectText(node).startsWith('稳定优先')
+        && node.props['data-strategy'] === 'stable_first'
       ));
-      expect(collectText(strategyTrigger)).toContain('稳定优先');
+      expect(collectText(selectedStrategy)).toBe('自动稳定');
+      expect(selectedStrategy.props['aria-checked']).toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('supports switching to manual scheduling mode', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandButton = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+      ));
+      await act(async () => {
+        expandButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
+      const manualOption = root.root.find((node) => (
+        node.type === 'button'
+        && node.props['data-strategy'] === 'manual'
+      ));
+
+      await act(async () => {
+        manualOption.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'manual' });
+      expect(apiMock.getRouteDecision).toHaveBeenCalledWith('gpt-4o-mini');
+      const selectedStrategy = root.root.find((node) => (
+        node.type === 'button'
+        && node.props['data-strategy'] === 'manual'
+      ));
+      expect(collectText(selectedStrategy)).toBe('手动顺序');
+      expect(selectedStrategy.props['aria-checked']).toBe(true);
     } finally {
       root?.unmount();
     }

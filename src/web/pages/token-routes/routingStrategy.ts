@@ -1,36 +1,43 @@
 import { tr } from '../../i18n.js';
+import { normalizeRouteRoutingStrategy } from '../../../shared/routeRoutingStrategy.js';
 import type { RouteRoutingStrategy } from './types.js';
 
 export function normalizeRouteRoutingStrategyValue(value?: RouteRoutingStrategy | null): RouteRoutingStrategy {
-  if (value === 'round_robin' || value === 'stable_first') return value;
-  return 'weighted';
+  return normalizeRouteRoutingStrategy(value);
 }
 
 export function getRouteRoutingStrategyLabel(value?: RouteRoutingStrategy | null): string {
   const strategy = normalizeRouteRoutingStrategyValue(value);
   if (strategy === 'round_robin') return tr('轮询');
   if (strategy === 'stable_first') return tr('稳定优先');
+  if (strategy === 'manual') return tr('手动调度');
   return tr('权重随机');
 }
 
 export function getRouteRoutingStrategyDescription(value?: RouteRoutingStrategy | null): string {
   const strategy = normalizeRouteRoutingStrategyValue(value);
   if (strategy === 'round_robin') {
-    return tr('忽略 P 值，按全局顺序依次调用；连续失败 3 次后进入分级冷却');
+    return tr('忽略 P 和 W，在全部可用通道中动态轮转；失败通道会自动冷却');
   }
   if (strategy === 'stable_first') {
-    return tr('先避开最近失败或不健康站点，再在稳定池里按顺序轮询；P 值表示轮询顺位');
+    return tr('先按健康状态划分稳定主池与观察池，再按评分和配置顺位轮转');
   }
-  return tr('P 值是硬优先级，只会在当前最高可用优先级内结合权重、成本和健康度随机选择');
+  if (strategy === 'manual') {
+    return tr('P 越小越先调度；同一 P 层内严格按从上到下的顺序依次调用');
+  }
+  return tr('系统先锁定最高可用优先级，再综合权重、成本、健康与负载动态分配流量');
 }
 
 export function getRouteRoutingStrategyHint(value?: RouteRoutingStrategy | null): string {
   const strategy = normalizeRouteRoutingStrategyValue(value);
   if (strategy === 'round_robin') {
-    return tr('当前策略不看 P 值；如果之后切回其他策略，拖拽保存的顺序仍会保留。');
+    return tr('通道列表仅用于查看当前状态，不代表下一次轮询的命中顺序。');
   }
   if (strategy === 'stable_first') {
-    return tr('当前策略下，稳定站点会按 P 顺序轮换；不稳定站点会被自动降权或临时避让。');
+    return tr('主池、观察池和轮转位置均由运行时状态决定。');
   }
-  return tr('只要更高优先级还有可用通道，后面的通道本次就不会参与选择。');
+  if (strategy === 'manual') {
+    return tr('拖拽可调整优先级层和组内顺序；通道不可用时会继续尝试同层下一条。');
+  }
+  return tr('页面展示当前决策概率；自动调度下不提供 P/W 编辑。');
 }

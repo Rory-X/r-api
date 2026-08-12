@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
+import { Checkbox } from '../components/ui/index.js';
 import DownstreamKeys from './DownstreamKeys.js';
 import { installAccountsSnapshotCompat } from './testApiCompat.js';
 
@@ -10,6 +11,8 @@ const { apiMock } = vi.hoisted(() => ({
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
     getRoutesLite: vi.fn(),
+    getRuntimeSettings: vi.fn(),
+    updateRuntimeSettings: vi.fn(),
     getAccounts: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getAccountTokens: vi.fn(),
@@ -136,6 +139,8 @@ beforeEach(() => {
   };
   apiMock.getDownstreamApiKeysSummary.mockResolvedValue({ success: true, items: [buildSummaryItem()] });
   apiMock.getDownstreamApiKeys.mockResolvedValue({ success: true, items: [buildRawItem()] });
+  apiMock.getRuntimeSettings.mockResolvedValue({ proxyTokenMasked: 'sk-g****obal' });
+  apiMock.updateRuntimeSettings.mockResolvedValue({ success: true, proxyTokenMasked: 'sk-n****oken' });
   apiMock.getRoutesLite.mockResolvedValue([
     { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
     { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
@@ -233,6 +238,9 @@ describe('DownstreamKeys page', () => {
 
       const text = collectText(root!.root);
       expect(text).toContain('下游密钥');
+      expect(text).toContain('全局主密钥');
+      expect(text).toContain('完整权限');
+      expect(text).toContain('sk-g****obal');
       expect(text).toContain('范围概览');
       expect(text).toContain('筛选与列表');
       expect(text).toContain('smoke-key');
@@ -241,6 +249,51 @@ describe('DownstreamKeys page', () => {
       expect(text).toContain('4.2K');
       expect(text).toContain('主分组');
       expect(text).toContain('移动端');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('rotates the compatibility global token from the downstream key workspace', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const rotateButton = root.root.find((node) => (
+        node.type === 'button' && collectText(node) === '更换主密钥'
+      ));
+      await act(async () => {
+        rotateButton.props.onClick();
+      });
+
+      const tokenInput = root.root.find((node) => (
+        node.type === 'input' && node.props.placeholder === '输入 sk- 后的密钥内容'
+      ));
+      await act(async () => {
+        tokenInput.props.onChange({ target: { value: 'sk-new-global-token' } });
+      });
+
+      const confirmButton = root.root.find((node) => (
+        node.type === 'button' && collectText(node) === '确认更换'
+      ));
+      await act(async () => {
+        confirmButton.props.onClick();
+        await Promise.resolve();
+      });
+
+      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
+        proxyToken: 'sk-new-global-token',
+      });
+      expect(collectText(root.root)).toContain('sk-n****oken');
     } finally {
       root?.unmount();
     }
@@ -322,10 +375,12 @@ describe('DownstreamKeys page', () => {
       const tagInput = inputs.find((node) => node.props.placeholder === '输入标签后按回车或逗号，例如：移动端、VIP、项目A');
       const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
       const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
+      const maxConcurrencyInput = inputs.find((node) => node.props.max === 10000);
       expect(tagInput?.props.style?.fontSize).toBe(13);
       await act(async () => {
         nameInput!.props.onChange({ target: { value: 'new-key' } });
         keyInput!.props.onChange({ target: { value: 'sk-new-key-0315' } });
+        maxConcurrencyInput!.props.onChange({ target: { value: '4' } });
       });
       await flushMicrotasks();
 
@@ -338,6 +393,7 @@ describe('DownstreamKeys page', () => {
       expect(apiMock.createDownstreamApiKey).toHaveBeenCalledWith(expect.objectContaining({
         name: 'new-key',
         key: 'sk-new-key-0315',
+        maxConcurrency: 4,
         siteWeightMultipliers: {},
       }));
 
@@ -873,17 +929,15 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const siteLabel = root!.root.findAll((node) => node.type === 'label' && collectText(node).includes('站点B'))[0];
-      const tokenLabel = root!.root.findAll((node) => node.type === 'label' && collectText(node).includes('token-a'))[0];
-      const defaultApiKeyLabel = root!.root.findAll((node) => node.type === 'label' && collectText(node).includes('默认 API Key'))[0];
-      const siteCheckbox = siteLabel.findByType('input');
-      const tokenCheckbox = tokenLabel.findByType('input');
-      const defaultApiKeyCheckbox = defaultApiKeyLabel.findByType('input');
+      const checkboxes = root!.root.findAllByType(Checkbox);
+      const siteCheckbox = checkboxes.find((node) => collectText(node).includes('站点B'));
+      const tokenCheckbox = checkboxes.find((node) => collectText(node).includes('token-a'));
+      const defaultApiKeyCheckbox = checkboxes.find((node) => collectText(node).includes('默认 API Key'));
 
       await act(async () => {
-        siteCheckbox.props.onChange({ target: { checked: true } });
-        tokenCheckbox.props.onChange({ target: { checked: true } });
-        defaultApiKeyCheckbox.props.onChange({ target: { checked: true } });
+        siteCheckbox!.props.onChange(true);
+        tokenCheckbox!.props.onChange(true);
+        defaultApiKeyCheckbox!.props.onChange(true);
       });
       await flushMicrotasks();
 

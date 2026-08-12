@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Dashboard from './Dashboard.js';
 import { installDashboardSnapshotCompat } from './testApiCompat.js';
@@ -128,6 +129,53 @@ describe('Dashboard site speed buttons', () => {
       await flushMicrotasks();
 
       expect(globalThis.document.getElementById).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows four site previews while bulk speed testing still covers every site', async () => {
+    apiMock.getSites.mockResolvedValue(Array.from({ length: 6 }, (_, index) => ({
+      id: index + 1,
+      name: `Site ${index + 1}`,
+      url: `https://site-${index + 1}.example.com`,
+      status: 'active',
+    })));
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const previews = root.root.findAll((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.includes('dashboard-site-preview-item')
+      ));
+      const allSitesLink = root.root.find((node) => (
+        node.type === 'a'
+        && collectText(node).includes('查看全部 6 个站点')
+      ));
+      const bulkSpeedButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '一键测速'
+      ));
+
+      expect(previews).toHaveLength(4);
+      expect(allSitesLink.props.href).toBe('/channels/sites');
+
+      await act(async () => {
+        await bulkSpeedButton.props.onClick();
+      });
+      expect(globalThis.fetch).toHaveBeenCalledTimes(6);
     } finally {
       root?.unmount();
     }

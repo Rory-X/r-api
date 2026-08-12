@@ -52,6 +52,13 @@ describe('Settings log cleanup schedule', () => {
       checkinCron: '0 8 * * *',
       checkinScheduleMode: 'interval',
       checkinIntervalHours: 6,
+      checkinSchedulePolicy: {
+        timeZone: 'Asia/Shanghai',
+        windowStart: '23:00',
+        windowEnd: '01:00',
+        jitterMinutes: 25,
+        catchUp: true,
+      },
       balanceRefreshCron: '0 * * * *',
       logCleanupCron: '15 4 * * *',
       logCleanupUsageLogsEnabled: true,
@@ -107,6 +114,13 @@ describe('Settings log cleanup schedule', () => {
         checkinCron: '0 8 * * *',
         checkinScheduleMode: 'interval',
         checkinIntervalHours: 6,
+        checkinSchedulePolicy: {
+          timeZone: 'Asia/Shanghai',
+          windowStart: '23:00',
+          windowEnd: '01:00',
+          jitterMinutes: 25,
+          catchUp: true,
+        },
         balanceRefreshCron: '0 * * * *',
         logCleanupCron: '15 4 * * *',
         logCleanupUsageLogsEnabled: true,
@@ -179,6 +193,8 @@ describe('Settings log cleanup schedule', () => {
       expect(scheduleCard.findAllByType('select')).toHaveLength(0);
       expect(scheduleCard.findAllByType(ModernSelect).length).toBeGreaterThanOrEqual(2);
       expect(String(triggerButton.props.className || '')).toContain('btn-ghost');
+      expect(collectText(scheduleCard)).toContain('签到执行窗口');
+      expect(scheduleCard.findAll((node) => node.type === 'input' && node.props.type === 'time')).toHaveLength(2);
     } finally {
       root?.unmount();
     }

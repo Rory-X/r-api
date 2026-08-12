@@ -5,7 +5,12 @@ import SearchModal from './components/SearchModal.js';
 import NotificationPanel from './components/NotificationPanel.js';
 import TooltipLayer from './components/TooltipLayer.js';
 import { api } from './api.js';
-import { clearAuthSession, hasValidAuthSession, persistAuthSession } from './authSession.js';
+import {
+  clearAuthSession,
+  clearLegacyAuthSession,
+  hasValidAuthSession,
+  onAuthSessionExpired,
+} from './authSession.js';
 import {
   FIRST_USE_DOC_REMINDER_KEY,
   LEGACY_THEME_STORAGE_KEY,
@@ -19,7 +24,9 @@ import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
 import { useIsMobile } from './components/useIsMobile.js';
 import { MobileDrawer } from './components/MobileDrawer.js';
 import CenteredModal from './components/CenteredModal.js';
+import { resolveChannelTransitionKey } from './pages/channels/navigation.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
+const ChannelManagement = lazy(() => import('./pages/ChannelManagement.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
 const Tokens = lazy(() => import('./pages/Tokens.js'));
@@ -37,6 +44,12 @@ const ModelTester = lazy(() => import('./pages/ModelTester.js'));
 const Monitors = lazy(() => import('./pages/Monitors.js'));
 const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));
 const SiteAnnouncements = lazy(() => import('./pages/SiteAnnouncements.js'));
+const CredentialVault = lazy(() => import('./pages/CredentialVault.js'));
+const BrowserRecoveryTasks = lazy(() => import('./pages/BrowserRecoveryTasks.js'));
+const LocalConnector = lazy(() => import('./pages/LocalConnector.js'));
+const BridgeContinuations = lazy(() => import('./pages/BridgeContinuations.js'));
+const InteractionRequests = lazy(() => import('./pages/InteractionRequests.js'));
+import BrowserCredentialRecovery from './pages/BrowserCredentialRecovery.js';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -128,8 +141,13 @@ function resolveStoredProfile(): UserProfile {
   }
 }
 
-export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (text: string) => string }) {
+export function Login({ onLogin, t }: { onLogin: () => void; t: (text: string) => string }) {
   const [token, setToken] = useState('');
+  const [totpChallenge, setTotpChallenge] = useState<{
+    challengeToken: string;
+    expiresAt: string;
+  } | null>(null);
+  const [secondFactorCode, setSecondFactorCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const capabilityRows = [
@@ -152,33 +170,52 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/settings/auth/info', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        onLogin(token);
-      } else {
-        let reason = '';
-        try {
-          const text = await res.text();
-          if (text) {
-            try {
-              const parsed = JSON.parse(text) as { message?: unknown; error?: unknown };
-              if (typeof parsed.message === 'string') reason = parsed.message;
-              else if (typeof parsed.error === 'string') reason = parsed.error;
-              else reason = text;
-            } catch {
-              reason = text;
-            }
-          }
-        } catch { }
-        setError(t(resolveLoginErrorMessage(res.status, reason)));
-        setLoading(false);
+      const result = await api.loginAdmin(token);
+      if (!result.authenticated) {
+        setTotpChallenge({
+          challengeToken: result.challengeToken,
+          expiresAt: result.expiresAt,
+        });
+        setToken('');
+        setSecondFactorCode('');
+        return;
       }
-    } catch {
-      setError(t('无法连接到服务器'));
+      onLogin();
+    } catch (error: any) {
+      const status = Number(error?.status) || 0;
+      const message = String(error?.message || '');
+      setError(t(status
+        ? resolveLoginErrorMessage(status, message)
+        : (message || '无法连接到服务器')));
+    } finally {
       setLoading(false);
     }
+  };
+
+  const handleSecondFactor = async () => {
+    if (!totpChallenge || !secondFactorCode.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      await api.verifyAdminTotp(totpChallenge.challengeToken, secondFactorCode.trim());
+      setTotpChallenge(null);
+      setSecondFactorCode('');
+      onLogin();
+    } catch (error: any) {
+      const status = Number(error?.status) || 0;
+      const message = String(error?.message || '');
+      setError(t(status
+        ? resolveLoginErrorMessage(status, message)
+        : (message || '无法连接到服务器')));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const returnToPassword = () => {
+    setTotpChallenge(null);
+    setSecondFactorCode('');
+    setError('');
   };
 
   return (
@@ -243,36 +280,80 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
         <section className="login-auth-stage">
           <div className="login-auth-panel">
             <div className="login-auth-eyebrow">{t('管理员入口')}</div>
-            <h2 className="login-auth-title">{t('登录')}</h2>
-            <p className="login-auth-copy">{t('请输入管理员令牌后继续。')}</p>
-            <label className="login-auth-label" htmlFor="admin-token-input">{t('管理员令牌')}</label>
-            <input
-              id="admin-token-input"
-              type="password"
-              placeholder={t('管理员令牌')}
-              value={token}
-              onChange={(e) => {
-                setToken(e.target.value);
-                setError('');
-              }}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              className="login-auth-input"
-            />
+            <h2 className="login-auth-title">{t(totpChallenge ? '双重验证' : '登录')}</h2>
+            <p className="login-auth-copy">
+              {t(totpChallenge
+                ? '请输入验证器中的 6 位动态验证码，也可以使用一枚恢复码。'
+                : '请输入管理员登录凭据后继续。')}
+            </p>
+            {totpChallenge ? (
+              <>
+                <label className="login-auth-label" htmlFor="admin-totp-input">{t('动态验证码或恢复码')}</label>
+                <input
+                  id="admin-totp-input"
+                  type="text"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  placeholder={t('6 位动态验证码或恢复码')}
+                  value={secondFactorCode}
+                  onChange={(e) => {
+                    setSecondFactorCode(e.target.value);
+                    setError('');
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSecondFactor()}
+                  className="login-auth-input"
+                />
+              </>
+            ) : (
+              <>
+                <label className="login-auth-label" htmlFor="admin-token-input">{t('管理员登录凭据')}</label>
+                <input
+                  id="admin-token-input"
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder={t('管理员登录凭据')}
+                  value={token}
+                  onChange={(e) => {
+                    setToken(e.target.value);
+                    setError('');
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  className="login-auth-input"
+                />
+              </>
+            )}
             {error && (
               <div className="alert alert-error animate-shake" style={{ marginBottom: 12 }}>
                 {error}
               </div>
             )}
             <button
-              onClick={handleLogin}
-              disabled={loading || !token}
+              onClick={totpChallenge ? handleSecondFactor : handleLogin}
+              disabled={loading || (totpChallenge ? !secondFactorCode.trim() : !token)}
               className="btn btn-primary login-auth-submit"
             >
-              {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />{t('验证中...')}</> : t('登录')}
+              {loading
+                ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />{t('验证中...')}</>
+                : t(totpChallenge ? '完成验证' : '登录')}
             </button>
-            <div className="login-auth-note">{t('仅校验本地服务访问权限，不会把令牌发送到第三方。')}</div>
+            {totpChallenge && (
+              <button
+                type="button"
+                onClick={returnToPassword}
+                disabled={loading}
+                className="btn btn-ghost"
+                style={{ width: '100%', marginTop: 8 }}
+              >
+                {t('返回密码登录')}
+              </button>
+            )}
+            <div className="login-auth-note">
+              {t(totpChallenge
+                ? '本次验证挑战仅保留在当前页面内存中，过期后需重新登录。'
+                : '仅校验本地服务访问权限，不会把登录凭据发送到第三方。')}
+            </div>
             <div className="login-auth-footer">
-              <span>{t('管理员登录后继续。')}</span>
+              <span>{t(totpChallenge ? '双重验证通过后继续。' : '管理员登录后继续。')}</span>
             </div>
           </div>
         </section>
@@ -408,21 +489,31 @@ export const sidebarGroups = [
     label: '控制台',
     items: [
       { to: '/', label: '仪表盘', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 12a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z" /></svg> },
-      { to: '/sites', label: '站点管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
+    ],
+  },
+  {
+    label: '接入管理',
+    items: [
+      { to: '/channels', label: '渠道管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
       { to: '/site-announcements', label: '站点公告', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
-      { to: '/accounts', label: '连接管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-      { to: '/oauth', label: 'OAuth 管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
-      { to: '/downstream-keys', label: '下游密钥', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
-      { to: '/checkin', label: '签到记录', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+      { to: '/local-connector', label: '会话接管', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h8M8 17h8M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6" /></svg> },
+    ],
+  },
+  {
+    label: '路由与运行',
+    items: [
       { to: '/routes', label: '路由', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
+      { to: '/downstream-keys', label: '下游密钥', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
       { to: '/logs', label: '使用日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
+      { to: '/checkin', label: '签到记录', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
       { to: '/monitor', label: '可用性监控', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
     ],
   },
   {
-    label: '系统',
+    label: '系统与安全',
     items: [
       { to: '/settings', label: '设置', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
+      { to: '/settings/credentials', label: '凭证中心', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 3l7 4v5c0 4.5-2.7 7.7-7 9-4.3-1.3-7-4.5-7-9V7l7-4z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9.5 12l1.7 1.7 3.5-3.7" /></svg> },
       { to: '/events', label: '程序日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
       { to: '/settings/import-export', label: '导入/导出', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 7h10M7 12h6m-6 5h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" /></svg> },
       { to: '/settings/notify', label: '通知设置', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg> },
@@ -439,7 +530,25 @@ const topNavItems = [
 
 function PageTransition({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  return <div key={location.pathname} className="page-enter">{children}</div>;
+  return <div key={resolveChannelTransitionKey(location.pathname)} className="page-enter">{children}</div>;
+}
+
+function PreservingRedirect({ pathname }: { pathname: string }) {
+  const location = useLocation();
+  return (
+    <Navigate
+      replace
+      to={{
+        pathname,
+        search: location.search,
+        hash: location.hash,
+      }}
+    />
+  );
+}
+
+function LegacyChannelRedirect({ section }: { section: 'sites' | 'connections' | 'oauth' | 'recovery' }) {
+  return <PreservingRedirect pathname={`/channels/${section}`} />;
 }
 
 function RouteLoadingFallback() {
@@ -453,7 +562,9 @@ function RouteLoadingFallback() {
 
 function AppShell() {
   const { language, toggleLanguage, t } = useI18n();
-  const [authed, setAuthed] = useState(() => hasValidAuthSession(localStorage));
+  const browserSessionStorage = typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+  const [authed, setAuthed] = useState(() => hasValidAuthSession(browserSessionStorage));
+  const [authChecking, setAuthChecking] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -480,6 +591,36 @@ function AppShell() {
   const displayName = rawDisplayName ? (rawDisplayName === '管理员' ? t('管理员') : rawDisplayName) : t('管理员');
   const resolvedThemeLabel = resolvedTheme === 'dark' ? t('深色') : t('浅色');
   const avatarUrl = buildDicebearAvatarUrl(userProfile.avatarStyle, userProfile.avatarSeed);
+
+  useEffect(() => {
+    clearLegacyAuthSession();
+    let cancelled = false;
+    const getAdminSession = (api as typeof api & {
+      getAdminSession?: () => Promise<{ authenticated: boolean }>;
+    }).getAdminSession;
+    if (typeof getAdminSession !== 'function') {
+      setAuthChecking(false);
+      return;
+    }
+    void getAdminSession()
+      .then((session) => {
+        if (!cancelled) setAuthed(session.authenticated);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthed(false);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => onAuthSessionExpired(() => {
+    setAuthed(false);
+    setAuthChecking(false);
+  }), []);
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -585,7 +726,7 @@ function AppShell() {
     if (!authed) return;
 
     const check = () => {
-      if (hasValidAuthSession(localStorage)) return;
+      if (hasValidAuthSession(browserSessionStorage)) return;
       setAuthed(false);
       toast.info(t('会话已过期，请重新登录'));
     };
@@ -635,9 +776,16 @@ function AppShell() {
     toast.success(t('个人信息已保存'));
   };
 
+  if (authChecking) {
+    return (
+      <div className="login-shell">
+        <div className="spinner" aria-label={t('正在验证管理会话')} />
+      </div>
+    );
+  }
+
   if (!authed) {
-    return <Login t={t} onLogin={(token) => {
-      persistAuthSession(localStorage, token);
+    return <Login t={t} onLogin={() => {
       setAuthed(true);
     }} />;
   }
@@ -769,8 +917,10 @@ function AppShell() {
                   {t('个人信息')}
                 </button>
                 <button onClick={() => {
-                  clearAuthSession(localStorage);
-                  setAuthed(false);
+                  void api.logoutAdmin().catch(() => {}).finally(() => {
+                    clearAuthSession(browserSessionStorage);
+                    setAuthed(false);
+                  });
                 }} className="user-dropdown-item danger">
                   <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
                   {t('退出登录')}
@@ -860,16 +1010,31 @@ function AppShell() {
             <Suspense fallback={<RouteLoadingFallback />}>
               <Routes>
                 <Route path="/" element={<Dashboard adminName={displayName} />} />
-                <Route path="/sites" element={<Sites />} />
+                <Route path="/channels" element={<ChannelManagement />}>
+                  <Route path="sites" element={<Sites />} />
+                  <Route path="connections" element={<Accounts />} />
+                  <Route path="oauth" element={<OAuthManagement />} />
+                  <Route path="credentials" element={<PreservingRedirect pathname="/settings/credentials" />} />
+                  <Route path="recovery" element={<BrowserRecoveryTasks />} />
+                </Route>
+                <Route path="/sites" element={<LegacyChannelRedirect section="sites" />} />
                 <Route path="/site-announcements" element={<SiteAnnouncements />} />
-                <Route path="/accounts" element={<Accounts />} />
-                <Route path="/oauth" element={<OAuthManagement />} />
+                <Route path="/accounts" element={<LegacyChannelRedirect section="connections" />} />
+                <Route path="/oauth" element={<LegacyChannelRedirect section="oauth" />} />
+                <Route path="/credential-vault" element={<PreservingRedirect pathname="/settings/credentials" />} />
+                <Route path="/browser-recovery-tasks" element={<LegacyChannelRedirect section="recovery" />} />
+                <Route path="/local-connector" element={<LocalConnector />} />
+                <Route path="/local-connector/:deviceId/sessions" element={<BridgeContinuations />} />
+                <Route path="/local-connector/:deviceId/interactions" element={<InteractionRequests />} />
+                <Route path="/bridge-continuations" element={<Navigate to="/local-connector" replace />} />
+                <Route path="/interactions" element={<Navigate to="/local-connector" replace />} />
                 <Route path="/tokens" element={<Tokens />} />
                 <Route path="/checkin" element={<CheckinLog />} />
                 <Route path="/routes" element={<TokenRoutes />} />
                 <Route path="/logs" element={<ProxyLogs />} />
                 <Route path="/monitor" element={<Monitors />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/settings/credentials" element={<CredentialVault />} />
                 <Route path="/downstream-keys" element={<DownstreamKeys />} />
                 <Route path="/events" element={<ProgramLogs />} />
                 <Route path="/settings/import-export" element={<ImportExport />} />
@@ -897,10 +1062,12 @@ function AppShell() {
 }
 
 export default function App() {
+  const isPublicRecoveryPath = typeof window !== 'undefined'
+    && window.location?.pathname === '/browser-credential-recovery';
   return (
     <I18nProvider>
       <ToastProvider>
-        <AppShell />
+        {isPublicRecoveryPath ? <BrowserCredentialRecovery /> : <AppShell />}
         <TooltipLayer />
       </ToastProvider>
     </I18nProvider>

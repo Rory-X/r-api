@@ -9,6 +9,8 @@ const { apiMock } = vi.hoisted(() => ({
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
     getRoutesLite: vi.fn(),
+    getRuntimeSettings: vi.fn(),
+    updateRuntimeSettings: vi.fn(),
     getDownstreamApiKeyOverview: vi.fn(),
     getDownstreamApiKeyTrend: vi.fn(),
     createDownstreamApiKey: vi.fn(),
@@ -147,6 +149,8 @@ describe('DownstreamKeys mobile layout', () => {
       success: true,
       items: [buildSummaryItem(1), buildSummaryItem(2)],
     });
+    apiMock.getRuntimeSettings.mockResolvedValue({ proxyTokenMasked: 'sk-g****obal' });
+    apiMock.updateRuntimeSettings.mockResolvedValue({ success: true, proxyTokenMasked: 'sk-n****oken' });
     apiMock.getDownstreamApiKeys.mockResolvedValue({
       success: true,
       items: [buildRawItem(1), buildRawItem(2)],

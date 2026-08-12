@@ -1,4 +1,9 @@
-import { clearAuthSession, getAuthToken } from "./authSession.js";
+import {
+  clearAuthSession,
+  getCsrfToken,
+  notifyAuthSessionExpired,
+  persistAuthSession,
+} from "./authSession.js";
 
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
@@ -11,21 +16,84 @@ type RequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
-function requireAuthToken(): string {
-  const token = getAuthToken(localStorage);
-  if (!token) {
-    const hadToken = !!localStorage.getItem("auth_token");
-    clearAuthSession(localStorage);
-    if (
-      hadToken &&
-      typeof window !== "undefined" &&
-      typeof window.location?.reload === "function"
-    ) {
-      window.location.reload();
-    }
+export type AdminAuthenticatedSession = {
+  authenticated: true;
+  csrfToken: string;
+  expiresAt: string;
+  secondFactorVerified: boolean;
+};
+
+export type AdminSessionResponse =
+  | { authenticated: false }
+  | AdminAuthenticatedSession;
+
+export type AdminLoginTotpChallenge = {
+  success: true;
+  authenticated: false;
+  requiresTotp: true;
+  challengeToken: string;
+  expiresAt: string;
+};
+
+export type AdminLoginResponse = AdminAuthenticatedSession | AdminLoginTotpChallenge;
+
+export type AdminTotpStatus = {
+  enabled: boolean;
+  recoveryCodesRemaining: number;
+  enabledAt: string | null;
+};
+
+export type AdminAuthInfo = {
+  masked: string;
+  algorithm: string;
+  sessionTtlMs: number;
+  totp: AdminTotpStatus;
+};
+
+export type AdminTotpSetupResponse = {
+  success: true;
+  setupToken: string;
+  secret: string;
+  otpauthUrl: string;
+  expiresAt: string;
+};
+
+export type AdminRecoveryCodesResponse = {
+  success: true;
+  recoveryCodes: string[];
+  recoveryCodesRemaining: number;
+};
+
+function isMutationMethod(method: string | undefined): boolean {
+  const normalized = (method || "GET").trim().toUpperCase();
+  return normalized !== "GET" && normalized !== "HEAD" && normalized !== "OPTIONS";
+}
+
+function getBrowserSessionStorage(): Storage | null {
+  return typeof sessionStorage !== "undefined" ? sessionStorage : null;
+}
+
+async function refreshAdminSessionMetadata(): Promise<string> {
+  const response = await fetch("/api/auth/session", {
+    method: "GET",
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    notifyAuthSessionExpired();
     throw new Error("Session expired");
   }
-  return token;
+  const session = await response.json() as AdminSessionResponse;
+  if (!session.authenticated) {
+    notifyAuthSessionExpired();
+    throw new Error("Session expired");
+  }
+  persistAuthSession(getBrowserSessionStorage(), session.csrfToken, session.expiresAt);
+  return session.csrfToken;
+}
+
+async function requireCsrfToken(): Promise<string> {
+  return getCsrfToken(getBrowserSessionStorage()) || await refreshAdminSessionMetadata();
 }
 
 async function extractResponseErrorMessage(res: Response): Promise<string> {
@@ -53,6 +121,10 @@ async function extractResponseErrorMessage(res: Response): Promise<string> {
     }
   } catch {}
   return message;
+}
+
+function createHttpError(status: number, message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status });
 }
 
 function parseContentDispositionFilename(
@@ -113,9 +185,10 @@ async function fetchAuthenticatedResponse(
     }
   }
 
-  const token = requireAuthToken();
   const headers = new Headers(fetchOptions.headers ?? {});
-  headers.set("Authorization", `Bearer ${token}`);
+  if (isMutationMethod(fetchOptions.method)) {
+    headers.set("X-Metapi-CSRF", await requireCsrfToken());
+  }
   if (fetchOptions.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -125,17 +198,10 @@ async function fetchAuthenticatedResponse(
       ...fetchOptions,
       signal: controller.signal,
       headers,
+      credentials: "same-origin",
     });
-    if (res.status === 401 || res.status === 403) {
-      const hadToken = !!getAuthToken(localStorage);
-      clearAuthSession(localStorage);
-      if (
-        hadToken &&
-        typeof window !== "undefined" &&
-        typeof window.location?.reload === "function"
-      ) {
-        window.location.reload();
-      }
+    if (res.status === 401) {
+      notifyAuthSessionExpired();
       throw new Error("Session expired");
     }
     return res;
@@ -162,9 +228,53 @@ async function request<T = any>(
 ): Promise<T> {
   const res = await fetchAuthenticatedResponse(url, options);
   if (!res.ok) {
-    throw new Error(await extractResponseErrorMessage(res));
+    throw createHttpError(res.status, await extractResponseErrorMessage(res));
   }
   return res.json() as Promise<T>;
+}
+
+async function requestPublic<T = any>(
+  url: string,
+  options: RequestOptions = {},
+): Promise<T> {
+  const {
+    timeoutMs = 30_000,
+    signal: externalSignal,
+    ...fetchOptions
+  } = options;
+  const controller = new AbortController();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), timeoutMs);
+  let cleanupExternalSignal = () => {};
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else {
+      const abortHandler = () => controller.abort();
+      externalSignal.addEventListener('abort', abortHandler, { once: true });
+      cleanupExternalSignal = () => externalSignal.removeEventListener('abort', abortHandler);
+    }
+  }
+  const headers = new Headers(fetchOptions.headers ?? {});
+  if (fetchOptions.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  try {
+    const res = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+      headers,
+      credentials: "same-origin",
+    });
+    if (!res.ok) throw createHttpError(res.status, await extractResponseErrorMessage(res));
+    return res.json() as Promise<T>;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      if (externalSignal?.aborted) throw error;
+      throw new Error(`请求超时（${Math.max(1, Math.round(timeoutMs / 1000))}s）`);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    timeoutHandle = null;
+    cleanupExternalSignal();
+  }
 }
 
 async function streamSse(
@@ -381,6 +491,13 @@ export type RuntimeSettingsPayload = {
   checkinCron?: string;
   checkinScheduleMode?: "cron" | "interval";
   checkinIntervalHours?: number;
+  checkinSchedulePolicy?: {
+    timeZone?: string;
+    windowStart?: string;
+    windowEnd?: string;
+    jitterMinutes?: number;
+    catchUp?: boolean;
+  };
   balanceRefreshCron?: string;
   logCleanupCron?: string;
   logCleanupUsageLogsEnabled?: boolean;
@@ -407,15 +524,28 @@ export type RuntimeSettingsPayload = {
   smtpFrom?: string;
   smtpTo?: string;
   notifyCooldownSec?: number;
+  notifyDeliveryPolicy?: "prefer_delivery" | "prefer_no_duplicate";
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
+  firstByteRoutingPolicy?: {
+    enabled?: boolean;
+    baselineMs?: number;
+    penaltyWindowMs?: number;
+    maxPenaltyRatio?: number;
+    minSamples?: number;
+  };
   tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: RuntimeRoutingWeightsPayload;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
+  balanceRoutingPolicy?: {
+    mode?: 'observe_only' | 'soft_avoid' | 'hard_block';
+    threshold?: number;
+    softAvoidMultiplier?: number;
+  };
 };
 
 export type ProxyLogStatusFilter = "all" | "success" | "failed";
@@ -522,6 +652,121 @@ export type ProxyLogsResponse = {
   pageSize: number;
   clientOptions: ProxyLogClientOption[];
   summary: ProxyLogsSummary;
+};
+
+export type ProxyRequestLedgerStatus =
+  | "active"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+
+export type ProxyAttemptLedgerStatus =
+  | "in_flight"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+
+export type ProxyAttemptCommitState =
+  | "not_started"
+  | "request_sent"
+  | "response_started"
+  | "completed"
+  | "sent_unknown";
+
+export type ProxyRequestLedgerListItem = {
+  id: number;
+  requestId: string;
+  requestedModel: string;
+  downstreamPath: string;
+  clientKind?: string | null;
+  sessionId?: string | null;
+  clientThreadId?: string | null;
+  clientTurnId?: string | null;
+  bridgeTaskId?: string | null;
+  bridgeRouteAction?: string | null;
+  bridgeContinuationNumber?: number | null;
+  downstreamApiKeyId?: number | null;
+  downstreamApiKeyName?: string | null;
+  status: ProxyRequestLedgerStatus;
+  retryOwner: "local_proxy" | "upstream_gateway" | "cooperative";
+  replaySafety: "safe_only" | "allow_explicit";
+  policySnapshot: Record<string, unknown>;
+  retryBudget: {
+    startedAtMs: number;
+    limits: {
+      maxElapsedMs: number | null;
+      maxAttempts: number | null;
+      maxCredentialRotations: number | null;
+      maxChannelSwitches: number | null;
+    };
+    attempts: number;
+    credentialRotations: number;
+    channelSwitches: number;
+  };
+  attemptCount: number;
+  latestCommitState?: ProxyAttemptCommitState | null;
+  hasSentUnknown: boolean;
+  createdAt?: string | null;
+  finishedAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ProxyRequestLedgerAttemptDetail = {
+  id: number;
+  attemptId: string;
+  attemptIndex: number;
+  channelId?: number | null;
+  routeId?: number | null;
+  routeModelPattern?: string | null;
+  accountId?: number | null;
+  accountUsername?: string | null;
+  siteId?: number | null;
+  siteName?: string | null;
+  credentialId?: number | null;
+  credentialName?: string | null;
+  endpoint?: string | null;
+  requestPath?: string | null;
+  targetUrl?: string | null;
+  status: ProxyAttemptLedgerStatus;
+  commitState: ProxyAttemptCommitState;
+  errorScope?: string | null;
+  statusCode?: number | null;
+  errorSummary?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ProxyRequestLedgerDetail = ProxyRequestLedgerListItem & {
+  attempts: ProxyRequestLedgerAttemptDetail[];
+};
+
+export type ProxyRequestLedgerSummary = {
+  total: number;
+  active: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  unknown: number;
+  sentUnknown: number;
+};
+
+export type ProxyRequestLedgersQuery = {
+  limit?: number;
+  offset?: number;
+  status?: ProxyRequestLedgerStatus | "all";
+  commitState?: ProxyAttemptCommitState | "all";
+  search?: string;
+};
+
+export type ProxyRequestLedgersResponse = {
+  items: ProxyRequestLedgerListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: ProxyRequestLedgerSummary;
 };
 
 export type ProxyDebugTraceListItem = {
@@ -762,9 +1007,883 @@ export type DownstreamApiKeyTrendResponse = {
   buckets: DownstreamApiKeyTrendBucket[];
 };
 
+export type SiteAdapterContract = {
+  platformName: string;
+  protocolFamilies: string[];
+  credentialKinds: string[];
+  operations: Record<string, boolean>;
+  probePolicy: string;
+  checkin: {
+    support: string;
+    idempotency: string;
+    allowsAutomaticExecution: boolean;
+  };
+  modelSync: {
+    readOnly: boolean;
+    retireMissingAfterConsecutiveRuns: number;
+  };
+  browser: {
+    supported: boolean;
+    modes: string[];
+    allowedOrigins: string[];
+    fields: Array<{ name: string; kind: string; required: boolean }>;
+    runtime?: {
+      kind: 'session_token' | 'cookie';
+      field: string;
+      usernameField?: string;
+      platformUserIdField?: string;
+      refreshTokenField?: string;
+      tokenExpiresAtField?: string;
+    };
+    taskTtlSec: number;
+    requiresUserGesture: boolean;
+  };
+  credentialStorage: "encrypted_vault_only";
+  notes: string[];
+};
+
+export type LocalConnectorScope =
+  | "hooks.manage"
+  | "hooks.emit"
+  | "notify.manage"
+  | "notify.emit"
+  | "browser.recovery"
+  | "app_server.observe"
+  | "app_server.control";
+
+export type LocalConnectorDevice = {
+  id: string;
+  name: string;
+  platform: string;
+  version?: string | null;
+  status: "active" | "revoked";
+  scopes: LocalConnectorScope[];
+  capabilities: string[];
+  pairedAt: string;
+  lastSeenAt?: string | null;
+  revokedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type LocalConnectorThread = {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  devicePlatform: string;
+  deviceStatus: "active" | "revoked";
+  threadId: string;
+  title: string | null;
+  observationSource: "connector_app_server" | "codex_desktop";
+  controlState: "available" | "external_owner";
+  threadStatus: "unknown" | "not_loaded" | "idle" | "active" | "system_error";
+  activeFlags: Array<"waitingOnApproval" | "waitingOnUserInput">;
+  activeTurnId: string | null;
+  lastEventKind: string;
+  lastSeenAt: string;
+};
+
+export type LocalConnectorThreadActivityCategory =
+  | "bridge"
+  | "interaction"
+  | "feishu"
+  | "notification";
+
+export type LocalConnectorThreadActivityItem = {
+  id: string;
+  category: LocalConnectorThreadActivityCategory;
+  eventType: string;
+  status: string | null;
+  occurredAt: string | null;
+  title: string;
+  detail: string | null;
+  referenceId: string | null;
+  error: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type LocalConnectorThreadActivity = {
+  thread: LocalConnectorThread;
+  summary: {
+    activityCount: number;
+    bridgeTasks: number;
+    interactions: number;
+    feishuDeliveries: number;
+    issues: number;
+  };
+  topicBindings: Array<{
+    id: string;
+    adapterId: string;
+    adapterName: string;
+    rootMessageId: string | null;
+    feishuThreadId: string | null;
+    lastMessageId: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  }>;
+  items: LocalConnectorThreadActivityItem[];
+};
+
+export type LocalConnectorAction = {
+  id: string;
+  deviceId: string;
+  kind: "hook" | "notify";
+  operation: "install" | "backup" | "rollback" | "uninstall";
+  status: "pending" | "claimed" | "succeeded" | "failed" | "cancelled" | "expired";
+  manifest: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  backupRef?: string | null;
+  errorMessage?: string | null;
+  claimedAt?: string | null;
+  completedAt?: string | null;
+  expiresAt: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type BridgeFailureClass =
+  | "rate_limited"
+  | "concurrency_limited"
+  | "service_temporary"
+  | "transport_failure"
+  | "stream_interrupted"
+  | "retry_exhausted"
+  | "usage_limit"
+  | "context_exhausted"
+  | "session_budget_exhausted"
+  | "authentication_failure"
+  | "request_invalid"
+  | "policy_rejected"
+  | "sandbox_failure"
+  | "turn_conflict"
+  | "cancelled"
+  | "unknown";
+
+export type BridgeContinuationRuleAction =
+  | "stop"
+  | "continue_same_route"
+  | "continue_rotate_credential"
+  | "continue_switch_channel";
+
+export type BridgeContinuationLimit =
+  | { mode: "bounded"; maxContinuations: number }
+  | { mode: "unlimited" };
+
+export type BridgeContinuationRule = {
+  action: BridgeContinuationRuleAction;
+  limit: BridgeContinuationLimit;
+};
+
+export type BridgeContinuationPolicy = {
+  capturedAt: string;
+  fingerprint: string;
+  policyVersion: number;
+  enabled: boolean;
+  continuePrompt: string;
+  maxElapsedMs: number | null;
+  backoff: {
+    initialDelayMs: number;
+    maxDelayMs: number;
+    multiplier: number;
+    jitterRatio: number;
+  };
+  rules: Record<BridgeFailureClass, BridgeContinuationRule>;
+};
+
+export type BridgeContinuationPolicyInput = {
+  policyVersion?: number;
+  enabled?: boolean;
+  continuePrompt?: string;
+  maxElapsedMs?: number | null;
+  backoff?: {
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    multiplier?: number;
+    jitterRatio?: number;
+  };
+  rules?: Partial<Record<BridgeFailureClass, {
+    action?: BridgeContinuationRuleAction;
+    limit?: BridgeContinuationLimit | "unlimited" | number;
+    maxContinuations?: number;
+  }>>;
+};
+
+export type BridgeContinuationTaskStatus =
+  | "waiting"
+  | "backoff"
+  | "running"
+  | "stopped"
+  | "superseded"
+  | "dead";
+
+export type BridgeContinuationTaskKind = "automatic" | "manual_prompt";
+export type BridgeManualPromptSubmissionMode =
+  | "auto"
+  | "steer_current"
+  | "start_next";
+export type BridgeTurnSubmissionMethod = "turn/start" | "turn/steer";
+
+export type BridgeContinuationTask = {
+  state: {
+    taskId: string;
+    sessionKey: string;
+    threadId: string;
+    taskKind: BridgeContinuationTaskKind;
+    submissionMode: BridgeManualPromptSubmissionMode | null;
+    status: BridgeContinuationTaskStatus;
+    reason: string;
+    policy: BridgeContinuationPolicy;
+    continuationCount: number;
+    startedAtMs: number;
+    updatedAtMs: number;
+    nextRunAtMs: number | null;
+    threadStatus: "unknown" | "not_loaded" | "idle" | "active" | "system_error";
+    activeFlags: Array<"waitingOnApproval" | "waitingOnUserInput">;
+    activeTurnId: string | null;
+    lastFailure: {
+      failureClass: BridgeFailureClass;
+      source: "error_notification" | "turn_completed" | "control_error" | "gateway_observation";
+      recoverability: "transient" | "conditional" | "terminal";
+      codexErrorCode: string | null;
+      httpStatusCode: number | null;
+      messageSummary: string;
+      messageFingerprint: string;
+      willRetry: boolean | null;
+    } | null;
+    lastFailureTurnTerminal: boolean;
+    retryAfterMs: number | null;
+    pendingRouteAction: "preserve" | "rotate_credential" | "switch_channel" | null;
+    pendingPrompt: string | null;
+    pendingMethod: BridgeTurnSubmissionMethod | null;
+  };
+  deviceId: string | null;
+  stateVersion: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  stoppedAt: string | null;
+  lease: { ownerId: string; expiresAt: string } | null;
+  requestSource: "webui" | "im" | null;
+  requestedBy: string | null;
+  sourceAdapterId: string | null;
+  promptFingerprint: string | null;
+};
+
+export type BridgeContinuationEvent = {
+  id: number;
+  taskId: string;
+  deliveryId: string | null;
+  eventType: string;
+  fromStatus: BridgeContinuationTaskStatus | null;
+  toStatus: BridgeContinuationTaskStatus;
+  reason: string;
+  metadata: string | null;
+  createdAt: string | null;
+};
+
+export type InteractionRequestKind =
+  | "command_approval"
+  | "file_change_approval"
+  | "permissions_approval"
+  | "user_input"
+  | "mcp_elicitation";
+
+export type InteractionRequestStatus =
+  | "pending"
+  | "response_pending"
+  | "resolved"
+  | "cancelled"
+  | "expired";
+
+export type InteractionRequest = {
+  state: {
+    requestId: string;
+    sourceRequestKey: string;
+    kind: InteractionRequestKind;
+    method: string;
+    deviceId: string;
+    connectionId: string;
+    sourceRequestId: string;
+    threadId: string | null;
+    turnId: string | null;
+    itemId: string | null;
+    status: InteractionRequestStatus;
+    reason: string;
+    responsePayload: Record<string, unknown> | null;
+    responseSource: "webui" | "im" | "signed_link" | null;
+    responseOperatorId: string | null;
+    responseIdempotencyKeyHash: string | null;
+    responseCommittedAtMs: number | null;
+    responseDeliveryCount: number;
+    responseDeliveredAtMs: number | null;
+    resolvedAtMs: number | null;
+    cancelledAtMs: number | null;
+    expiresAtMs: number;
+    createdAtMs: number;
+    updatedAtMs: number;
+  };
+  requestPayload: Record<string, unknown>;
+  requestFingerprint: string;
+  responseFingerprint: string | null;
+  stateVersion: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type InteractionEvent = {
+  id: number;
+  interactionId: string;
+  deliveryId: string | null;
+  eventType: string;
+  fromStatus: InteractionRequestStatus | null;
+  toStatus: InteractionRequestStatus;
+  actorKind: string;
+  actorId: string | null;
+  metadata: string | null;
+  createdAt: string | null;
+};
+
+export type FeishuInteractionAdapter = {
+  id: string;
+  deviceId: string | null;
+  kind: "feishu";
+  name: string;
+  enabled: boolean;
+  appId: string;
+  apiBaseUrl: string;
+  receiveIdType: "chat_id" | "open_id" | "user_id" | "union_id" | "email";
+  receiveId: string;
+  consoleBaseUrl: string | null;
+  operatorAllowlist: string[];
+  secretsConfigured: {
+    appSecret: boolean;
+    verificationToken: boolean;
+    encryptKey: boolean;
+  };
+  callbackPath: string;
+  lastDispatchAt: string | null;
+  lastCallbackAt: string | null;
+  lastError: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type FeishuLongConnection = {
+  adapterId: string;
+  appId: string;
+  state: "idle" | "connecting" | "connected" | "reconnecting" | "failed";
+  reconnectAttempts: number;
+  lastConnectTime: number | null;
+  nextConnectTime: number | null;
+};
+
+export type InteractionDispatch = {
+  id: string;
+  subjectKind: "interaction" | "prompt_card";
+  interactionId: string | null;
+  promptCardId: string | null;
+  adapterId: string;
+  status: "pending" | "processing" | "delivered" | "delivery_unknown" | "failed" | "cancelled";
+  attemptCount: number;
+  nextAttemptAt: string;
+  externalMessageId: string | null;
+  lastError: string | null;
+  deliveredAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  cardUpdate: InteractionCardUpdate | null;
+};
+
+export type InteractionCardUpdate = {
+  id: string;
+  dispatchId: string;
+  subjectRevision: number;
+  targetStatus: string;
+  cardFingerprint: string;
+  status: "pending" | "processing" | "delivered" | "delivery_unknown" | "failed" | "cancelled";
+  attemptCount: number;
+  nextAttemptAt: string;
+  deadlineAt: string;
+  lastError: string | null;
+  deliveredAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type FeishuBridgePromptCard = {
+  id: string;
+  adapterId: string;
+  deviceId: string;
+  threadId: string;
+  contextTaskId: string | null;
+  status: "pending" | "consumed" | "expired" | "cancelled";
+  expiresAt: string;
+  requestedBy: string;
+  consumedTaskId: string | null;
+  consumedBy: string | null;
+  consumedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  dispatch: InteractionDispatch | null;
+};
+
+export type CredentialVaultItem = {
+  id: number;
+  siteId?: number | null;
+  accountId?: number | null;
+  name: string;
+  kind: string;
+  status: "active" | "revoked" | "expired";
+  fingerprint: string;
+  metadata?: Record<string, unknown> | null;
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  revokedAt?: string | null;
+  version: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type BrowserRecoveryTask = {
+  id: string;
+  siteId: number;
+  accountId?: number | null;
+  mode: 'manual' | 'assisted' | 'managed';
+  status: 'pending' | 'claimed' | 'completing' | 'completed' | 'cancelled' | 'expired';
+  credentialName: string;
+  credentialKind: 'browser_storage';
+  adapterPlatform: string;
+  targetUrl: string;
+  targetOrigin: string;
+  allowedOrigins: string[];
+  fields: Array<{
+    name: string;
+    kind: string;
+    required: boolean;
+    capture?: {
+      strategy: 'cookie_header' | 'named_cookie' | 'storage_value' | 'json_path' | 'manual';
+      key?: string;
+      path?: string[];
+    };
+  }>;
+  requiresUserGesture: boolean;
+  expiresAt: string;
+  claimedAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  resultCredentialId?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ModelSyncState = {
+  accountId: number;
+  modelName: string;
+  consecutiveMissing: number;
+  lastSeenAt?: string | null;
+  lastSyncAt?: string | null;
+  status: 'active' | 'candidate_retired';
+  lastError?: string | null;
+  updatedAt?: string | null;
+};
+
 export const api = {
+  getAdminSession: async () => {
+    const session = await requestPublic<AdminSessionResponse>("/api/auth/session");
+    if (session.authenticated) {
+      persistAuthSession(getBrowserSessionStorage(), session.csrfToken, session.expiresAt);
+    } else {
+      clearAuthSession(getBrowserSessionStorage());
+    }
+    return session;
+  },
+  loginAdmin: async (token: string) => {
+    const result = await requestPublic<AdminLoginResponse>(
+      "/api/auth/login",
+      { method: "POST", body: JSON.stringify({ token }) },
+    );
+    if (result.authenticated) {
+      persistAuthSession(getBrowserSessionStorage(), result.csrfToken, result.expiresAt);
+    } else {
+      clearAuthSession(getBrowserSessionStorage());
+    }
+    return result;
+  },
+  verifyAdminTotp: async (challengeToken: string, code: string) => {
+    const session = await requestPublic<AdminAuthenticatedSession & {
+      success: true;
+      secondFactorType: "totp" | "recovery_code";
+      recoveryCodesRemaining: number;
+    }>("/api/auth/totp/verify", {
+      method: "POST",
+      body: JSON.stringify({ challengeToken, code }),
+    });
+    persistAuthSession(getBrowserSessionStorage(), session.csrfToken, session.expiresAt);
+    return session;
+  },
+  logoutAdmin: async () => {
+    try {
+      return await request<{ success: true }>("/api/auth/logout", { method: "POST" });
+    } finally {
+      clearAuthSession(getBrowserSessionStorage());
+    }
+  },
+
   // Sites
   getSites: () => request("/api/sites"),
+  openSiteProbeStream: (
+    siteId: number,
+    params: URLSearchParams,
+    signal?: AbortSignal,
+  ) => fetchAuthenticatedResponse(
+    `/api/sites/${siteId}/probe-stream?${params.toString()}`,
+    { method: "GET", signal, timeoutMs: 120_000 },
+  ),
+  getLocalConnectorDevices: () =>
+    request<{ items: LocalConnectorDevice[] }>("/api/local-connector/devices"),
+  getLocalConnectorThreads: (params?: { deviceId?: string; limit?: number }) =>
+    request<{ success: boolean; items: LocalConnectorThread[] }>(
+      "/api/local-connector/threads" + buildQueryString(params),
+    ),
+  getLocalConnectorThreadActivity: (deviceId: string, threadId: string, limit = 120) =>
+    request<{ success: boolean } & LocalConnectorThreadActivity>(
+      `/api/local-connector/devices/${encodeURIComponent(deviceId)}`
+        + `/sessions/${encodeURIComponent(threadId)}/activity`
+        + buildQueryString({ limit }),
+    ),
+  createLocalConnectorPairing: (data: {
+    deviceName: string;
+    scopes?: LocalConnectorScope[];
+    ttlSec?: number;
+  }) =>
+    request<{
+      success: boolean;
+      claimPath: string;
+      pairingId: string;
+      pairingToken: string;
+      deviceName: string;
+      scopes: LocalConnectorScope[];
+      expiresAt: string;
+    }>("/api/local-connector/pairings", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  cancelLocalConnectorPairing: (id: string) =>
+    request(`/api/local-connector/pairings/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    }),
+  revokeLocalConnectorDevice: (id: string) =>
+    request(`/api/local-connector/devices/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+    }),
+  getLocalConnectorActions: (params?: { deviceId?: string; status?: string }) =>
+    request<{ items: LocalConnectorAction[] }>(
+      "/api/local-connector/actions" + buildQueryString(params),
+    ),
+  createLocalConnectorAction: (data: {
+    deviceId: string;
+    kind: "hook" | "notify";
+    operation: "install" | "backup" | "rollback" | "uninstall";
+    agent?: "codex" | "claude_code";
+    backupRef?: string | null;
+    eventNames?: string[];
+    ttlSec?: number;
+  }) =>
+    request<{ success: boolean; action: LocalConnectorAction }>(
+      "/api/local-connector/actions",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+  cancelLocalConnectorAction: (id: string) =>
+    request(`/api/local-connector/actions/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    }),
+  getBridgeContinuationTasks: (params?: {
+    deviceId?: string;
+    sessionKey?: string;
+    status?: BridgeContinuationTaskStatus;
+    limit?: number;
+  }) => request<{ success: boolean; items: BridgeContinuationTask[] }>(
+    "/api/bridge-continuations" + buildQueryString(params),
+  ),
+  getBridgeContinuationTask: (id: string, eventLimit = 100) =>
+    request<{
+      success: boolean;
+      task: BridgeContinuationTask;
+      events: BridgeContinuationEvent[];
+    }>(
+      `/api/bridge-continuations/${encodeURIComponent(id)}`
+      + buildQueryString({ eventLimit }),
+    ),
+  createBridgeContinuationTask: (data: {
+    sessionKey: string;
+    threadId: string;
+    deviceId?: string;
+    policy: BridgeContinuationPolicyInput;
+  }) => request<{ success: boolean; created: boolean; task: BridgeContinuationTask }>(
+    "/api/bridge-continuations",
+    { method: "POST", body: JSON.stringify(data) },
+  ),
+  takeOverLocalConnectorSession: (data: {
+    deviceId: string;
+    threadId: string;
+    policy?: BridgeContinuationPolicyInput;
+  }) => request<{ success: boolean; created: boolean; task: BridgeContinuationTask }>(
+    `/api/local-connector/devices/${encodeURIComponent(data.deviceId)}`
+      + `/sessions/${encodeURIComponent(data.threadId)}/takeover`,
+    { method: "POST", body: JSON.stringify({ policy: data.policy }) },
+  ),
+  createManualBridgePromptTask: (data: {
+    contextTaskId?: string;
+    deviceId?: string;
+    threadId?: string;
+    threadStatus?: LocalConnectorThread["threadStatus"];
+    activeFlags?: LocalConnectorThread["activeFlags"];
+    activeTurnId?: string | null;
+    prompt: string;
+    submissionMode: BridgeManualPromptSubmissionMode;
+    operatorId?: string;
+    idempotencyKey: string;
+  }) => request<{
+    success: boolean;
+    created: boolean;
+    deduplicated: boolean;
+    supersededTaskId: string | null;
+    task: BridgeContinuationTask;
+  }>(
+    "/api/bridge-continuations/manual-prompts",
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": data.idempotencyKey },
+      body: JSON.stringify(data),
+    },
+  ),
+  stopBridgeContinuationTask: (id: string) =>
+    request<{ success: boolean; task: BridgeContinuationTask }>(
+      `/api/bridge-continuations/${encodeURIComponent(id)}/stop`,
+      { method: "POST" },
+    ),
+  supersedeBridgeContinuationTask: (id: string) =>
+    request<{ success: boolean; task: BridgeContinuationTask }>(
+      `/api/bridge-continuations/${encodeURIComponent(id)}/supersede`,
+      { method: "POST" },
+    ),
+  getInteractionRequests: (params?: {
+    deviceId?: string;
+    threadId?: string;
+    kind?: InteractionRequestKind;
+    status?: InteractionRequestStatus;
+    limit?: number;
+  }) => request<{ success: boolean; items: InteractionRequest[] }>(
+    "/api/interactions" + buildQueryString(params),
+  ),
+  getInteractionRequest: (id: string, eventLimit = 100) =>
+    request<{
+      success: boolean;
+      interaction: InteractionRequest;
+      events: InteractionEvent[];
+    }>(
+      `/api/interactions/${encodeURIComponent(id)}` + buildQueryString({ eventLimit }),
+    ),
+  respondInteractionRequest: (id: string, data: {
+    responsePayload: Record<string, unknown>;
+    operatorId?: string;
+    idempotencyKey: string;
+  }) => request<{
+    success: boolean;
+    deduplicated: boolean;
+    request: InteractionRequest;
+  }>(`/api/interactions/${encodeURIComponent(id)}/respond`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  }),
+  cancelInteractionRequest: (id: string, operatorId = "webui:admin") =>
+    request<{ success: boolean; interaction: InteractionRequest }>(
+      `/api/interactions/${encodeURIComponent(id)}/cancel`,
+      { method: "POST", body: JSON.stringify({ operatorId }) },
+    ),
+  getInteractionAdapters: (params?: { deviceId?: string }) =>
+    request<{ success: boolean; items: FeishuInteractionAdapter[] }>(
+      "/api/interaction-adapters" + buildQueryString(params),
+    ),
+  getFeishuLongConnections: () =>
+    request<{ success: boolean; items: FeishuLongConnection[] }>(
+      "/api/interaction-adapters/connections",
+    ),
+  createFeishuInteractionAdapter: (data: {
+    deviceId: string;
+    name: string;
+    enabled?: boolean;
+    appId: string;
+    appSecret: string;
+    verificationToken?: string;
+    encryptKey?: string;
+    apiBaseUrl: string;
+    receiveIdType: FeishuInteractionAdapter["receiveIdType"];
+    receiveId: string;
+    consoleBaseUrl?: string | null;
+    operatorAllowlist: string[];
+  }) => request<{ success: boolean; adapter: FeishuInteractionAdapter }>(
+    "/api/interaction-adapters/feishu",
+    { method: "POST", body: JSON.stringify(data) },
+  ),
+  updateFeishuInteractionAdapter: (id: string, data: Partial<{
+    deviceId: string;
+    name: string;
+    enabled: boolean;
+    appId: string;
+    appSecret: string;
+    verificationToken: string;
+    encryptKey: string;
+    apiBaseUrl: string;
+    receiveIdType: FeishuInteractionAdapter["receiveIdType"];
+    receiveId: string;
+    consoleBaseUrl: string | null;
+    operatorAllowlist: string[];
+  }>) => request<{ success: boolean; adapter: FeishuInteractionAdapter }>(
+    `/api/interaction-adapters/feishu/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify(data) },
+  ),
+  getInteractionDispatches: (params?: {
+    adapterId?: string;
+    interactionId?: string;
+    promptCardId?: string;
+    subjectKind?: "interaction" | "prompt_card";
+    limit?: number;
+  }) => request<{ success: boolean; items: InteractionDispatch[] }>(
+    "/api/interaction-adapters/dispatches" + buildQueryString(params),
+  ),
+  runInteractionAdapterDispatch: () =>
+    request<{ success: boolean; result: Record<string, number> }>(
+      "/api/interaction-adapters/dispatch/run",
+      { method: "POST" },
+    ),
+  retryInteractionDispatch: (id: string) =>
+    request<{ success: boolean }>(
+      `/api/interaction-adapters/dispatches/${encodeURIComponent(id)}/retry`,
+      { method: "POST" },
+    ),
+  retryInteractionCardUpdate: (id: string) =>
+    request<{ success: boolean }>(
+      `/api/interaction-adapters/card-updates/${encodeURIComponent(id)}/retry`,
+      { method: "POST" },
+    ),
+  createFeishuBridgePromptCard: (adapterId: string, data: {
+    contextTaskId?: string;
+    deviceId?: string;
+    threadId?: string;
+    ttlMs?: number;
+    requestedBy?: string;
+    idempotencyKey: string;
+  }) => request<{
+    success: boolean;
+    created: boolean;
+    card: FeishuBridgePromptCard;
+  }>(`/api/interaction-adapters/feishu/${encodeURIComponent(adapterId)}/prompt-cards`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  }),
+  getFeishuBridgePromptCards: (params?: {
+    adapterId?: string;
+    status?: FeishuBridgePromptCard["status"];
+    limit?: number;
+  }) => request<{ success: boolean; items: FeishuBridgePromptCard[] }>(
+    "/api/interaction-adapters/prompt-cards" + buildQueryString(params),
+  ),
+  cancelFeishuBridgePromptCard: (id: string) =>
+    request<{ success: boolean; card: FeishuBridgePromptCard }>(
+      `/api/interaction-adapters/prompt-cards/${encodeURIComponent(id)}/cancel`,
+      { method: "POST" },
+    ),
+  getSiteAdapterContracts: () =>
+    request<{ adapters: SiteAdapterContract[] }>('/api/sites/adapters'),
+  getCredentialVaultItems: (params?: {
+    siteId?: number;
+    accountId?: number;
+    status?: "active" | "revoked" | "expired";
+  }) =>
+    request<{ items: CredentialVaultItem[] }>(
+      "/api/credential-vault" + buildQueryString(params),
+    ),
+  createCredentialVaultItem: (data: {
+    siteId?: number;
+    accountId?: number;
+    name: string;
+    kind: string;
+    secret: string;
+    metadata?: Record<string, unknown>;
+    expiresAt?: string | null;
+  }) =>
+    request<{ success: boolean; item: CredentialVaultItem }>('/api/credential-vault', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  revokeCredentialVaultItem: (id: number) =>
+    request("/api/credential-vault/" + id + "/revoke", { method: 'POST' }),
+  deleteCredentialVaultItem: (id: number) =>
+    request("/api/credential-vault/" + id, { method: 'DELETE' }),
+  getBrowserRecoveryTasks: (params?: { siteId?: number; status?: BrowserRecoveryTask['status'] }) =>
+    request<{ items: BrowserRecoveryTask[] }>(
+      '/api/browser-credential-tasks' + buildQueryString(params),
+    ),
+  createBrowserRecoveryTask: (data: {
+    siteId: number;
+    accountId?: number | null;
+    mode: BrowserRecoveryTask['mode'];
+    credentialName?: string;
+    ttlSec?: number;
+  }) => request<{
+    success: boolean;
+    task: BrowserRecoveryTask;
+    token: string;
+    launchPath: string;
+  }>('/api/browser-credential-tasks', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  cancelBrowserRecoveryTask: (id: string) =>
+    request('/api/browser-credential-tasks/' + encodeURIComponent(id) + '/cancel', { method: 'POST' }),
+  activateBrowserRecoveryTask: (id: string, accountId?: number | null) =>
+    request<{ success: boolean; activation: {
+      accountId: number;
+      credentialId: number;
+      tokenType: 'session';
+      username: string | null;
+      apiTokenFound: boolean;
+      idempotent: boolean;
+    } }>(`/api/browser-credential-tasks/${encodeURIComponent(id)}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  claimBrowserRecoveryTask: (taskId: string, token: string, claimedBy?: string) =>
+    requestPublic<{
+      success: boolean;
+      task: BrowserRecoveryTask;
+      claimToken: string;
+    }>('/api/browser-credential-tasks/public/claim', {
+      method: 'POST',
+      body: JSON.stringify({ taskId, token, claimedBy }),
+    }),
+  completeBrowserRecoveryTask: (data: {
+    taskId: string;
+    claimToken: string;
+    origin: string;
+    fields: Array<{ name: string; kind: string; value: string }>;
+    username?: string;
+  }) => requestPublic<{
+    success: boolean;
+    idempotent: boolean;
+    task: BrowserRecoveryTask;
+    credential: CredentialVaultItem;
+  }>('/api/browser-credential-tasks/public/complete', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  getModelSyncStates: (params?: { accountId?: number; status?: ModelSyncState['status'] }) =>
+    request<{ success: boolean; items: ModelSyncState[] }>(
+      '/api/model-sync/states' + buildQueryString(params),
+    ),
   addSite: (data: any) =>
     request("/api/sites", { method: "POST", body: JSON.stringify(data) }),
   updateSite: (id: number, data: any) =>
@@ -958,10 +2077,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  batchUpdateChannels: (updates: Array<{ id: number; priority: number }>) =>
+  batchUpdateChannels: (
+    updates: Array<{ id: number; priority: number; sortOrder: number }>,
+    schedulingRouteId?: number,
+  ) =>
     request("/api/channels/batch", {
       method: "PUT",
-      body: JSON.stringify({ updates }),
+      body: JSON.stringify({ updates, schedulingRouteId }),
     }),
   deleteChannel: (id: number) =>
     request(`/api/channels/${id}`, { method: "DELETE" }),
@@ -1020,6 +2142,11 @@ export const api = {
         ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
       }),
     }),
+  getModelSyncMatrix: (params?: { accountId?: number; status?: string }) =>
+    request(`/api/model-sync/matrix${buildQueryString({
+      ...(params?.accountId ? { accountId: params.accountId } : {}),
+      ...(params?.status ? { status: params.status } : {}),
+    })}`),
 
   // Stats
   getDashboard: () => request("/api/stats/dashboard"),
@@ -1080,6 +2207,14 @@ export const api = {
   },
   getProxyLogDetail: (id: number) =>
     request(`/api/stats/proxy-logs/${id}`) as Promise<ProxyLogDetail>,
+  getProxyRequestLedgers: (params?: ProxyRequestLedgersQuery) =>
+    request(
+      `/api/proxy-request-ledgers${buildQueryString(params)}`,
+    ) as Promise<ProxyRequestLedgersResponse>,
+  getProxyRequestLedgerDetail: (requestId: string) =>
+    request(
+      `/api/proxy-request-ledgers/${encodeURIComponent(requestId)}`,
+    ) as Promise<ProxyRequestLedgerDetail>,
   getProxyDebugTraces: (params?: { limit?: number }) =>
     request(
       `/api/stats/proxy-debug/traces${buildQueryString(params)}`,
@@ -1232,11 +2367,31 @@ export const api = {
   getTask: (id: string) => request(`/api/tasks/${encodeURIComponent(id)}`),
 
   // Auth management
-  getAuthInfo: () => request("/api/settings/auth/info"),
+  getAuthInfo: () => request<AdminAuthInfo>("/api/settings/auth/info"),
   changeAuthToken: (oldToken: string, newToken: string) =>
     request("/api/settings/auth/change", {
       method: "POST",
       body: JSON.stringify({ oldToken, newToken }),
+    }),
+  beginAdminTotpSetup: (password: string) =>
+    request<AdminTotpSetupResponse>("/api/settings/auth/totp/setup", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  confirmAdminTotpSetup: (setupToken: string, code: string) =>
+    request<AdminRecoveryCodesResponse & { enabled: true }>("/api/settings/auth/totp/confirm", {
+      method: "POST",
+      body: JSON.stringify({ setupToken, code }),
+    }),
+  regenerateAdminRecoveryCodes: (password: string, code: string) =>
+    request<AdminRecoveryCodesResponse>("/api/settings/auth/totp/recovery-codes", {
+      method: "POST",
+      body: JSON.stringify({ password, code }),
+    }),
+  disableAdminTotp: (password: string, code: string) =>
+    request<{ success: true; enabled: false }>("/api/settings/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ password, code }),
     }),
   getRuntimeSettings: () => request("/api/settings/runtime"),
   getBrandList: () => request("/api/settings/brand-list"),
@@ -1405,10 +2560,23 @@ export const api = {
     request("/api/settings/maintenance/factory-reset", { method: "POST" }),
   testNotification: () =>
     request("/api/settings/notify/test", { method: "POST" }),
+  getNotificationOutbox: (params?: { limit?: number; offset?: number; status?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    if (params?.offset !== undefined) query.set("offset", String(params.offset));
+    if (params?.status) query.set("status", params.status);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request(`/api/notifications/outbox${suffix}`);
+  },
+  retryNotificationOutbox: (id?: number) =>
+    request("/api/notifications/outbox/retry", {
+      method: "POST",
+      body: JSON.stringify(id === undefined ? { all: true } : { id }),
+    }),
 
   // Monitor embed
   getMonitorConfig: () => request("/api/monitor/config"),
-  updateMonitorConfig: (data: { ldohCookie?: string | null }) =>
+  updateMonitorConfig: (data: { ldohCookie?: string | null; aihubCookie?: string | null }) =>
     request("/api/monitor/config", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -1459,7 +2627,7 @@ export const api = {
     options: Pick<RequestOptions, "signal" | "timeoutMs"> = {},
   ) => {
     const response = await fetchAuthenticatedResponse(
-      `/v1/files/${encodeURIComponent(fileId)}/content`,
+      `/api/proxy-files/${encodeURIComponent(fileId)}/content`,
       {
         method: "GET",
         ...options,
@@ -1492,20 +2660,10 @@ export const api = {
   testChatStream: async (
     data: TestChatRequestPayload,
     signal?: AbortSignal,
-  ) => {
-    const token = getAuthToken(localStorage);
-    if (!token) {
-      clearAuthSession(localStorage);
-      throw new Error("Session expired");
-    }
-    return fetch("/api/test/chat/stream", {
+  ) => fetchAuthenticatedResponse("/api/test/chat/stream", {
       method: "POST",
       signal,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
       body: JSON.stringify(data),
-    });
-  },
+      timeoutMs: 120_000,
+    }),
 };

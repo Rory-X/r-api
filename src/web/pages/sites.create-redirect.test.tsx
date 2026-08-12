@@ -13,6 +13,7 @@ import Sites from './Sites.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getSites: vi.fn(),
+    getAccountsSnapshot: vi.fn().mockResolvedValue({ accounts: [], sites: [] }),
     addSite: vi.fn(),
     getSiteDisabledModels: vi.fn().mockResolvedValue({ models: [] }),
     getSiteAvailableModels: vi.fn().mockResolvedValue({ models: [] }),
@@ -74,8 +75,8 @@ async function createSiteAndClickModalChoice(
           <MemoryRouter initialEntries={['/sites']}>
             <Routes>
               <Route path="/sites" element={<Sites />} />
-              <Route path="/accounts" element={<LocationProbe />} />
-              <Route path="/oauth" element={<LocationProbe />} />
+              <Route path="/channels/connections" element={<LocationProbe />} />
+              <Route path="/channels/oauth" element={<LocationProbe />} />
             </Routes>
           </MemoryRouter>
         </ToastProvider>,
@@ -149,14 +150,14 @@ describe('Sites create redirect', () => {
   it('shows modal after creating a site and navigates to session account when user chooses it', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 21, name: 'Demo Site', platform: 'new-api' }, 'session');
 
-    expect(rendered).toContain('/accounts?create=1&siteId=21');
+    expect(rendered).toContain('/channels/connections?create=1&siteId=21');
     expect(rendered).not.toContain('segment=apikey');
   });
 
   it('shows modal after creating a site and navigates to API key when user chooses it', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 22, name: 'Demo Site', platform: 'openai' }, 'apikey');
 
-    expect(rendered).toContain('/accounts?');
+    expect(rendered).toContain('/channels/connections?');
     expect(rendered).toContain('segment=apikey');
     expect(rendered).toContain('create=1');
     expect(rendered).toContain('siteId=22');
@@ -170,7 +171,7 @@ describe('Sites create redirect', () => {
       initializationPresetId: 'codingplan-openai',
     }, 'apikey');
 
-    expect(rendered).toContain('/accounts?');
+    expect(rendered).toContain('/channels/connections?');
     expect(rendered).toContain('segment=apikey');
     expect(rendered).toContain('siteId=25');
     expect(rendered).toContain('initPreset=codingplan-openai');
@@ -180,20 +181,20 @@ describe('Sites create redirect', () => {
     const rendered = await createSiteAndClickModalChoice({ id: 23, name: 'Demo Site', platform: 'codex' }, 'later');
 
     // User chose "later", so should stay on sites page (no navigation to accounts or oauth)
-    expect(rendered).not.toContain('/oauth?');
-    expect(rendered).not.toContain('/accounts?');
+    expect(rendered).not.toContain('/channels/oauth?');
+    expect(rendered).not.toContain('/channels/connections?');
   });
 
   it('shows modal after creating a codex site and navigates to OAuth when user chooses session', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 24, name: 'Demo Site', platform: 'codex' }, 'session');
 
-    expect(rendered).toContain('/oauth?');
+    expect(rendered).toContain('/channels/oauth?');
     expect(rendered).toContain('provider=codex');
     expect(rendered).toContain('create=1');
     expect(rendered).toContain('siteId=24');
   });
 
-  it('opens API key flow from site list action', async () => {
+  it('opens a site Key list and keeps the add entry inside the modal', async () => {
     apiMock.getSites.mockResolvedValue([
       {
         id: 51,
@@ -202,6 +203,27 @@ describe('Sites create redirect', () => {
         platform: 'openai',
       },
     ]);
+    apiMock.getAccountsSnapshot.mockResolvedValue({
+      accounts: [
+        {
+          id: 701,
+          siteId: 51,
+          username: '生产 Key',
+          status: 'active',
+          credentialMode: 'apikey',
+          createdAt: '2026-08-12 08:30:00',
+        },
+        {
+          id: 702,
+          siteId: 51,
+          username: 'Session 账号',
+          status: 'active',
+          credentialMode: 'session',
+          accessToken: 'session-token',
+        },
+      ],
+      sites: [],
+    });
 
     let root!: ReactTestRenderer;
     try {
@@ -211,7 +233,7 @@ describe('Sites create redirect', () => {
             <MemoryRouter initialEntries={['/sites']}>
               <Routes>
                 <Route path="/sites" element={<Sites />} />
-                <Route path="/accounts" element={<LocationProbe />} />
+                <Route path="/channels/connections" element={<LocationProbe />} />
               </Routes>
             </MemoryRouter>
           </ToastProvider>,
@@ -219,13 +241,32 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
+      const renderedSiteList = JSON.stringify(root.toJSON());
+      expect(renderedSiteList).toContain('Key 列表');
+      expect(renderedSiteList).not.toContain('置顶');
+      expect(renderedSiteList).not.toContain('上移');
+      expect(renderedSiteList).not.toContain('下移');
+
+      const keyListButton = findClickableButtonByText(root, 'Key 列表');
+      await act(async () => {
+        keyListButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const renderedKeyList = JSON.stringify(root.toJSON());
+      expect(apiMock.getAccountsSnapshot).toHaveBeenCalledWith({ refresh: true });
+      expect(renderedKeyList).toContain('List Site');
+      expect(renderedKeyList).toContain('Key 列表');
+      expect(renderedKeyList).toContain('生产 Key');
+      expect(renderedKeyList).not.toContain('Session 账号');
+
       const addKeyButton = findClickableButtonByText(root, '添加 Key');
       await act(async () => {
         addKeyButton.props.onClick();
       });
       await flushMicrotasks();
 
-      expect(JSON.stringify(root.toJSON())).toContain('/accounts?create=1&siteId=51&segment=apikey');
+      expect(JSON.stringify(root.toJSON())).toContain('/channels/connections?create=1&siteId=51&segment=apikey');
     } finally {
       root?.unmount();
     }

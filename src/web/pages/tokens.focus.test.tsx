@@ -45,7 +45,7 @@ describe('Tokens focus navigation', () => {
     vi.clearAllMocks();
   });
 
-  it('highlights the focused token row in the 账号令牌 segment', async () => {
+  it('highlights the focused token row in the 上游 API Token segment', async () => {
     apiMock.getAccounts.mockResolvedValue([
       {
         id: 1,

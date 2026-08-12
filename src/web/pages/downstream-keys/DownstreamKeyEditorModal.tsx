@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
+import SideDrawer from '../../components/SideDrawer.js';
+import {
+  Button,
+  Checkbox,
+  Input,
+  NumberField,
+  Switch,
+  TextArea,
+} from '../../components/ui/index.js';
 import { generateDownstreamSkKey } from '../helpers/generateDownstreamSkKey.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
@@ -25,6 +34,7 @@ export type DownstreamKeyEditorForm = {
   tags: string[];
   maxCost: string;
   maxRequests: string;
+  maxConcurrency: string;
   expiresAt: string;
   enabled: boolean;
   selectedModels: string[];
@@ -190,19 +200,19 @@ export function TagInput({
       <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {tags.map((tag) => (
-            <button
+            <Button
               key={tag}
-              type="button"
+              variant="link"
               onClick={() => removeTag(tag)}
               style={{ ...tagChipStyle('accent'), cursor: 'pointer' }}
               title={`移除 ${tag}`}
             >
               <span>{tag}</span>
               <span aria-hidden="true">×</span>
-            </button>
+            </Button>
           ))}
         </div>
-        <input
+        <Input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitDraft}
@@ -222,15 +232,14 @@ export function TagInput({
       {suggestionPool.length > 0 ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {suggestionPool.map((tag) => (
-            <button
+            <Button
               key={tag}
-              type="button"
-              className="btn btn-ghost"
+              variant="ghost"
               style={{ ...tagChipStyle(), cursor: 'pointer' }}
               onClick={() => onChange(normalizeTags([...tags, tag]))}
             >
               {tag}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}
@@ -344,22 +353,26 @@ export default function DownstreamKeyEditorModal({
     fontSize: 13,
     lineHeight: 1.45,
   };
+  const EditorSurface = editingItem ? SideDrawer : CenteredModal;
 
   return (
-    <CenteredModal
+    <EditorSurface
       open={open}
       onClose={onClose}
       title={editingItem ? '编辑下游密钥' : '新增下游密钥'}
-      maxWidth={860}
+      maxWidth={editingItem ? 760 : 860}
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
-          <button onClick={onClose} className="btn btn-ghost" disabled={saving}>取消</button>
-          <button onClick={onSave} className="btn btn-primary" disabled={saving}>
-            {saving
-              ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</>
-              : (editingItem ? '保存修改' : '创建密钥')}
-          </button>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>取消</Button>
+          <Button
+            variant="primary"
+            onClick={onSave}
+            loading={saving}
+            loadingLabel="保存中..."
+          >
+            {editingItem ? '保存修改' : '创建密钥'}
+          </Button>
         </>
       )}
     >
@@ -370,61 +383,80 @@ export default function DownstreamKeyEditorModal({
       <div className="downstream-key-modal-grid" style={{ gridTemplateColumns: '1fr' }}>
         <div className="downstream-key-modal-field downstream-key-modal-field-full">
           <div className="downstream-key-modal-label">名称</div>
-          <input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" style={inputStyle} />
+          <Input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" style={inputStyle} />
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">下游密钥</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', minWidth: 0 }}>
-            <input
+            <Input
               value={form.key}
               onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))}
               placeholder="sk-..."
               style={{ ...inputStyle, flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}
             />
-            <button
-              type="button"
-              className="btn btn-ghost"
+            <Button
+              variant="ghost"
               style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
               onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
             >
               随机
-            </button>
+            </Button>
           </div>
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">主分组</div>
-          <input
+          <Input
             value={form.groupName}
             onChange={(e) => onChange((prev) => ({ ...prev, groupName: e.target.value }))}
             placeholder="例如：VIP / 内部项目 / A组"
-            list="downstream-group-suggestions"
             style={inputStyle}
           />
+          {groupSuggestions.length > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {groupSuggestions
+                .filter((group) => group.trim() && group !== form.groupName)
+                .slice(0, 10)
+                .map((group) => (
+                  <Button
+                    key={group}
+                    variant="ghost"
+                    style={tagChipStyle()}
+                    onClick={() => onChange((prev) => ({ ...prev, groupName: group }))}
+                  >
+                    {group}
+                  </Button>
+                ))}
+            </div>
+          ) : null}
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">请求额度</div>
-          <input value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
+          <NumberField min={0} step={1} value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
+        </div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">最大并发</div>
+          <NumberField min={0} max={10000} step={1} value={form.maxConcurrency} onChange={(e) => onChange((prev) => ({ ...prev, maxConcurrency: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">成本额度</div>
-          <input value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
+          <NumberField min={0} step={0.000001} value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">过期时间</div>
-          <input type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} style={inputStyle} />
+          <Input type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} style={inputStyle} />
         </div>
-        <label className="downstream-key-modal-toggle">
-          <input type="checkbox" checked={form.enabled} onChange={(e) => onChange((prev) => ({ ...prev, enabled: e.target.checked }))} />
-          <div>
-            <div className="downstream-key-modal-toggle-title">创建后立即启用</div>
-            <div className="downstream-key-modal-help">关闭后该密钥将无法继续分发请求</div>
-          </div>
-        </label>
+        <Switch
+          className="downstream-key-modal-toggle"
+          checked={form.enabled}
+          onChange={(enabled) => onChange((prev) => ({ ...prev, enabled }))}
+          label="创建后立即启用"
+          description="关闭后该密钥将无法继续分发请求"
+        />
       </div>
 
       <div className="downstream-key-modal-field downstream-key-modal-field-full">
         <div className="downstream-key-modal-label">备注说明</div>
-        <textarea
+        <TextArea
           value={form.description}
           onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
           placeholder="填写业务场景、负责人或限制说明"
@@ -444,15 +476,20 @@ export default function DownstreamKeyEditorModal({
       </div>
 
       <div className="downstream-key-advanced">
-        <button type="button" className={`downstream-key-advanced-toggle ${advancedOpen ? 'is-open' : ''}`.trim()} onClick={() => setAdvancedOpen((value) => !value)}>
+        <Button
+          variant="link"
+          className={`downstream-key-advanced-toggle ${advancedOpen ? 'is-open' : ''}`.trim()}
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen((value) => !value)}
+        >
           <span>高级配置</span>
           <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{advancedOpen ? '收起' : '展开'}</span>
-        </button>
+        </Button>
         {advancedOpen ? (
           <div className="downstream-key-advanced-content">
             <div className="downstream-key-modal-field downstream-key-modal-field-full">
               <div className="downstream-key-modal-label">站点倍率 JSON</div>
-              <textarea
+              <TextArea
                 value={form.siteWeightMultipliersText}
                 onChange={(e) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: e.target.value }))}
                 placeholder={'例如：{\n  "1": 1.2,\n  "7": 0.8\n}'}
@@ -469,8 +506,8 @@ export default function DownstreamKeyEditorModal({
                     <div className="downstream-key-modal-help">只展示精确模型；未勾选时默认不允许任何精确模型，可点“全选”一次性放开。</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: exactModels }))}>全选</button>
-                    <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}>清空</button>
+                    <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: exactModels }))}>全选</Button>
+                    <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}>清空</Button>
                   </div>
                 </div>
                 <div className="downstream-key-modal-meta">已选 {selectedModelCount} 个模型</div>
@@ -478,7 +515,7 @@ export default function DownstreamKeyEditorModal({
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型" />
+                  <Input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型" />
                 </div>
                 <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {filteredModels.length === 0 ? (
@@ -486,17 +523,16 @@ export default function DownstreamKeyEditorModal({
                   ) : filteredModels.map((model) => {
                     const checked = form.selectedModels.includes(model);
                     return (
-                      <label key={model} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                        <input
-                          type="checkbox"
+                      <div key={model} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <Checkbox
                           checked={checked}
                           onChange={() => onChange((prev) => ({
                             ...prev,
                             selectedModels: checked ? prev.selectedModels.filter((item) => item !== model) : [...prev.selectedModels, model],
                           }))}
+                          label={<code style={{ color: 'var(--color-text-primary)', fontSize: 12 }}>{model}</code>}
                         />
-                        <code style={{ color: 'var(--color-text-primary)', fontSize: 12 }}>{model}</code>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
@@ -509,8 +545,8 @@ export default function DownstreamKeyEditorModal({
                     <div className="downstream-key-modal-help">限制可访问的群组路由；未勾选时默认不允许任何群组，可点“全选”一次性放开。</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}>全选</button>
-                    <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>清空</button>
+                    <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}>全选</Button>
+                    <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>清空</Button>
                   </div>
                 </div>
                 <div className="downstream-key-modal-meta">已选 {selectedGroupCount} 个群组</div>
@@ -518,7 +554,7 @@ export default function DownstreamKeyEditorModal({
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
+                  <Input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
                 </div>
                 <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {filteredGroups.length === 0 ? (
@@ -526,9 +562,8 @@ export default function DownstreamKeyEditorModal({
                   ) : filteredGroups.map((route) => {
                     const checked = normalizedSelectedGroupRouteIds.includes(route.id);
                     return (
-                      <label key={route.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                        <input
-                          type="checkbox"
+                      <div key={route.id} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <Checkbox
                           checked={checked}
                           onChange={() => onChange((prev) => ({
                             ...prev,
@@ -536,16 +571,17 @@ export default function DownstreamKeyEditorModal({
                               ? prev.selectedGroupRouteIds.filter((item) => item !== route.id)
                               : uniqIds([...prev.selectedGroupRouteIds.filter((item) => validGroupRouteIdSet.has(item)), route.id]),
                           }))}
-                          style={{ marginTop: 2 }}
+                          label={(
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>
+                                {routeTitle(route)}
+                                {!route.enabled ? <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--color-danger)' }}>已禁用</span> : null}
+                              </div>
+                              <code style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
+                            </div>
+                          )}
                         />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>
-                            {routeTitle(route)}
-                            {!route.enabled ? <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--color-danger)' }}>已禁用</span> : null}
-                          </div>
-                          <code style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
-                        </div>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
@@ -557,14 +593,14 @@ export default function DownstreamKeyEditorModal({
                     <div className="downstream-key-modal-section-title">排除站点</div>
                     <div className="downstream-key-modal-help">命中的站点会直接跳过，不参与当前下游密钥的通道路由。</div>
                   </div>
-                  <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, excludedSiteIds: [] }))}>清空</button>
+                  <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, excludedSiteIds: [] }))}>清空</Button>
                 </div>
                 <div className="downstream-key-modal-meta">已排除 {form.excludedSiteIds.length} 个站点</div>
                 <div className="toolbar-search" style={{ maxWidth: '100%' }}>
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input value={siteSearch} onChange={(e) => setSiteSearch(e.target.value)} placeholder="搜索站点" />
+                  <Input value={siteSearch} onChange={(e) => setSiteSearch(e.target.value)} placeholder="搜索站点" />
                 </div>
                 <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {exclusionSourceLoading ? (
@@ -574,24 +610,25 @@ export default function DownstreamKeyEditorModal({
                   ) : filteredSites.map((site) => {
                     const checked = form.excludedSiteIds.includes(site.siteId);
                     return (
-                      <label key={site.siteId} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                        <input
-                          type="checkbox"
+                      <div key={site.siteId} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <Checkbox
                           checked={checked}
-                          onChange={(e) => onChange((prev) => ({
+                          onChange={(nextChecked) => onChange((prev) => ({
                             ...prev,
                             excludedSiteIds: normalizeExcludedSiteIds(
-                              e.target.checked
+                              nextChecked
                                 ? [...prev.excludedSiteIds, site.siteId]
                                 : prev.excludedSiteIds.filter((item) => item !== site.siteId),
                             ),
                           }))}
+                          label={(
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>{site.siteName}</div>
+                              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{site.accountCount} 个账号</div>
+                            </div>
+                          )}
                         />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>{site.siteName}</div>
-                          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{site.accountCount} 个账号</div>
-                        </div>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
@@ -603,14 +640,14 @@ export default function DownstreamKeyEditorModal({
                     <div className="downstream-key-modal-section-title">排除 API Key/令牌</div>
                     <div className="downstream-key-modal-help">支持排除显式令牌，以及 `tokenId` 为空时实际使用的默认 API Key。</div>
                   </div>
-                  <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, excludedCredentialRefs: [] }))}>清空</button>
+                  <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, excludedCredentialRefs: [] }))}>清空</Button>
                 </div>
                 <div className="downstream-key-modal-meta">已排除 {form.excludedCredentialRefs.length} 个凭证</div>
                 <div className="toolbar-search" style={{ maxWidth: '100%' }}>
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input value={credentialSearch} onChange={(e) => setCredentialSearch(e.target.value)} placeholder="搜索站点 / 账号 / 令牌" />
+                  <Input value={credentialSearch} onChange={(e) => setCredentialSearch(e.target.value)} placeholder="搜索站点 / 账号 / 令牌" />
                 </div>
                 <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {exclusionSourceLoading ? (
@@ -620,28 +657,28 @@ export default function DownstreamKeyEditorModal({
                   ) : filteredCredentials.map((item) => {
                     const checked = form.excludedCredentialRefs.some((ref) => buildExcludedCredentialRefKey(ref) === buildExcludedCredentialRefKey(item.ref));
                     return (
-                      <label key={item.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                        <input
-                          type="checkbox"
+                      <div key={item.key} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <Checkbox
                           checked={checked}
-                          onChange={(e) => onChange((prev) => ({
+                          onChange={(nextChecked) => onChange((prev) => ({
                             ...prev,
                             excludedCredentialRefs: normalizeExcludedCredentialRefs(
-                              e.target.checked
+                              nextChecked
                                 ? [...prev.excludedCredentialRefs, item.ref]
                                 : prev.excludedCredentialRefs.filter((ref) => buildExcludedCredentialRefKey(ref) !== buildExcludedCredentialRefKey(item.ref)),
                             ),
                           }))}
-                          style={{ marginTop: 2 }}
+                          label={(
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>{item.label}</div>
+                              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>
+                                {item.siteName} / {item.accountName}
+                              </div>
+                              <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-muted)' }}>{item.detail}</div>
+                            </div>
+                          )}
                         />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>{item.label}</div>
-                          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>
-                            {item.siteName} / {item.accountName}
-                          </div>
-                          <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-muted)' }}>{item.detail}</div>
-                        </div>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
@@ -650,9 +687,6 @@ export default function DownstreamKeyEditorModal({
           </div>
         ) : null}
       </div>
-      <datalist id="downstream-group-suggestions">
-        {groupSuggestions.map((group) => <option key={group} value={group} />)}
-      </datalist>
-    </CenteredModal>
+    </EditorSurface>
   );
 }

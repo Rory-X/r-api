@@ -30,7 +30,7 @@ describe('Tokens legacy route redirect', () => {
           <MemoryRouter initialEntries={['/tokens?create=1&accountId=23&model=gpt-4.1']}>
             <Routes>
               <Route path="/tokens" element={<Tokens />} />
-              <Route path="/accounts" element={<LocationProbe />} />
+              <Route path="/channels/connections" element={<LocationProbe />} />
             </Routes>
           </MemoryRouter>
         </ToastProvider>,
@@ -38,7 +38,7 @@ describe('Tokens legacy route redirect', () => {
     });
 
     const rendered = JSON.stringify(root?.toJSON());
-    expect(rendered).toContain('/accounts?');
+    expect(rendered).toContain('/channels/connections?');
     expect(rendered).toContain('segment=tokens');
     expect(rendered).toContain('create=1');
     expect(rendered).toContain('accountId=23');

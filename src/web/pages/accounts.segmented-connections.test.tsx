@@ -87,18 +87,22 @@ describe('Accounts segmented connections view', () => {
       expect(rendered).toContain('连接管理');
       expect(rendered).toContain('账号管理');
       expect(rendered).toContain('API Key管理');
-      expect(rendered).toContain('账号令牌管理');
+      expect(rendered).toContain('上游 API Token');
       expect(rendered).toContain('用于签到、余额、状态维护');
       expect(rendered).toContain('只有 Base URL + Key 时使用，只负责代理调用');
-      expect(rendered).toContain('从账号同步或手动维护，供路由实际调用');
+      expect(rendered).toContain('从面板账号同步或创建，供模型请求路由使用');
       expect(rendered).toContain('Key Site');
       expect(rendered).not.toContain('仅代理');
       expect(rendered).not.toContain('session-user');
+      expect(rendered).not.toContain('自定义排序');
+      expect(rendered).not.toContain('置顶');
+      expect(rendered).not.toContain('上移');
+      expect(rendered).not.toContain('下移');
 
       const segmentButtons = root.root.findAll((node) => {
         if (node.type !== 'button') return false;
         const text = collectText(node);
-        return text === '账号管理' || text === 'API Key管理' || text === '账号令牌管理';
+        return text === '账号管理' || text === 'API Key管理' || text === '上游 API Token';
       });
       expect(segmentButtons).toHaveLength(3);
       expect(segmentButtons[0]?.props['data-tooltip-side']).toBe('bottom');

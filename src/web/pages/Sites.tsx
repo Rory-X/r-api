@@ -6,7 +6,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import { getAuthToken } from '../authSession.js';
 import { getBrand } from '../components/BrandIcon.js';
 import CenteredModal from '../components/CenteredModal.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
@@ -19,9 +18,9 @@ import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteCreatedModal from '../components/SiteCreatedModal.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
-import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
+import { buildAccountFocusPath, clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
-import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
+import { sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { resolveInitialConnectionSegment } from './helpers/defaultConnectionSegment.js';
 import {
@@ -42,6 +41,8 @@ import {
   listSiteInitializationPresets,
 } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
+import { resolveChannelPath } from './channels/navigation.js';
+import SiteKeyListModal from './sites/SiteKeyListModal.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -57,11 +58,13 @@ type SiteRow = {
   id: number;
   name: string;
   url: string;
+  homepageUrl?: string | null;
   externalCheckinUrl?: string | null;
   platform?: string;
   status?: string;
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
+  codexFingerprintEnabled?: boolean;
   customHeaders?: string | null;
   globalWeight?: number;
   isPinned?: boolean;
@@ -83,6 +86,10 @@ type SiteRow = {
   }>;
 };
 
+function resolveSiteHomepageUrl(site: Pick<SiteRow, 'homepageUrl' | 'url'>): string {
+  return site.homepageUrl?.trim() || site.url;
+}
+
 function hasConfiguredCustomHeaders(customHeaders?: string | null): boolean {
   return typeof customHeaders === 'string' && customHeaders.trim().length > 0;
 }
@@ -95,7 +102,7 @@ function getConfiguredSiteApiEndpoints(site?: Pick<SiteRow, 'apiEndpoints'> | nu
 
 function buildSiteApiEndpointSummary(site?: Pick<SiteRow, 'apiEndpoints'> | null): string {
   const endpoints = getConfiguredSiteApiEndpoints(site);
-  if (endpoints.length <= 0) return '跟随主站点 URL';
+  if (endpoints.length <= 0) return '跟随请求/管理地址';
   const enabledCount = endpoints.filter((item) => item.enabled !== false).length;
   return `${enabledCount}/${endpoints.length} 条启用`;
 }
@@ -286,8 +293,7 @@ export default function Sites() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [togglingSiteId, setTogglingSiteId] = useState<number | null>(null);
-  const [orderingSiteId, setOrderingSiteId] = useState<number | null>(null);
-  const [pinningSiteId, setPinningSiteId] = useState<number | null>(null);
+  const [keyListSite, setKeyListSite] = useState<SiteRow | null>(null);
   const [selectedSiteIds, setSelectedSiteIds] = useState<number[]>([]);
   const [expandedSiteIds, setExpandedSiteIds] = useState<number[]>([]);
   const [createdSiteForChoice, setCreatedSiteForChoice] = useState<{
@@ -334,6 +340,7 @@ export default function Sites() {
     [selectedInitializationPresetId],
   );
   const primarySiteUrlAnalysis = useMemo(() => analyzePrimarySiteUrl(form.url), [form.url]);
+  const homepageUrlAnalysis = useMemo(() => analyzePrimarySiteUrl(form.homepageUrl), [form.homepageUrl]);
   const latestPrimarySiteUrlRef = useRef(form.url);
   const latestPlatformRef = useRef(form.platform);
   const latestInitializationPresetIdRef = useRef(selectedInitializationPresetId);
@@ -621,16 +628,12 @@ export default function Sites() {
     setProbeCompleted(false);
 
     try {
-      const token = getAuthToken(localStorage);
       const params = new URLSearchParams({ scope: probeScope });
       if (probeScope === 'single' && probeModel.trim()) params.set('modelName', probeModel.trim());
       const threshold = parseInt(probeLatencyThreshold, 10);
       if (Number.isFinite(threshold) && threshold > 0) params.set('latencyThresholdMs', String(threshold));
 
-      const res = await fetch(`/api/sites/${siteId}/probe-stream?${params}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: controller.signal,
-      });
+      const res = await api.openSiteProbeStream(siteId, params, controller.signal);
 
       if (!res.ok || !res.body) {
         let errMsg = `连接失败 (HTTP ${res.status})`;
@@ -760,11 +763,15 @@ export default function Sites() {
     const payload = {
       name: form.name.trim(),
       url: primarySiteUrlAnalysis.persistedUrl || form.url.trim(),
+      homepageUrl: form.homepageUrl.trim()
+        ? (homepageUrlAnalysis.persistedUrl || form.homepageUrl.trim())
+        : '',
       externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
       initializationPresetId: selectedInitializationPresetId,
       proxyUrl: form.proxyUrl.trim(),
       useSystemProxy: !!form.useSystemProxy,
+      codexFingerprintEnabled: !!form.codexFingerprintEnabled,
       apiEndpoints: serializedApiEndpoints.apiEndpoints,
       customHeaders: serializedCustomHeaders.customHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
@@ -776,6 +783,15 @@ export default function Sites() {
     if (!payload.name || !payload.url) {
       toast.error('请填写站点名称和 URL');
       return;
+    }
+    if (payload.homepageUrl) {
+      try {
+        const parsedHomepageUrl = new URL(payload.homepageUrl);
+        if (parsedHomepageUrl.protocol !== 'http:' && parsedHomepageUrl.protocol !== 'https:') throw new Error();
+      } catch {
+        toast.error('站点主地址必须是有效的 HTTP(S) URL');
+        return;
+      }
     }
 
     setSaving(true);
@@ -789,7 +805,7 @@ export default function Sites() {
           && typeof created?.url === 'string'
           && created.url.trim()
         ) {
-          toast.info(`已自动规范化主站点 URL 为 ${created.url.trim()}`);
+          toast.info(`已自动规范化请求/管理地址为 ${created.url.trim()}`);
         }
         const createdSiteId = Number(created?.id) || 0;
         if (createdSiteId > 0) {
@@ -815,7 +831,7 @@ export default function Sites() {
           && typeof updated?.url === 'string'
           && updated.url.trim()
         ) {
-          toast.info(`已自动规范化主站点 URL 为 ${updated.url.trim()}`);
+          toast.info(`已自动规范化请求/管理地址为 ${updated.url.trim()}`);
         }
       }
       closeEditor();
@@ -915,15 +931,15 @@ export default function Sites() {
     if (input.choice === 'session') {
       if (platform === 'codex') {
         params.set('provider', 'codex');
-        navigate(`/oauth?${params.toString()}`);
+        navigate(`${resolveChannelPath(location.pathname, 'oauth')}?${params.toString()}`);
         return;
       }
-      navigate(`/accounts?${params.toString()}`);
+        navigate(`${resolveChannelPath(location.pathname, 'connections')}?${params.toString()}`);
       return;
     }
 
     params.set('segment', 'apikey');
-    navigate(`/accounts?${params.toString()}`);
+      navigate(`${resolveChannelPath(location.pathname, 'connections')}?${params.toString()}`);
   };
 
   const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
@@ -985,7 +1001,7 @@ export default function Sites() {
           && typeof result?.url === 'string'
           && result.url.trim()
         ) {
-          toast.info(`已自动规范化主站点 URL 为 ${result.url.trim()}`);
+          toast.info(`已自动规范化请求/管理地址为 ${result.url.trim()}`);
         }
         toast.success(
           detectedPreset
@@ -1020,45 +1036,13 @@ export default function Sites() {
     }
   };
 
-  /**
-   * 从站点列表直接进入 API Key 批量添加入口。
-   */
-  const handleOpenSiteApiKey = (site: SiteRow) => {
+  const handleAddSiteApiKey = (site: { id: number; url?: string | null; platform?: string | null }) => {
     openSiteConnectionFlow({
       siteId: site.id,
       platform: site.platform,
-      initializationPresetId: detectSiteInitializationPreset(site.url, site.platform)?.id || null,
+      initializationPresetId: detectSiteInitializationPreset(site.url || '', site.platform)?.id || null,
       choice: 'apikey',
     });
-  };
-
-  const handleTogglePin = async (site: SiteRow) => {
-    const nextPinned = !site.isPinned;
-    setPinningSiteId(site.id);
-    try {
-      await api.updateSite(site.id, { isPinned: nextPinned });
-      toast.success(nextPinned ? `站点 "${site.name}" 已置顶` : `站点 "${site.name}" 已取消置顶`);
-      await load();
-    } catch (e: any) {
-      toast.error(e.message || '切换置顶失败');
-    } finally {
-      setPinningSiteId(null);
-    }
-  };
-
-  const handleMoveCustomOrder = async (site: SiteRow, direction: 'up' | 'down') => {
-    const updates = buildCustomReorderUpdates(sites, site.id, direction);
-    if (updates.length === 0) return;
-
-    setOrderingSiteId(site.id);
-    try {
-      await Promise.all(updates.map((update) => api.updateSite(update.id, { sortOrder: update.sortOrder })));
-      await load();
-    } catch (e: any) {
-      toast.error(e.message || '更新排序失败');
-    } finally {
-      setOrderingSiteId(null);
-    }
   };
 
   const toggleSiteSelection = (siteId: number, checked: boolean) => {
@@ -1155,7 +1139,7 @@ export default function Sites() {
                 className="btn btn-ghost"
                 style={{ border: '1px solid var(--color-border)' }}
               >
-                排序与操作
+                排序与选择
               </button>
               <button
                 type="button"
@@ -1174,11 +1158,11 @@ export default function Sites() {
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                 options={[
-                  { value: 'custom', label: '自定义排序' },
+                  { value: 'custom', label: '默认排序' },
                   { value: 'balance-desc', label: '余额高到低' },
                   { value: 'balance-asc', label: '余额低到高' },
                 ]}
-                placeholder="自定义排序"
+                placeholder="默认排序"
               />
             </div>
           )}
@@ -1192,7 +1176,7 @@ export default function Sites() {
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="站点排序与操作"
+        mobileTitle="站点排序与选择"
         mobileContent={(
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1201,11 +1185,11 @@ export default function Sites() {
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                 options={[
-                  { value: 'custom', label: '自定义排序' },
+                  { value: 'custom', label: '默认排序' },
                   { value: 'balance-desc', label: '余额高到低' },
                   { value: 'balance-asc', label: '余额低到高' },
                 ]}
-                placeholder="自定义排序"
+                placeholder="默认排序"
               />
             </div>
             <button
@@ -1292,6 +1276,14 @@ export default function Sites() {
         />
       )}
 
+      <SiteKeyListModal
+        open={Boolean(keyListSite)}
+        site={keyListSite}
+        onClose={() => setKeyListSite(null)}
+        onAddKey={(site) => handleAddSiteApiKey(site)}
+        onOpenKey={(accountId) => navigate(buildAccountFocusPath(accountId, { segment: 'apikey' }))}
+      />
+
       {activeEditor && (
         <CenteredModal
           open={Boolean(editor)}
@@ -1334,7 +1326,7 @@ export default function Sites() {
             <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row' }}>
               <input
                 data-testid="site-primary-url-input"
-                placeholder="准确主站点 URL（面板/登录/签到地址，如 https://nih.cc）"
+                placeholder="站点请求/管理地址（如 https://api.nih.cc）"
                 value={form.url}
                 onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
                 onBlur={() => {
@@ -1353,6 +1345,13 @@ export default function Sites() {
                 {detecting ? <><span className="spinner spinner-sm" /> 检测中</> : '自动检测'}
               </button>
             </div>
+            <input
+              data-testid="site-homepage-url-input"
+              placeholder="站点主地址（浏览器面板/登录页；不填则跟随请求地址）"
+              value={form.homepageUrl}
+              onChange={(e) => setForm((prev) => ({ ...prev, homepageUrl: e.target.value }))}
+              style={formInputStyle}
+            />
             <div
               style={{
                 border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-primary) 28%, var(--color-border))' : 'var(--color-border)'}`,
@@ -1409,29 +1408,29 @@ export default function Sites() {
             </div>
           )}
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-            请填写准确的主站点 URL。这里填写主站点/面板/登录地址，用于登录、签到、面板接口和系统访问令牌管理；不要把 OpenAI/Gemini 请求路径直接填到主站点 URL；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
+            请求/管理地址用于平台探测、面板接口和令牌管理；站点主地址用于浏览器访问、登录和凭证采集任务。不配置主地址时，浏览器任务会回退到请求/管理地址。若模型请求数据面另有入口，请在下方 API 请求地址池中配置。
           </div>
           {primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix' && primarySiteUrlAnalysis.persistedUrl ? (
             <div className="alert alert-info animate-scale-in">
               <div className="alert-title">检测到常见 API 路径后缀</div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-                保存或自动检测时会将主站点 URL 规范化为 {primarySiteUrlAnalysis.persistedUrl}。
+                保存或自动检测时会将请求/管理地址规范化为 {primarySiteUrlAnalysis.persistedUrl}。
               </div>
             </div>
           ) : null}
           {primarySiteUrlAnalysis.action === 'preserve_api_path' && primarySiteUrlAnalysis.persistedUrl ? (
             <div className="alert alert-warning animate-scale-in">
-              <div className="alert-title">请确认主站点 URL</div>
+              <div className="alert-title">请确认请求/管理地址</div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-                当前 URL 含 /api 路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
+                当前地址含 /api 路径，将原样保留。请确认平台管理接口确实以此为基址；仅用于模型请求的数据面地址应填到下方 API 请求地址池。
               </div>
             </div>
           ) : null}
           {primarySiteUrlAnalysis.action === 'preserve_unknown_path' && primarySiteUrlAnalysis.persistedUrl ? (
             <div className="alert alert-warning animate-scale-in">
-              <div className="alert-title">请确认主站点 URL</div>
+              <div className="alert-title">请确认请求/管理地址</div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-                当前 URL 含额外路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
+                当前地址含额外路径，将原样保留。请确认平台管理接口确实以此为基址；浏览器打开的入口请填写上方站点主地址。
               </div>
             </div>
           ) : null}
@@ -1460,7 +1459,7 @@ export default function Sites() {
               </button>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-              这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。
+              这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随请求/管理地址；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。
             </div>
             {form.apiEndpoints.map((endpoint, index) => (
               <div
@@ -1922,6 +1921,29 @@ export default function Sites() {
               />
               使用系统代理
             </label>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '10px 14px',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 13,
+              background: 'var(--color-bg)',
+              color: 'var(--color-text-primary)',
+            }}>
+              <input
+                type="checkbox"
+                checked={form.codexFingerprintEnabled}
+                onChange={(e) => setForm((prev) => ({ ...prev, codexFingerprintEnabled: e.target.checked }))}
+              />
+              <span>
+                Codex 引擎指纹头
+                <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  透传下游 x-codex-* 请求头，缺失时自动补 x-codex-window-id，用于穿过上游（如 sub2api codex_cli_only）的 Codex 官方客户端校验。
+                </span>
+              </span>
+            </label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <input
                 placeholder="站点全局权重（默认 1）"
@@ -1949,9 +1971,9 @@ export default function Sites() {
                     title={(
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <span>{site.name || '-'}</span>
-                        {site.url ? (
+                        {resolveSiteHomepageUrl(site) ? (
                           <a
-                            href={site.url}
+                            href={resolveSiteHomepageUrl(site)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="sites-url-link"
@@ -1963,7 +1985,7 @@ export default function Sites() {
                               wordBreak: 'break-all',
                             }}
                           >
-                            {site.url}
+                            {resolveSiteHomepageUrl(site)}
                           </a>
                         ) : null}
                       </div>
@@ -1986,10 +2008,10 @@ export default function Sites() {
                           {isExpanded ? '收起' : '详情'}
                         </button>
                         <button
-                          onClick={() => handleOpenSiteApiKey(site)}
+                          onClick={() => setKeyListSite(site)}
                           className="btn btn-link btn-link-primary"
                         >
-                          添加 Key
+                          Key 列表
                         </button>
                         <button
                           onClick={() => openEdit(site)}
@@ -2037,11 +2059,11 @@ export default function Sites() {
                     {isExpanded ? (
                       <div className="mobile-card-extra">
                         <MobileField
-                          label="主站点 URL"
+                          label="站点主地址"
                           stacked
-                          value={site.url ? (
+                          value={resolveSiteHomepageUrl(site) ? (
                             <a
-                              href={site.url}
+                              href={resolveSiteHomepageUrl(site)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="sites-url-link"
@@ -2053,9 +2075,14 @@ export default function Sites() {
                                 wordBreak: 'break-all',
                               }}
                             >
-                              {site.url}
+                              {resolveSiteHomepageUrl(site)}
                             </a>
                           ) : '-'}
+                        />
+                        <MobileField
+                          label="请求/管理地址"
+                          stacked
+                          value={site.url || '-'}
                         />
                         <MobileField
                           label="API 请求地址"
@@ -2118,31 +2145,6 @@ export default function Sites() {
                         />
                         <div className="mobile-card-actions">
                           <button
-                            onClick={() => handleTogglePin(site)}
-                            disabled={pinningSiteId === site.id}
-                            className={`btn btn-link ${site.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
-                          >
-                            {pinningSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.isPinned ? '取消置顶' : '置顶')}
-                          </button>
-                          {sortMode === 'custom' && (
-                            <>
-                              <button
-                                onClick={() => handleMoveCustomOrder(site, 'up')}
-                                disabled={orderingSiteId === site.id}
-                                className="btn btn-link btn-link-muted"
-                              >
-                                ↑ 上移
-                              </button>
-                              <button
-                                onClick={() => handleMoveCustomOrder(site, 'down')}
-                                disabled={orderingSiteId === site.id}
-                                className="btn btn-link btn-link-muted"
-                              >
-                                ↓ 下移
-                              </button>
-                            </>
-                          )}
-                          <button
                             onClick={() => handleDelete(site)}
                             disabled={deleting === site.id}
                             className="btn btn-link btn-link-danger"
@@ -2202,7 +2204,7 @@ export default function Sites() {
                     <td style={{ fontWeight: 600 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
                         <a
-                          href={site.url}
+                          href={resolveSiteHomepageUrl(site)}
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{
@@ -2262,7 +2264,7 @@ export default function Sites() {
                     </td>
                     <td>
                       <a
-                        href={site.url}
+                        href={resolveSiteHomepageUrl(site)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ textDecoration: 'none' }}
@@ -2274,7 +2276,7 @@ export default function Sites() {
                     </td>
                     <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
                       <a
-                        href={site.url}
+                        href={resolveSiteHomepageUrl(site)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ color: 'var(--color-text-muted)', textDecoration: 'underline' }}
@@ -2285,35 +2287,10 @@ export default function Sites() {
                     <td className="sites-actions-cell" style={{ textAlign: 'right' }}>
                       <div className="sites-row-actions">
                         <button
-                          onClick={() => handleTogglePin(site)}
-                          disabled={pinningSiteId === site.id}
-                          className={`btn btn-link ${site.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
-                        >
-                          {pinningSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.isPinned ? '取消置顶' : '置顶')}
-                        </button>
-                        {sortMode === 'custom' && (
-                          <>
-                            <button
-                              onClick={() => handleMoveCustomOrder(site, 'up')}
-                              disabled={orderingSiteId === site.id}
-                              className="btn btn-link btn-link-muted"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              onClick={() => handleMoveCustomOrder(site, 'down')}
-                              disabled={orderingSiteId === site.id}
-                              className="btn btn-link btn-link-muted"
-                            >
-                              ↓
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={() => handleOpenSiteApiKey(site)}
+                          onClick={() => setKeyListSite(site)}
                           className="btn btn-link btn-link-primary"
                         >
-                          添加 Key
+                          Key 列表
                         </button>
                         <button
                           onClick={() => openEdit(site)}

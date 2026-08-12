@@ -616,13 +616,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         expiredTime: form.expiredTime || undefined,
         allowIps: form.allowIps,
       });
-      toast.success('已在站点创建并同步令牌');
+      toast.success('已在上游创建并同步 API Token');
       setForm(initialCreateForm);
       setShowAdd(false);
       setCreateHintModelName('');
       await load();
     } catch (e: any) {
-      toast.error(e.message || '创建令牌失败');
+      toast.error(e.message || '创建上游 API Token 失败');
     } finally {
       setSaving(false);
     }
@@ -635,7 +635,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       const res = await api.syncAccountTokens(syncingAccountId) as AccountTokenSyncResult;
       const status = resolveSyncStatus(res);
       if (status === 'failed') {
-        toast.error(`同步失败：${resolveSyncMessage(res, '请检查账号令牌或站点状态')}`);
+        toast.error(`同步失败：${resolveSyncMessage(res, '请检查面板账号或上游站点状态')}`);
       } else if (isMaskedPendingSyncResult(res)) {
         toast.info(resolveSyncMessage(res, '上游返回了脱敏令牌，请补全明文 token'));
         const loaded = await load();
@@ -662,7 +662,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       }
       await load();
     } catch (e: any) {
-      toast.error(e.message || '同步令牌失败');
+      toast.error(e.message || '同步上游 Token 失败');
     } finally {
       setSyncing(false);
     }
@@ -673,7 +673,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     try {
       const res = await api.syncAllAccountTokens();
       if (res?.queued) {
-        toast.info(res.message || '已开始同步令牌，请稍后查看日志');
+        toast.info(res.message || '已开始同步上游 Token，请稍后查看日志');
         await load();
         return;
       }
@@ -692,7 +692,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         } else if (status === 'skipped') {
           toast.info(`全部同步已跳过：${resolveSyncMessage(res, '没有可同步的账号')}`);
         } else {
-          toast.success('全部账号同步完成');
+          toast.success('全部面板账号同步完成');
         }
       } else {
         const failedRows = syncResults.filter((item) => resolveSyncStatus(item) === 'failed');
@@ -805,10 +805,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               value={String(syncingAccountId || 0)}
               onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
               options={[
-                { value: '0', label: '选择账号后同步站点令牌' },
+                { value: '0', label: '选择面板账号后同步' },
                 ...activeAccountSelectOptions,
               ]}
-              placeholder="选择账号后同步站点令牌"
+              placeholder="选择面板账号后同步"
               searchable
               searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
             />
@@ -819,7 +819,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             className="btn btn-ghost"
             style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
           >
-            {syncing ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步站点令牌'}
+            {syncing ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步上游 Token'}
           </button>
           <button
             onClick={handleSyncAll}
@@ -827,7 +827,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             className="btn btn-ghost"
             style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
           >
-            {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部账号'}
+            {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部面板账号'}
           </button>
         </>
       )}
@@ -835,7 +835,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         onClick={handleToggleAdd}
         className="btn btn-primary"
       >
-        {showAdd ? '取消' : '+ 新增令牌'}
+        {showAdd ? '取消' : '在上游创建 Token'}
       </button>
     </div>
   ), [activeAccountSelectOptions, activeAccounts.length, allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, showAdd, syncing, syncingAccountId, syncingAll]);
@@ -852,7 +852,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     <div className={embedded ? '' : 'animate-fade-in'}>
       {(!embedded || !onEmbeddedActionsChange) && (
         <div className="page-header">
-          {!embedded ? <h2 className="page-title">{tr('账号令牌')}</h2> : <div />}
+          {!embedded ? <h2 className="page-title">{tr('上游 API Token')}</h2> : <div />}
           {headerActions}
         </div>
       )}
@@ -861,19 +861,19 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="令牌同步与筛选"
+        mobileTitle="上游 Token 同步与筛选"
         mobileContent={(
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>同步账号</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>面板账号</div>
               <ModernSelect
                 value={String(syncingAccountId || 0)}
                 onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
                 options={[
-                  { value: '0', label: '选择账号后同步站点令牌' },
+                  { value: '0', label: '选择面板账号后同步' },
                   ...activeAccountSelectOptions,
                 ]}
-                placeholder="选择账号后同步站点令牌"
+                placeholder="选择面板账号后同步"
                 searchable
                 searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
               />
@@ -884,7 +884,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               className="btn btn-ghost"
               style={{ border: '1px solid var(--color-border)' }}
             >
-              {syncing ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步站点令牌'}
+              {syncing ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步上游 Token'}
             </button>
             <button
               onClick={handleSyncAll}
@@ -892,14 +892,14 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               className="btn btn-ghost"
               style={{ border: '1px solid var(--color-border)' }}
             >
-              {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部账号'}
+              {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部面板账号'}
             </button>
           </div>
         )}
       />
 
       <div className="info-tip" style={{ marginBottom: 12 }}>
-        新增令牌会调用站点 API 创建新密钥，再自动同步到本地。支持设置分组、额度、过期时间和 IP 白名单；已存在密钥可直接用“同步站点令牌”读取。
+        这里管理的是面板账号在上游站点签发的 API Token，不是登录 Session 或直连 API Key。可从上游同步已有 Token，也可调用上游 API 创建新 Token；这些 Token 会作为模型路由通道的实际调用凭证。
       </div>
 
       <DeleteConfirmModal
@@ -1054,13 +1054,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       <CenteredModal
         open={showAdd}
         onClose={handleToggleAdd}
-        title="新增令牌"
+        title="创建上游 API Token"
         maxWidth={820}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       >
         <ResponsiveFormGrid>
           <div style={{ gridColumn: '1 / -1' }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>所属账号</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>所属面板账号</div>
             <ModernSelect
               value={String(form.accountId || 0)}
               onChange={(nextValue) => {
@@ -1091,7 +1091,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 padding: '6px 8px',
               }}
             >
-              来自路由提醒：为模型 <code style={{ fontSize: 11 }}>{createHintModelName}</code> 补充该账号令牌后，可自动生成对应通道。
+              来自路由提醒：为模型 <code style={{ fontSize: 11 }}>{createHintModelName}</code> 补充该账号的上游 API Token 后，可自动生成对应通道。
             </div>
           ) : null}
           <div>
@@ -1153,7 +1153,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             />
           </div>
           <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>
-            将在选中账号所属站点直接创建新密钥
+            将在选中账号所属上游站点直接创建 API Token
           </div>
         </ResponsiveFormGrid>
 
@@ -1164,7 +1164,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             disabled={saving || !form.accountId}
             className="btn btn-primary"
           >
-            {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 创建中...</> : '创建并同步令牌'}
+            {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 创建中...</> : '在上游创建并同步'}
           </button>
         </div>
       </CenteredModal>
@@ -1447,8 +1447,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         ) : (
           <div className="empty-state">
             <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
-            <div className="empty-state-title">暂无令牌</div>
-            <div className="empty-state-desc">可先同步站点令牌，或直接在站点创建新令牌。</div>
+            <div className="empty-state-title">暂无上游 API Token</div>
+            <div className="empty-state-desc">从面板账号同步已有 Token，或在上游创建一个新 Token。</div>
           </div>
         )}
       </div>
@@ -1461,5 +1461,5 @@ export default function Tokens() {
   const params = new URLSearchParams(location.search);
   params.set('segment', 'tokens');
   const nextSearch = params.toString();
-  return <Navigate to={`/accounts${nextSearch ? `?${nextSearch}` : ''}`} replace />;
+  return <Navigate to={`/channels/connections${nextSearch ? `?${nextSearch}` : ''}`} replace />;
 }

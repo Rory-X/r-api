@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
-import ModernSelect from '../components/ModernSelect.js';
 import Settings from './Settings.js';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -43,7 +42,7 @@ async function flushMicrotasks() {
   });
 }
 
-describe('Settings route cooldown cap', () => {
+describe('Settings routing entry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.getAuthInfo.mockResolvedValue({ masked: 'sk-****' });
@@ -56,10 +55,6 @@ describe('Settings route cooldown cap', () => {
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
-      routingFallbackUnitCost: 1,
-      proxyFirstByteTimeoutSec: 0,
-      routingWeights: {},
-      tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
@@ -79,160 +74,37 @@ describe('Settings route cooldown cap', () => {
     vi.clearAllMocks();
   });
 
-  it('converts the selected route cooldown unit back into seconds when saving routing settings', async () => {
+  it('links to the route strategy workspace instead of rendering a duplicate form', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings']}>
             <ToastProvider>
-              <Settings />
+              <Routes>
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/routes" element={<div>路由策略目标页</div>} />
+              </Routes>
             </ToastProvider>
           </MemoryRouter>,
         );
       });
       await flushMicrotasks();
 
-      const cooldownInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'number'
-        && node.props['aria-label'] === '路由失败冷却上限数值'
-      ));
-      const cooldownUnitSelect = root.root.find((node) => (
-        node.type === ModernSelect
-        && node.props.placeholder === '选择单位'
-      ));
+      const pageText = collectText(root.root);
+      expect(pageText).toContain('调度策略已迁移到路由工作区');
+      expect(pageText).not.toContain('保存路由策略');
+      expect(root.root.findAll((node) => node.props['aria-label'] === '首字超时秒数')).toHaveLength(0);
 
-      await act(async () => {
-        cooldownInput.props.onChange({ target: { value: '10' } });
-        cooldownUnitSelect.props.onChange('second');
-      });
-
-      const saveButton = root.root.find((node) => (
+      const entryButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '保存路由策略'
+        && collectText(node).trim() === '前往调度策略'
       ));
-
       await act(async () => {
-        saveButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
-        routingWeights: {
-          baseWeightFactor: 0.5,
-          valueScoreFactor: 0.5,
-          costWeight: 0.4,
-          balanceWeight: 0.3,
-          usageWeight: 0.3,
-        },
-        routingFallbackUnitCost: 1,
-        proxyFirstByteTimeoutSec: 0,
-        tokenRouterFailureCooldownMaxSec: 10,
-        disableCrossProtocolFallback: false,
-      });
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('infers seconds as the editing unit when the saved cap is not an even day/hour/minute multiple', async () => {
-    apiMock.getRuntimeSettings.mockResolvedValueOnce({
-      checkinCron: '0 8 * * *',
-      checkinScheduleMode: 'interval',
-      checkinIntervalHours: 6,
-      balanceRefreshCron: '0 * * * *',
-      logCleanupCron: '15 4 * * *',
-      logCleanupUsageLogsEnabled: true,
-      logCleanupProgramLogsEnabled: true,
-      logCleanupRetentionDays: 14,
-      routingFallbackUnitCost: 1,
-      proxyFirstByteTimeoutSec: 0,
-      routingWeights: {},
-      tokenRouterFailureCooldownMaxSec: 10,
-      adminIpAllowlist: [],
-      systemProxyUrl: '',
-    });
-
-    let root!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <Settings />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const cooldownInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'number'
-        && node.props['aria-label'] === '路由失败冷却上限数值'
-      ));
-      const cooldownUnitSelect = root.root.find((node) => (
-        node.type === ModernSelect
-        && node.props.placeholder === '选择单位'
-      ));
-
-      expect(cooldownInput.props.value).toBe(10);
-      expect(cooldownUnitSelect.props.value).toBe('second');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('saves the first-byte timeout seconds alongside other routing runtime settings', async () => {
-    let root!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <Settings />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const firstByteInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'number'
-        && node.props['aria-label'] === '首字超时秒数'
-      ));
-
-      await act(async () => {
-        firstByteInput.props.onChange({ target: { value: '7' } });
+        entryButton.props.onClick();
       });
 
-      const saveButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '保存路由策略'
-      ));
-
-      await act(async () => {
-        saveButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
-        routingWeights: {
-          baseWeightFactor: 0.5,
-          valueScoreFactor: 0.5,
-          costWeight: 0.4,
-          balanceWeight: 0.3,
-          usageWeight: 0.3,
-        },
-        routingFallbackUnitCost: 1,
-        proxyFirstByteTimeoutSec: 7,
-        tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
-        disableCrossProtocolFallback: false,
-      });
+      expect(collectText(root.root)).toContain('路由策略目标页');
     } finally {
       root?.unmount();
     }

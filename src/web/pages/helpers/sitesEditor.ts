@@ -14,10 +14,12 @@ export type SiteApiEndpointField = {
 export type SiteForm = {
   name: string;
   url: string;
+  homepageUrl: string;
   externalCheckinUrl: string;
   platform: string;
   proxyUrl: string;
   useSystemProxy: boolean;
+  codexFingerprintEnabled: boolean;
   apiEndpoints: SiteApiEndpointField[];
   customHeaders: SiteCustomHeaderField[];
   globalWeight: string;
@@ -30,11 +32,13 @@ export type SiteEditorState =
 export type SiteSavePayload = {
   name: string;
   url: string;
+  homepageUrl: string;
   externalCheckinUrl: string;
   platform: string;
   initializationPresetId?: string | null;
   proxyUrl: string;
   useSystemProxy: boolean;
+  codexFingerprintEnabled: boolean;
   apiEndpoints: Array<{
     url: string;
     enabled: boolean;
@@ -73,10 +77,12 @@ export function emptySiteForm(): SiteForm {
   return {
     name: '',
     url: '',
+    homepageUrl: '',
     externalCheckinUrl: '',
     platform: '',
     proxyUrl: '',
     useSystemProxy: false,
+    codexFingerprintEnabled: false,
     apiEndpoints: [emptySiteApiEndpoint()],
     customHeaders: [emptySiteCustomHeader()],
     globalWeight: '1',
@@ -131,10 +137,12 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'globalWeight' | 'homepageUrl' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy' | 'codexFingerprintEnabled'>> & {
+  homepageUrl?: string | null;
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
+  codexFingerprintEnabled?: boolean | null;
   apiEndpoints?: Array<{
     url?: string | null;
     enabled?: boolean | null;
@@ -149,10 +157,12 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   return {
     name: site.name ?? '',
     url: site.url ?? '',
+    homepageUrl: site.homepageUrl ?? '',
     externalCheckinUrl: site.externalCheckinUrl ?? '',
     platform: site.platform ?? '',
     proxyUrl: site.proxyUrl ?? '',
     useSystemProxy: !!site.useSystemProxy,
+    codexFingerprintEnabled: !!site.codexFingerprintEnabled,
     apiEndpoints: parseApiEndpointsForEditor(site.apiEndpoints),
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     globalWeight,

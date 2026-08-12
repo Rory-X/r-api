@@ -15,6 +15,8 @@ const SiteTrendChart = lazy(
   () => import("../components/charts/SiteTrendChart.js"),
 );
 
+const DASHBOARD_SITE_PREVIEW_LIMIT = 4;
+
 function getGreeting(): string {
   const hour = new Date().getHours();
   if (hour < 6) return "🌙 夜深了";
@@ -36,7 +38,7 @@ function safeNumber(value: unknown): number {
 
 function ChartFallback({ height = 280 }: { height?: number }) {
   return (
-    <div className="card" style={{ minHeight: height, padding: 16 }}>
+    <div className="card" style={{ width: "100%", minHeight: height, padding: 16 }}>
       <div
         className="skeleton"
         style={{ width: 160, height: 18, marginBottom: 12 }}
@@ -526,6 +528,11 @@ export default function Dashboard({
   const siteAvailability = showInactiveSites
     ? [...activeSites, ...inactiveSites]
     : activeSites;
+  const dashboardSitePreview = sites.slice(0, DASHBOARD_SITE_PREVIEW_LIMIT);
+  const hiddenDashboardSiteCount = Math.max(
+    0,
+    sites.length - dashboardSitePreview.length,
+  );
 
   const getLatencyColor = (ms: number) =>
     ms <= 500
@@ -1037,7 +1044,7 @@ export default function Dashboard({
           marginBottom: 24,
         }}
       >
-        <div className="chart-panel-enter animate-slide-up stagger-6">
+        <div className="chart-panel-enter animate-slide-up stagger-6" style={{ display: "flex", minWidth: 0 }}>
           <Suspense fallback={<ChartFallback height={320} />}>
             <SiteDistributionChart
               data={siteDistribution}
@@ -1045,7 +1052,7 @@ export default function Dashboard({
             />
           </Suspense>
         </div>
-        <div className="chart-panel-enter animate-slide-up stagger-7">
+        <div className="chart-panel-enter animate-slide-up stagger-7" style={{ display: "flex", minWidth: 0 }}>
           <Suspense fallback={<ChartFallback height={320} />}>
             <SiteTrendChart data={siteTrend} loading={siteLoading} />
           </Suspense>
@@ -1392,120 +1399,153 @@ export default function Dashboard({
             }}
           >
             {sites.length > 0 ? (
-              sites.map((site: any, idx: number) => (
-                <div
-                  key={site.id || idx}
-                  style={{
-                    padding: "10px 12px",
-                    border: "1px solid var(--color-border-light)",
-                    borderRadius: "var(--radius-md)",
-                    background: "var(--color-bg)",
-                  }}
-                >
+              <>
+                {dashboardSitePreview.map((site: any, idx: number) => (
                   <div
+                    key={site.id || idx}
+                    className="dashboard-site-preview-item"
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      marginBottom: 6,
-                      flexWrap: "wrap",
+                      padding: "10px 12px",
+                      border: "1px solid var(--color-border-light)",
+                      borderRadius: "var(--radius-md)",
+                      background: "var(--color-bg)",
                     }}
                   >
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>
-                      {site.name}
-                    </span>
-                    <button
-                      className="btn btn-ghost"
+                    <div
                       style={{
-                        fontSize: 11,
-                        padding: "2px 8px",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: 6,
-                        display: "inline-flex",
+                        display: "flex",
                         alignItems: "center",
-                        gap: 3,
-                      }}
-                      onClick={async () => {
-                        const siteKey = getSiteSpeedKey(site, idx);
-                        setSiteSpeedState(siteKey, { status: "loading" });
-                        try {
-                          const start = performance.now();
-                          await fetch(`${site.url}/v1/models`, {
-                            method: "GET",
-                            mode: "no-cors",
-                          });
-                          const ms = Math.round(performance.now() - start);
-                          setSiteSpeedState(siteKey, { status: "done", ms });
-                          toast.success(`${site.name}: ${ms}ms`);
-                        } catch {
-                          setSiteSpeedState(siteKey, { status: "timeout" });
-                          toast.error(`${site.name}: 测速失败`);
-                        }
+                        gap: 8,
+                        marginBottom: 6,
+                        flexWrap: "wrap",
                       }}
                     >
-                      <svg
-                        width="12"
-                        height="12"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>
+                        {site.name}
+                      </span>
+                      <button
+                        className="btn btn-ghost"
+                        style={{
+                          fontSize: 11,
+                          padding: "2px 8px",
+                          border: "1px solid var(--color-border)",
+                          borderRadius: 6,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 3,
+                        }}
+                        onClick={async () => {
+                          const siteKey = getSiteSpeedKey(site, idx);
+                          setSiteSpeedState(siteKey, { status: "loading" });
+                          try {
+                            const start = performance.now();
+                            await fetch(`${site.url}/v1/models`, {
+                              method: "GET",
+                              mode: "no-cors",
+                            });
+                            const ms = Math.round(performance.now() - start);
+                            setSiteSpeedState(siteKey, { status: "done", ms });
+                            toast.success(`${site.name}: ${ms}ms`);
+                          } catch {
+                            setSiteSpeedState(siteKey, { status: "timeout" });
+                            toast.error(`${site.name}: 测速失败`);
+                          }
+                        }}
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M13 10V3L4 14h7v7l9-11h-7z"
-                        />
-                      </svg>
-                      <span>{renderSiteSpeedLabel(site, idx)}</span>
-                    </button>
+                        <svg
+                          width="12"
+                          height="12"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13 10V3L4 14h7v7l9-11h-7z"
+                          />
+                        </svg>
+                        <span>{renderSiteSpeedLabel(site, idx)}</span>
+                      </button>
+                      <a
+                        href={site.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-ghost"
+                        style={{
+                          fontSize: 11,
+                          padding: "2px 8px",
+                          border: "1px solid var(--color-border)",
+                          borderRadius: 6,
+                          textDecoration: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 3,
+                        }}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                          />
+                        </svg>
+                        跳转
+                      </a>
+                    </div>
                     <a
                       href={site.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="btn btn-ghost"
                       style={{
-                        fontSize: 11,
-                        padding: "2px 8px",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: 6,
-                        textDecoration: "none",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 3,
+                        fontSize: 12,
+                        color: "var(--color-info)",
+                        wordBreak: "break-all",
                       }}
                     >
-                      <svg
-                        width="12"
-                        height="12"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                        />
-                      </svg>
-                      跳转
+                      {site.url}
                     </a>
                   </div>
-                  <a
-                    href={site.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                ))}
+                {hiddenDashboardSiteCount > 0 && (
+                  <Link
+                    to="/channels/sites"
+                    className="btn btn-ghost dashboard-site-preview-more"
                     style={{
-                      fontSize: 12,
-                      color: "var(--color-info)",
-                      wordBreak: "break-all",
+                      width: "100%",
+                      minHeight: 34,
+                      border: "1px solid var(--color-border-light)",
+                      color: "var(--color-text-secondary)",
+                      textDecoration: "none",
                     }}
                   >
-                    {site.url}
-                  </a>
-                </div>
-              ))
+                    查看全部 {sites.length} 个站点
+                    <svg
+                      width="13"
+                      height="13"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </Link>
+                )}
+              </>
             ) : (
               <div
                 style={{

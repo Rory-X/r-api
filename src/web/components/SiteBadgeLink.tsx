@@ -28,7 +28,7 @@ export default function SiteBadgeLink({
   }
 
   return (
-    <Link to={`/sites?focusSiteId=${Math.trunc(normalizedSiteId)}`} className={className}>
+    <Link to={`/channels/sites?focusSiteId=${Math.trunc(normalizedSiteId)}`} className={className}>
       <span className={badgeClassName} style={badgeStyle}>
         {label}
       </span>

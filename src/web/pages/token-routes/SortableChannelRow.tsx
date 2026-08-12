@@ -9,6 +9,13 @@ import {
 } from './tokenBindingPresentation.js';
 import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } from './utils.js';
 
+type ManualSchedulingStatus = {
+  label: string;
+  detail: string;
+  badgeClassName: string;
+  color: string;
+};
+
 function getRouteUnitStrategyLabel(strategy: string | null | undefined): string {
   return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
 }
@@ -19,10 +26,151 @@ function formatRouteUnitMemberLabel(member: { accountId: number; username: strin
   return siteLabel ? `${accountLabel} @ ${siteLabel}` : accountLabel;
 }
 
+function getManualSchedulingPosition(priority: number, order: number | undefined): string {
+  const layerLabel = priority <= 0 ? '主用层' : `第 ${priority} 回退层`;
+  return order === undefined ? layerLabel : `${layerLabel} · 第 ${order + 1} 顺位`;
+}
+
+function getManualSchedulingStatus(
+  channel: SortableChannelRowProps['channel'],
+  candidate: SortableChannelRowProps['decisionCandidate'],
+  decisionState: ReturnType<typeof getChannelDecisionState>,
+  priority: number,
+  order: number | undefined,
+  loadingDecision: boolean,
+): ManualSchedulingStatus {
+  const position = getManualSchedulingPosition(priority, order);
+
+  if (loadingDecision) {
+    return {
+      label: '状态计算中',
+      detail: position,
+      badgeClassName: 'badge-muted',
+      color: 'var(--color-text-muted)',
+    };
+  }
+
+  if (channel.enabled === false) {
+    return {
+      label: '已停用',
+      detail: `${position} · 不参与调度`,
+      badgeClassName: 'badge-muted',
+      color: 'var(--color-text-muted)',
+    };
+  }
+
+  if (candidate && !candidate.eligible) {
+    return {
+      label: decisionState.reasonText || '不可用',
+      detail: `${position} · 当前跳过`,
+      badgeClassName: decisionState.reasonText === '冷却中' ? 'badge-error' : 'badge-warning',
+      color: decisionState.reasonColor,
+    };
+  }
+
+  if (candidate?.avoidedByRecentFailure || candidate?.recentlyFailed) {
+    return {
+      label: decisionState.reasonText || '近期失败',
+      detail: `${position} · 当前避让`,
+      badgeClassName: 'badge-warning',
+      color: 'var(--color-warning)',
+    };
+  }
+
+  if (candidate && candidate.probability > 0) {
+    return {
+      label: '当前首选',
+      detail: position,
+      badgeClassName: 'badge-success',
+      color: 'var(--color-success)',
+    };
+  }
+
+  return {
+    label: priority <= 0 ? '同层等待' : `第 ${priority} 回退`,
+    detail: position,
+    badgeClassName: priority <= 0 ? 'badge-muted' : 'badge-info',
+    color: priority <= 0 ? 'var(--color-text-secondary)' : 'var(--color-info)',
+  };
+}
+
+function SchedulingStatus({
+  manual,
+  status,
+  probability,
+  suppressTooltips,
+}: {
+  manual: boolean;
+  status: ManualSchedulingStatus;
+  probability: ReturnType<typeof getChannelDecisionState>;
+  suppressTooltips: boolean;
+}) {
+  if (manual) {
+    return (
+      <>
+        <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>调度状态</span>
+        <span
+          className={`badge ${status.badgeClassName}`}
+          data-testid="manual-scheduling-status"
+          data-tooltip={suppressTooltips ? undefined : status.detail}
+          style={{ fontSize: 10.5, whiteSpace: 'nowrap' }}
+        >
+          {status.label}
+        </span>
+        <span style={{ fontSize: 11, color: status.color, whiteSpace: 'nowrap' }}>
+          {status.detail}
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
+        <div
+          data-tooltip={suppressTooltips ? undefined : (probability.probability <= 0 ? probability.reasonText : undefined)}
+          style={{
+            width: 60,
+            height: 4,
+            background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
+            borderRadius: 999,
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.max(0, Math.min(100, probability.probability))}%`,
+              height: '100%',
+              background: getProbabilityColor(probability.probability),
+              borderRadius: 999,
+              transition: 'width 0.24s ease, background-color 0.18s ease',
+            }}
+          />
+        </div>
+        <span
+          data-tooltip={suppressTooltips ? undefined : (probability.probability <= 0 ? probability.reasonText : undefined)}
+          style={{
+            fontSize: 11,
+            color: probability.probability > 0 ? 'var(--color-text-secondary)' : probability.reasonColor,
+            fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {probability.probability.toFixed(1)}%
+        </span>
+      </div>
+    </>
+  );
+}
+
 export function SortableChannelRow({
   channel,
+  routingStrategy = 'weighted',
   displayPriority,
+  displayOrder,
   showPriorityBadge = true,
+  showDragHandle = true,
   dragging = false,
   dragHandleProps,
   dragHandleRef,
@@ -30,6 +178,7 @@ export function SortableChannelRow({
   isExactRoute,
   loadingDecision,
   isSavingPriority,
+  schedulingEditable = true,
   readOnly = false,
   channelManagementDisabled = false,
   dragInProgress = false,
@@ -44,7 +193,10 @@ export function SortableChannelRow({
   onSiteBlockModel,
 }: SortableChannelRowProps) {
   const resolvedPriority = displayPriority ?? channel.priority ?? 0;
+  const resolvedOrder = displayOrder ?? channel.sortOrder;
   const managementLocked = readOnly || channelManagementDisabled;
+  const schedulingLocked = readOnly || !schedulingEditable;
+  const displaySchedulingControls = schedulingEditable && !readOnly;
   const suppressTooltips = dragInProgress || dragging;
   const rowTransition = [
     'box-shadow 180ms ease',
@@ -64,8 +216,8 @@ export function SortableChannelRow({
       : 'color-mix(in srgb, var(--color-bg-card) 90%, white 10%)',
     boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.62)',
     color: dragging ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-    cursor: isSavingPriority || managementLocked ? 'not-allowed' : 'grab',
-    opacity: managementLocked ? 0.65 : 1,
+    cursor: isSavingPriority || schedulingLocked ? 'not-allowed' : 'grab',
+    opacity: schedulingLocked ? 0.65 : 1,
     transition: 'background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease',
   };
 
@@ -88,6 +240,15 @@ export function SortableChannelRow({
   };
 
   const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
+  const manualScheduling = routingStrategy === 'manual';
+  const manualSchedulingStatus = getManualSchedulingStatus(
+    channel,
+    decisionCandidate,
+    decisionState,
+    resolvedPriority,
+    resolvedOrder,
+    loadingDecision,
+  );
   const tokenBinding = describeTokenBinding(
     tokenOptions,
     activeTokenId,
@@ -111,28 +272,30 @@ export function SortableChannelRow({
     return (
       <div data-layer-root style={{ ...rowStyle, display: 'block' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <button
-            type="button"
-            ref={dragHandleRef}
-            {...dragHandleProps}
-            disabled={isSavingPriority || managementLocked}
-            className="btn btn-ghost"
-            style={{
-              marginTop: 2,
-              ...dragHandleStyle,
-            }}
-            data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
-            aria-label="拖拽调整优先级桶"
-          >
-            <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
-              <circle cx="3" cy="2" r="1" />
-              <circle cx="9" cy="2" r="1" />
-              <circle cx="3" cy="6" r="1" />
-              <circle cx="9" cy="6" r="1" />
-              <circle cx="3" cy="10" r="1" />
-              <circle cx="9" cy="10" r="1" />
-            </svg>
-          </button>
+          {showDragHandle && displaySchedulingControls ? (
+            <button
+              type="button"
+              ref={dragHandleRef}
+              {...dragHandleProps}
+              disabled={isSavingPriority || schedulingLocked}
+              className="btn btn-ghost"
+              style={{
+                marginTop: 2,
+                ...dragHandleStyle,
+              }}
+              data-tooltip={suppressTooltips ? undefined : '拖拽调整优先级层或组内顺序'}
+              aria-label="拖拽调整优先级层或组内顺序"
+            >
+              <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
+                <circle cx="3" cy="2" r="1" />
+                <circle cx="9" cy="2" r="1" />
+                <circle cx="3" cy="6" r="1" />
+                <circle cx="9" cy="6" r="1" />
+                <circle cx="3" cy="10" r="1" />
+                <circle cx="9" cy="10" r="1" />
+              </svg>
+            </button>
+          ) : null}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
@@ -147,6 +310,17 @@ export function SortableChannelRow({
                   }}
                 >
                   P{resolvedPriority}
+                </span>
+              ) : null}
+
+              {displaySchedulingControls && resolvedOrder !== undefined ? (
+                <span
+                  className="badge badge-muted"
+                  aria-label={`组内顺序第 ${resolvedOrder + 1}`}
+                  data-tooltip={suppressTooltips ? undefined : '同一优先级层内从上到下依次调度'}
+                  style={{ fontSize: 10, fontVariantNumeric: 'tabular-nums' }}
+                >
+                  #{resolvedOrder + 1}
                 </span>
               ) : null}
 
@@ -241,40 +415,12 @@ export function SortableChannelRow({
             ) : null}
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
-                <div
-                  data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-                  style={{
-                    width: 60,
-                    height: 4,
-                    background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
-                    borderRadius: 999,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.max(0, Math.min(100, decisionState.probability))}%`,
-                      height: '100%',
-                      background: getProbabilityColor(decisionState.probability),
-                      borderRadius: 999,
-                      transition: 'width 0.24s ease, background-color 0.18s ease',
-                    }}
-                  />
-                </div>
-                <span
-                  data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-                  style={{
-                    fontSize: 11,
-                    color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
-                    fontVariantNumeric: 'tabular-nums',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {decisionState.probability.toFixed(1)}%
-                </span>
-              </div>
+              <SchedulingStatus
+                manual={manualScheduling}
+                status={manualSchedulingStatus}
+                probability={decisionState}
+                suppressTooltips={suppressTooltips}
+              />
 
               {!managementLocked && (
                 <button
@@ -358,25 +504,27 @@ export function SortableChannelRow({
   return (
     <div data-layer-root style={rowStyle}>
       <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 6, fontSize: 12, flexWrap: 'wrap', minWidth: 0 }}>
-        <button
-          type="button"
-          ref={dragHandleRef}
-          {...dragHandleProps}
-          disabled={isSavingPriority || managementLocked}
-          className="btn btn-ghost"
-          style={dragHandleStyle}
-          data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
-          aria-label="拖拽调整优先级桶"
-        >
-          <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
-            <circle cx="3" cy="2" r="1" />
-            <circle cx="9" cy="2" r="1" />
-            <circle cx="3" cy="6" r="1" />
-            <circle cx="9" cy="6" r="1" />
-            <circle cx="3" cy="10" r="1" />
-            <circle cx="9" cy="10" r="1" />
-          </svg>
-        </button>
+        {showDragHandle && displaySchedulingControls ? (
+          <button
+            type="button"
+            ref={dragHandleRef}
+            {...dragHandleProps}
+            disabled={isSavingPriority || schedulingLocked}
+            className="btn btn-ghost"
+            style={dragHandleStyle}
+            data-tooltip={suppressTooltips ? undefined : '拖拽调整优先级层或组内顺序'}
+            aria-label="拖拽调整优先级层或组内顺序"
+          >
+            <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
+              <circle cx="3" cy="2" r="1" />
+              <circle cx="9" cy="2" r="1" />
+              <circle cx="3" cy="6" r="1" />
+              <circle cx="9" cy="6" r="1" />
+              <circle cx="3" cy="10" r="1" />
+              <circle cx="9" cy="10" r="1" />
+            </svg>
+          </button>
+        ) : null}
 
         {showPriorityBadge ? (
           <span
@@ -389,6 +537,17 @@ export function SortableChannelRow({
             }}
           >
             P{resolvedPriority}
+          </span>
+        ) : null}
+
+        {displaySchedulingControls && resolvedOrder !== undefined ? (
+          <span
+            className="badge badge-muted"
+            aria-label={`组内顺序第 ${resolvedOrder + 1}`}
+            data-tooltip={suppressTooltips ? undefined : '同一优先级层内从上到下依次调度'}
+            style={{ fontSize: 10, fontVariantNumeric: 'tabular-nums' }}
+          >
+            #{resolvedOrder + 1}
           </span>
         ) : null}
 
@@ -478,40 +637,12 @@ export function SortableChannelRow({
         ) : null}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', marginTop: mobile ? 0 : 1, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
-            <div
-              data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-              style={{
-                width: 60,
-                height: 4,
-                background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
-                borderRadius: 999,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  width: `${Math.max(0, Math.min(100, decisionState.probability))}%`,
-                  height: '100%',
-                  background: getProbabilityColor(decisionState.probability),
-                  borderRadius: 999,
-                  transition: 'width 0.24s ease, background-color 0.18s ease',
-                }}
-              />
-            </div>
-            <span
-              data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-              style={{
-                fontSize: 11,
-                color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
-                fontVariantNumeric: 'tabular-nums',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {decisionState.probability.toFixed(1)}%
-            </span>
-          </div>
+          <SchedulingStatus
+            manual={manualScheduling}
+            status={manualSchedulingStatus}
+            probability={decisionState}
+            suppressTooltips={suppressTooltips}
+          />
 
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>成功/失败</span>
           <span style={{ fontSize: 11 }}>

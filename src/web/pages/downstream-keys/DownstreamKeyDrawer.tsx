@@ -1,8 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { api, type DownstreamApiKeyTrendResponse } from '../../api.js';
+import SideDrawer from '../../components/SideDrawer.js';
 import { useToast } from '../../components/Toast.js';
-import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
 import { readClientTimeZone } from '../helpers/siteAnnouncementPresentation.js';
 import {
   formatCompactTokens,
@@ -35,7 +34,6 @@ export default function DownstreamKeyDrawer({
   initialRange,
 }: DownstreamKeyDrawerProps) {
   const toast = useToast();
-  const presence = useAnimatedVisibility(open, 220);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [trendRange, setTrendRange] = useState<Range>(initialRange);
@@ -103,50 +101,33 @@ export default function DownstreamKeyDrawer({
     };
   }, [open, item?.id, trendRange, toast, viewerTimeZone]);
 
-  if (!presence.shouldRender) return null;
-
   const currentRangeUsage = resolveOverviewUsageByRange(overview, trendRange) || item?.rangeUsage || null;
 
-  const panel = (
-    <div
-      className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      onClick={onClose}
-      style={{ justifyContent: 'flex-end', alignItems: 'stretch', padding: 0 }}
-    >
-      <div
-        className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(92vw, 560px)',
-          maxWidth: 560,
-          height: '100vh',
-          maxHeight: '100vh',
-          borderRadius: 0,
-          animation: presence.isVisible ? 'drawer-slide-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both' : 'drawer-slide-out 0.22s cubic-bezier(0.4, 0, 1, 1) both',
-        }}
-      >
-        <div className="modal-header" style={{ paddingTop: 18, paddingBottom: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span>{item?.name || '--'}</span>
-              <StatusBadge enabled={!!item?.enabled} />
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {item?.keyMasked || '****'}
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-              <span className={`badge ${item?.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
-              </span>
-              <TagChips tags={item?.tags || []} accent maxVisible={4} />
-            </div>
+  return (
+    <SideDrawer
+      open={open}
+      onClose={onClose}
+      maxWidth={620}
+      closeLabel="关闭下游密钥详情"
+      title={(
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>{item?.name || '--'}</span>
+            <StatusBadge enabled={!!item?.enabled} />
           </div>
-          <button className="btn btn-ghost" onClick={onClose} style={{ border: '1px solid var(--color-border)' }}>
-            关闭
-          </button>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+            {item?.keyMasked || '****'}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            <span className={`badge ${item?.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+              {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
+            </span>
+            <TagChips tags={item?.tags || []} accent maxVisible={4} />
+          </div>
         </div>
-
-        <div className="modal-body" style={{ paddingTop: 0 }}>
+      )}
+      bodyStyle={{ paddingTop: 16 }}
+    >
           <div className="card" style={{ padding: 16, marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
               <div>
@@ -184,6 +165,14 @@ export default function DownstreamKeyDrawer({
                 <div>
                   <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>到期时间</div>
                   <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatIso(item?.expiresAt)}</div>
+                </div>
+                <div>
+                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>最大并发</div>
+                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{item?.maxConcurrency == null ? '不限' : item.maxConcurrency.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>策略版本</div>
+                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>v{item?.policyVersion || 1}</div>
                 </div>
                 <div>
                   <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>主分组</div>
@@ -245,10 +234,6 @@ export default function DownstreamKeyDrawer({
               </div>
             </div>
           ) : null}
-        </div>
-      </div>
-    </div>
+    </SideDrawer>
   );
-
-  return createPortal(panel, document.body);
 }

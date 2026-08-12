@@ -33,9 +33,12 @@ import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
 import ModernSelect from "../components/ModernSelect.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
 import { tr } from "../i18n.js";
+import ProxyRequestLedgerPanel from "./proxy-logs/ProxyRequestLedgerPanel.js";
 
 type ProxyLogRenderItem = ProxyLogListItem & {
   billingDetails?: ProxyLogBillingDetails;
+  routeId?: number | null;
+  channelId?: number | null;
   username?: string | null;
   siteName?: string | null;
   siteUrl?: string | null;
@@ -47,6 +50,17 @@ type ProxyLogDetailState = {
   data?: ProxyLogDetail;
   error?: string;
 };
+
+type ProxyLogLocatorTarget =
+  | {
+      kind: "downstream-key";
+      log: ProxyLogRenderItem;
+    }
+  | {
+      kind: "upstream";
+      log: ProxyLogRenderItem;
+      upstreamPath: string | null;
+    };
 
 type ProxyLogSiteFilterOption = {
   id: number;
@@ -346,15 +360,218 @@ function formatProxyLogTokenValue(value: number | null | undefined): string {
   return typeof value === "number" ? value.toLocaleString() : "--";
 }
 
-function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
-  const parts = [
-    log.downstreamKeyName ? `下游 Key: ${log.downstreamKeyName}` : null,
-    log.downstreamKeyGroupName ? `主分组: ${log.downstreamKeyGroupName}` : null,
-    Array.isArray(log.downstreamKeyTags) && log.downstreamKeyTags.length > 0
-      ? `标签: ${log.downstreamKeyTags.join(" / ")}`
-      : null,
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join("，") : null;
+function renderDownstreamKeyIdentity(
+  log: ProxyLogRenderItem,
+  options?: { compact?: boolean; testId?: string; onLocate?: () => void },
+) {
+  const name = String(log.downstreamKeyName || "").trim();
+  const keyId =
+    typeof log.downstreamKeyId === "number" &&
+    Number.isFinite(log.downstreamKeyId) &&
+    log.downstreamKeyId > 0
+      ? Math.trunc(log.downstreamKeyId)
+      : null;
+  const groupName = String(log.downstreamKeyGroupName || "").trim();
+  const tags = Array.isArray(log.downstreamKeyTags)
+    ? log.downstreamKeyTags
+        .map((tag) => String(tag || "").trim())
+        .filter(Boolean)
+    : [];
+
+  if (!name && keyId === null) return null;
+
+  return (
+    <div
+      className={`proxy-log-downstream-key ${options?.compact ? "is-compact" : ""}`.trim()}
+      data-testid={options?.testId}
+    >
+      <span className="proxy-log-downstream-key-label">下游 Key</span>
+      <strong className="proxy-log-downstream-key-name">
+        {name || "未命名 Key"}
+      </strong>
+      {keyId !== null ? (
+        options?.onLocate ? (
+          <button
+            type="button"
+            className="proxy-log-downstream-key-id is-locator"
+            aria-label={`定位下游 Key #${keyId}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              options.onLocate?.();
+            }}
+          >
+            #{keyId}
+          </button>
+        ) : (
+          <code className="proxy-log-downstream-key-id">#{keyId}</code>
+        )
+      ) : null}
+      {groupName ? (
+        <span className="proxy-log-downstream-key-meta">主分组：{groupName}</span>
+      ) : null}
+      {tags.length > 0 ? (
+        <span className="proxy-log-downstream-key-meta">
+          标签：{tags.join(" / ")}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function normalizeProxyLogEntityId(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : null;
+}
+
+function renderProxyLogUpstreamIdentity(
+  log: ProxyLogRenderItem,
+  upstreamPath: string | null,
+  options?: { compact?: boolean; testId?: string; onLocate?: () => void },
+) {
+  const accountId = normalizeProxyLogEntityId(log.accountId);
+  const siteId = normalizeProxyLogEntityId(log.siteId);
+  const routeId = normalizeProxyLogEntityId(log.routeId);
+  const channelId = normalizeProxyLogEntityId(log.channelId);
+  const username = String(log.username || "").trim();
+  const siteName = String(log.siteName || "").trim();
+  const siteUrl = String(log.siteUrl || "").trim();
+  const normalizedUpstreamPath = String(upstreamPath || "").trim();
+  const siteLabel = siteName || (siteId !== null ? `站点 #${siteId}` : "未记录站点");
+  const locatorButton = (label: string, ariaLabel: string) =>
+    options?.onLocate ? (
+      <button
+        type="button"
+        className="proxy-log-upstream-locator"
+        aria-label={ariaLabel}
+        onClick={(event) => {
+          event.stopPropagation();
+          options.onLocate?.();
+        }}
+      >
+        {label}
+      </button>
+    ) : (
+      label
+    );
+
+  return (
+    <div
+      className={`proxy-log-upstream-target ${options?.compact ? "is-compact" : ""}`.trim()}
+      data-testid={options?.testId}
+    >
+      <span className="proxy-log-upstream-target-label">API 去向</span>
+      <div className="proxy-log-upstream-target-content">
+        <div className="proxy-log-upstream-target-main">
+          <strong>{siteLabel}</strong>
+          {siteUrl ? (
+            <code className="proxy-log-upstream-target-url" title={siteUrl}>
+              {siteUrl}
+            </code>
+          ) : null}
+        </div>
+        <div className="proxy-log-upstream-target-meta">
+          <span className={!username && accountId === null ? "is-warning" : ""}>
+            账号：
+            {username || (accountId !== null ? "未命名账号" : "未记录")}
+            {accountId !== null ? (
+              <> · {locatorButton(`#${accountId}`, `定位渠道账号 #${accountId}`)}</>
+            ) : (
+              "（日志未绑定 accountId）"
+            )}
+          </span>
+          {routeId !== null ? (
+            <span>{locatorButton(`路由 #${routeId}`, `定位路由 #${routeId}`)}</span>
+          ) : null}
+          {channelId !== null ? (
+            <span>{locatorButton(`通道 #${channelId}`, `定位通道 #${channelId}`)}</span>
+          ) : null}
+          {normalizedUpstreamPath ? (
+            <span>上游路径：{normalizedUpstreamPath}</span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProxyLogLocatorField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="proxy-log-locator-field">
+      <div className="proxy-log-locator-field-label">{label}</div>
+      <div className={`proxy-log-locator-field-value ${mono ? "is-mono" : ""}`.trim()}>
+        {value || "—"}
+      </div>
+    </div>
+  );
+}
+
+function renderProxyLogLocatorContent(target: ProxyLogLocatorTarget) {
+  const log = target.log;
+  const accountId = normalizeProxyLogEntityId(log.accountId);
+  const siteId = normalizeProxyLogEntityId(log.siteId);
+  const routeId = normalizeProxyLogEntityId(log.routeId);
+  const channelId = normalizeProxyLogEntityId(log.channelId);
+  const downstreamKeyId = normalizeProxyLogEntityId(log.downstreamKeyId);
+  const username = String(log.username || "").trim();
+  const tags = Array.isArray(log.downstreamKeyTags)
+    ? log.downstreamKeyTags.map((tag) => String(tag || "").trim()).filter(Boolean)
+    : [];
+
+  if (target.kind === "downstream-key") {
+    return (
+      <div className="proxy-log-locator" data-testid="proxy-log-key-locator">
+        <div className="proxy-log-locator-intro">
+          这条日志由下面的下游 Key 发起。Key ID 是不可变标识，同名 Key 也可以据此区分。
+        </div>
+        <div className="proxy-log-locator-grid">
+          <ProxyLogLocatorField label="Key 名称" value={log.downstreamKeyName || "未命名 Key"} />
+          <ProxyLogLocatorField label="Key ID" value={downstreamKeyId !== null ? `#${downstreamKeyId}` : "未记录"} mono />
+          <ProxyLogLocatorField label="主分组" value={log.downstreamKeyGroupName || "未分组"} />
+          <ProxyLogLocatorField label="标签" value={tags.length > 0 ? tags.join(" / ") : "无标签"} />
+          <ProxyLogLocatorField label="日志 ID" value={`#${log.id}`} mono />
+          <ProxyLogLocatorField label="请求模型" value={log.modelRequested || "—"} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="proxy-log-locator" data-testid="proxy-log-upstream-locator">
+      <div className="proxy-log-locator-intro">
+        这是该请求实际选中的上游站点、渠道账号和路由信息，可用 ID 与管理页记录进行核对。
+      </div>
+      <div className="proxy-log-locator-grid">
+        <ProxyLogLocatorField
+          label="上游站点"
+          value={`${String(log.siteName || "").trim() || "未命名站点"}${siteId !== null ? ` · #${siteId}` : ""}`}
+        />
+        <ProxyLogLocatorField label="站点地址" value={log.siteUrl || "未记录"} mono />
+        <ProxyLogLocatorField
+          label="渠道账号"
+          value={`${username || (accountId !== null ? "未命名账号" : "未记录")}${accountId !== null ? ` · #${accountId}` : ""}`}
+        />
+        <ProxyLogLocatorField label="路由" value={routeId !== null ? `#${routeId}` : "未记录"} mono />
+        <ProxyLogLocatorField label="通道" value={channelId !== null ? `#${channelId}` : "未记录"} mono />
+        <ProxyLogLocatorField label="上游路径" value={target.upstreamPath || "未记录"} mono />
+        <ProxyLogLocatorField
+          label="下游 Key"
+          value={downstreamKeyId !== null
+            ? `${log.downstreamKeyName || "未命名 Key"} · #${downstreamKeyId}`
+            : "未记录"}
+        />
+        <ProxyLogLocatorField label="日志 ID" value={`#${log.id}`} mono />
+      </div>
+    </div>
+  );
 }
 
 function buildBillingProcessLines(log: ProxyLogRenderItem) {
@@ -781,6 +998,8 @@ export default function ProxyLogs() {
   const [detailById, setDetailById] = useState<
     Record<number, ProxyLogDetailState>
   >({});
+  const [locatorTarget, setLocatorTarget] =
+    useState<ProxyLogLocatorTarget | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [sites, setSites] = useState<
     Array<{ id: number; name: string; status?: string | null }>
@@ -2013,6 +2232,69 @@ export default function ProxyLogs() {
     </div>
   );
 
+  const locatorModalTitle = locatorTarget?.kind === "downstream-key"
+    ? "定位下游 Key"
+    : "定位上游渠道";
+  const locatorModalContent = locatorTarget
+    ? renderProxyLogLocatorContent(locatorTarget)
+    : null;
+  const locatorAccountId = locatorTarget?.kind === "upstream"
+    ? normalizeProxyLogEntityId(locatorTarget.log.accountId)
+    : null;
+  const locatorRouteId = locatorTarget?.kind === "upstream"
+    ? normalizeProxyLogEntityId(locatorTarget.log.routeId)
+    : null;
+  const locatorFooter = locatorTarget ? (
+    <div className="proxy-log-locator-actions">
+      <button
+        type="button"
+        className="btn btn-secondary"
+        onClick={() => setLocatorTarget(null)}
+      >
+        关闭
+      </button>
+      {locatorTarget.kind === "downstream-key" ? (
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            setLocatorTarget(null);
+            navigate("/downstream-keys");
+          }}
+        >
+          打开下游 Key 管理
+        </button>
+      ) : (
+        <>
+          {locatorRouteId !== null ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                setLocatorTarget(null);
+                navigate("/routes");
+              }}
+            >
+              打开路由管理
+            </button>
+          ) : null}
+          {locatorAccountId !== null ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setLocatorTarget(null);
+                navigate(`/channels/connections?focusAccountId=${locatorAccountId}`);
+              }}
+            >
+              打开渠道账号管理
+            </button>
+          ) : null}
+        </>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="animate-fade-in">
       <div className="page-header" style={{ marginBottom: 16 }}>
@@ -2114,6 +2396,8 @@ export default function ProxyLogs() {
           </div>
         }
       />
+
+      <ProxyRequestLedgerPanel autoRefresh={autoRefresh} />
 
       <div
         className="card"
@@ -2567,6 +2851,33 @@ export default function ProxyLogs() {
         </CenteredModal>
       )}
 
+      {isMobile ? (
+        <MobileDrawer
+          open={locatorTarget !== null}
+          onClose={() => setLocatorTarget(null)}
+          title={locatorModalTitle}
+          closeLabel="关闭定位信息"
+          side="right"
+        >
+          <div className="proxy-log-locator-drawer-content">
+            {locatorModalContent}
+            {locatorFooter}
+          </div>
+        </MobileDrawer>
+      ) : (
+        <CenteredModal
+          open={locatorTarget !== null}
+          onClose={() => setLocatorTarget(null)}
+          title={locatorModalTitle}
+          footer={locatorFooter}
+          maxWidth={720}
+          closeOnBackdrop
+          closeOnEscape
+        >
+          {locatorModalContent}
+        </CenteredModal>
+      )}
+
       {hasInvalidTimeRange && (
         <div className="alert alert-error" style={{ marginBottom: 12 }}>
           结束时间必须晚于开始时间
@@ -2611,8 +2922,6 @@ export default function ProxyLogs() {
               const billingProcessLines = detail
                 ? buildBillingProcessLines(detailLog)
                 : [];
-              const downstreamKeySummary =
-                renderDownstreamKeySummary(detailLog);
               const isExpanded = expanded === log.id;
               const clientDisplay = resolveProxyLogClientDisplay(detailLog);
               const streamModeLabel = formatStreamModeLabel(detailLog.isStream);
@@ -2668,6 +2977,15 @@ export default function ProxyLogs() {
                         {clientDisplay.secondary}
                       </span>
                     ) : null}
+                    {renderDownstreamKeyIdentity(detailLog, {
+                      compact: true,
+                      testId: `proxy-log-downstream-key-row-${log.id}`,
+                      onLocate: () =>
+                        setLocatorTarget({
+                          kind: "downstream-key",
+                          log: detailLog,
+                        }),
+                    })}
                     {streamModeLabel ? (
                       <span
                         className="badge badge-muted"
@@ -2740,6 +3058,22 @@ export default function ProxyLogs() {
                           />
                         }
                       />
+                      {detail
+                        ? renderProxyLogUpstreamIdentity(
+                            detailLog,
+                            pathMeta.upstreamPath,
+                            {
+                              compact: true,
+                              testId: `proxy-log-upstream-target-detail-${log.id}`,
+                              onLocate: () =>
+                                setLocatorTarget({
+                                  kind: "upstream",
+                                  log: detailLog,
+                                  upstreamPath: pathMeta.upstreamPath,
+                                }),
+                            },
+                          )
+                        : null}
                       {streamModeLabel ? (
                         <MobileField label="模式" value={streamModeLabel} />
                       ) : null}
@@ -2782,11 +3116,14 @@ export default function ProxyLogs() {
                           includeGeneric: true,
                         })}
                       />
-                      {downstreamKeySummary && (
-                        <div style={{ color: "var(--color-text-muted)" }}>
-                          {downstreamKeySummary}
-                        </div>
-                      )}
+                      {renderDownstreamKeyIdentity(detailLog, {
+                        testId: `proxy-log-downstream-key-detail-${log.id}`,
+                        onLocate: () =>
+                          setLocatorTarget({
+                            kind: "downstream-key",
+                            log: detailLog,
+                          }),
+                      })}
                       {billingProcessLines.length > 0 && (
                         <div
                           style={{
@@ -2846,8 +3183,6 @@ export default function ProxyLogs() {
                 const billingProcessLines = detail
                   ? buildBillingProcessLines(detailLog)
                   : [];
-                const downstreamKeySummary =
-                  renderDownstreamKeySummary(detailLog);
                 const streamModeLabel = formatStreamModeLabel(
                   detailLog.isStream,
                 );
@@ -2913,17 +3248,15 @@ export default function ProxyLogs() {
                             model={log.modelRequested}
                             style={{ alignSelf: "flex-start" }}
                           />
-                          {downstreamKeySummary ? (
-                            <div
-                              style={{
-                                fontSize: 11,
-                                lineHeight: 1.45,
-                                color: "var(--color-text-muted)",
-                              }}
-                            >
-                              {downstreamKeySummary}
-                            </div>
-                          ) : null}
+                          {renderDownstreamKeyIdentity(detailLog, {
+                            compact: true,
+                            testId: `proxy-log-downstream-key-row-${log.id}`,
+                            onLocate: () =>
+                              setLocatorTarget({
+                                kind: "downstream-key",
+                                log: detailLog,
+                              }),
+                          })}
                           {streamModeLabel || firstByteLabel ? (
                             <div
                               style={{
@@ -3175,28 +3508,6 @@ export default function ProxyLogs() {
                                       >
                                         {formatLatency(detailLog.latencyMs)}
                                       </strong>
-                                      {detail && (
-                                        <>
-                                          ，站点:{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
-                                            {detailLog.siteName || "未知站点"}
-                                          </strong>
-                                          ，账号:{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
-                                            {detailLog.username || "未知账号"}
-                                          </strong>
-                                        </>
-                                      )}
                                     </div>
                                     {detailState?.loading && (
                                       <div
@@ -3223,6 +3534,22 @@ export default function ProxyLogs() {
                                         {billingDetailSummary}
                                       </div>
                                     )}
+                                    {detail
+                                      ? renderProxyLogUpstreamIdentity(
+                                          detailLog,
+                                          pathMeta.upstreamPath,
+                                          {
+                                            testId: `proxy-log-upstream-target-detail-${log.id}`,
+                                            onLocate: () =>
+                                              setLocatorTarget({
+                                                kind: "upstream",
+                                                log: detailLog,
+                                                upstreamPath:
+                                                  pathMeta.upstreamPath,
+                                              }),
+                                          },
+                                        )
+                                      : null}
                                     <div
                                       style={{
                                         color: "var(--color-text-muted)",
@@ -3255,15 +3582,14 @@ export default function ProxyLogs() {
                                         })}
                                       </div>
                                     </div>
-                                    {downstreamKeySummary && (
-                                      <div
-                                        style={{
-                                          color: "var(--color-text-muted)",
-                                        }}
-                                      >
-                                        {downstreamKeySummary}
-                                      </div>
-                                    )}
+                                    {renderDownstreamKeyIdentity(detailLog, {
+                                      testId: `proxy-log-downstream-key-detail-${log.id}`,
+                                      onLocate: () =>
+                                        setLocatorTarget({
+                                          kind: "downstream-key",
+                                          log: detailLog,
+                                        }),
+                                    })}
                                   </div>
                                 </div>
 

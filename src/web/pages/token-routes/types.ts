@@ -1,12 +1,13 @@
 import type { ButtonHTMLAttributes, ReactNode, RefCallback } from 'react';
 import type { BrandInfo } from '../../components/BrandIcon.js';
 import type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteRoutingStrategy } from '../../../shared/routeRoutingStrategy.js';
 export type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
+export type { RouteRoutingStrategy } from '../../../shared/routeRoutingStrategy.js';
 
 export type RouteSortBy = 'modelPattern' | 'channelCount';
 export type RouteSortDir = 'asc' | 'desc';
 export type GroupFilter = null | '__all__' | number;
-export type RouteRoutingStrategy = 'weighted' | 'round_robin' | 'stable_first';
 export type OAuthRouteUnitStrategy = 'round_robin' | 'stick_until_unavailable';
 export type RouteRowKind = 'persisted' | 'zero_channel';
 export type RouteChannelDraft = {
@@ -36,6 +37,7 @@ export type RouteChannel = {
   tokenId: number | null;
   sourceModel?: string | null;
   priority: number;
+  sortOrder?: number;
   weight: number;
   enabled: boolean;
   manualOverride: boolean;
@@ -142,8 +144,11 @@ export type MissingTokenGroupRouteSiteActionItem = {
 
 export type SortableChannelRowProps = {
   channel: RouteChannel;
+  routingStrategy?: RouteRoutingStrategy;
   displayPriority?: number;
+  displayOrder?: number;
   showPriorityBadge?: boolean;
+  showDragHandle?: boolean;
   dragging?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   dragHandleRef?: RefCallback<HTMLButtonElement>;
@@ -151,6 +156,7 @@ export type SortableChannelRowProps = {
   isExactRoute: boolean;
   loadingDecision: boolean;
   isSavingPriority: boolean;
+  schedulingEditable?: boolean;
   readOnly?: boolean;
   channelManagementDisabled?: boolean;
   dragInProgress?: boolean;

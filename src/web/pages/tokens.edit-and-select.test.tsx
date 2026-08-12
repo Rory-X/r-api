@@ -291,7 +291,7 @@ describe('Tokens edit modal and row selection', () => {
       await flushMicrotasks();
 
       const syncAccountSelect = root.root.findAllByType(ModernSelect)
-        .find((node) => node.props.placeholder === '选择账号后同步站点令牌');
+        .find((node) => node.props.placeholder === '选择面板账号后同步');
       expect(syncAccountSelect).toBeTruthy();
       expect(syncAccountSelect!.props.searchable).toBe(true);
       expect(syncAccountSelect!.props.searchPlaceholder).toBe('筛选账号（名称 / 站点）');
@@ -306,7 +306,7 @@ describe('Tokens edit modal and row selection', () => {
       );
 
       const addButton = root.root.findAll((node) => node.type === 'button')
-        .find((node) => collectText(node).includes('+ 新增令牌'));
+        .find((node) => collectText(node).includes('在上游创建 Token'));
       expect(addButton).toBeTruthy();
 
       await act(async () => {
@@ -441,7 +441,7 @@ describe('Tokens edit modal and row selection', () => {
 
       const syncButton = root.root
         .findAll((node) => node.type === 'button')
-        .find((node) => collectText(node).trim() === '同步站点令牌');
+        .find((node) => collectText(node).trim() === '同步上游 Token');
       expect(syncButton).toBeTruthy();
 
       await act(async () => {

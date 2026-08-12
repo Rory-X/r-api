@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import CenteredModal from '../components/CenteredModal.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useToast } from '../components/Toast.js';
@@ -7,6 +8,7 @@ import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { tr } from '../i18n.js';
+import { displayProgramEventTitle } from './helpers/programEventPresentation.js';
 
 type ProgramEvent = {
   id: number;
@@ -21,6 +23,7 @@ type ProgramEvent = {
 };
 
 const PAGE_SIZE = 50;
+const MESSAGE_SUMMARY_MAX_LENGTH = 180;
 
 const TYPE_OPTIONS = [
   { value: '', label: '全部类型' },
@@ -38,8 +41,19 @@ function levelLabel(level: string) {
   return { label: '信息', cls: 'badge-info' };
 }
 
+function summarizeEventMessage(message?: string | null) {
+  const normalized = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '-';
+  if (normalized.length <= MESSAGE_SUMMARY_MAX_LENGTH) return normalized;
+  return `${normalized.slice(0, MESSAGE_SUMMARY_MAX_LENGTH).trimEnd()}…`;
+}
+
 function eventStatusLabel(row: ProgramEvent) {
-  const text = `${row.title || ''} ${row.message || ''}`.toLowerCase();
+  const titleText = `${row.title || ''}`.toLowerCase();
+  const isConnectorEvent = row.relatedType === 'local_connector' || titleText.startsWith('[connector/');
+  // Connector notify payloads can contain arbitrary assistant prose. Do not let
+  // words such as "失败" in that prose override the lifecycle event status.
+  const text = isConnectorEvent ? titleText : `${row.title || ''} ${row.message || ''}`.toLowerCase();
 
   const parseCount = (pattern: RegExp): number | undefined => {
     const match = text.match(pattern);
@@ -67,7 +81,7 @@ function eventStatusLabel(row: ProgramEvent) {
     return { label: '成功', cls: 'badge-success' };
   }
 
-  if (text.includes('失败') || text.includes('failed') || text.includes('error')) {
+  if (text.includes('失败') || text.includes('failed') || text.includes('error') || text.includes('异常') || /\bincomplete\b/i.test(text)) {
     return { label: '失败', cls: 'badge-error' };
   }
   if (text.includes('跳过') || text.includes('skipped')) {
@@ -76,7 +90,7 @@ function eventStatusLabel(row: ProgramEvent) {
   if (text.includes('进行中') || text.includes('已开始') || text.includes('running') || text.includes('pending')) {
     return { label: '进行中', cls: 'badge-info' };
   }
-  if (text.includes('成功') || text.includes('已完成') || text.includes('completed') || text.includes('finished')) {
+  if (text.includes('成功') || text.includes('已完成') || /\bcompleted?\b/i.test(text) || text.includes('finished')) {
     return { label: '成功', cls: 'badge-success' };
   }
 
@@ -98,6 +112,7 @@ export default function ProgramLogs() {
   const [clearing, setClearing] = useState(false);
   const [rowLoading, setRowLoading] = useState<Record<number, boolean>>({});
   const [showFilters, setShowFilters] = useState(false);
+  const [detailEvent, setDetailEvent] = useState<ProgramEvent | null>(null);
   const isMobile = useIsMobile();
   const toast = useToast();
 
@@ -174,6 +189,7 @@ export default function ProgramLogs() {
       setEvents([]);
       setOffset(0);
       setHasMore(false);
+      setDetailEvent(null);
       toast.success('日志已清空');
     } catch (e: any) {
       toast.error(e.message || '清空失败');
@@ -298,7 +314,7 @@ export default function ProgramLogs() {
               return (
                 <MobileCard
                   key={row.id}
-                  title={row.title || '-'}
+                  title={displayProgramEventTitle(row.title || '-')}
                   headerActions={(
                     <span className={`badge ${eventStatus.cls}`} style={{ fontSize: 10 }}>
                       {eventStatus.label}
@@ -323,7 +339,21 @@ export default function ProgramLogs() {
                   <MobileField label="类型" value={<span className="badge badge-muted" style={{ fontSize: 11 }}>{row.type || '-'}</span>} />
                   <MobileField label="级别" value={<span className={`badge ${level.cls}`} style={{ fontSize: 11 }}>{level.label}</span>} />
                   <MobileField label="状态" value={<span className={`badge ${eventStatus.cls}`} style={{ fontSize: 11 }}>{eventStatus.label}</span>} />
-                  <MobileField label="内容" value={row.message || '-'} stacked />
+                  <MobileField
+                    label="内容"
+                    value={(
+                      <button
+                        type="button"
+                        className="program-log-summary-button"
+                        onClick={() => setDetailEvent(row)}
+                        aria-label={`查看日志详情：${displayProgramEventTitle(row.title || '-')}`}
+                      >
+                        <span className="program-log-summary-text">{summarizeEventMessage(row.message)}</span>
+                        <span className="program-log-summary-action">查看详情</span>
+                      </button>
+                    )}
+                    stacked
+                  />
                 </MobileCard>
               );
             }) : (
@@ -378,10 +408,18 @@ export default function ProgramLogs() {
                       </span>
                     </td>
                     <td className="program-logs-title-cell">
-                      {row.title || '-'}
+                      {displayProgramEventTitle(row.title || '-')}
                     </td>
                     <td className="program-logs-content-cell">
-                      {row.message || '-'}
+                      <button
+                        type="button"
+                        className="program-log-summary-button"
+                        onClick={() => setDetailEvent(row)}
+                        aria-label={`查看日志详情：${displayProgramEventTitle(row.title || '-')}`}
+                      >
+                        <span className="program-log-summary-text">{summarizeEventMessage(row.message)}</span>
+                        <span className="program-log-summary-action">查看详情</span>
+                      </button>
                     </td>
                     <td>
                       <span className={`badge ${eventStatus.cls}`} style={{ fontSize: 11 }}>
@@ -434,6 +472,58 @@ export default function ProgramLogs() {
           </button>
         </div>
       )}
+
+      <CenteredModal
+        open={Boolean(detailEvent)}
+        onClose={() => setDetailEvent(null)}
+        title="程序日志详情"
+        maxWidth={880}
+        closeOnBackdrop
+        closeOnEscape
+        bodyStyle={{ maxHeight: 'calc(100dvh - 190px)', overflowY: 'auto' }}
+        footer={(
+          <button type="button" className="btn btn-primary" onClick={() => setDetailEvent(null)}>
+            关闭
+          </button>
+        )}
+      >
+        {detailEvent ? (() => {
+          const detailLevel = levelLabel(detailEvent.level || 'info');
+          const detailStatus = eventStatusLabel(detailEvent);
+          return (
+            <div className="program-log-detail">
+              <div className="program-log-detail-meta">
+                <div className="program-log-detail-meta-item">
+                  <span>时间</span>
+                  <strong>{formatDateTimeLocal(detailEvent.createdAt)}</strong>
+                </div>
+                <div className="program-log-detail-meta-item">
+                  <span>类型</span>
+                  <strong>{detailEvent.type || '-'}</strong>
+                </div>
+                <div className="program-log-detail-meta-item">
+                  <span>级别</span>
+                  <strong><span className={`badge ${detailLevel.cls}`}>{detailLevel.label}</span></strong>
+                </div>
+                <div className="program-log-detail-meta-item">
+                  <span>状态</span>
+                  <strong><span className={`badge ${detailStatus.cls}`}>{detailStatus.label}</span></strong>
+                </div>
+              </div>
+              <section className="program-log-detail-section">
+                <div className="program-log-detail-label">标题</div>
+                <div className="program-log-detail-title">
+                  {displayProgramEventTitle(detailEvent.title || '-')}
+                </div>
+              </section>
+              <section className="program-log-detail-section">
+                <div className="program-log-detail-label">完整内容</div>
+                <pre className="program-log-detail-message">{detailEvent.message || '-'}</pre>
+              </section>
+            </div>
+          );
+        })() : null}
+      </CenteredModal>
     </div>
   );
 }

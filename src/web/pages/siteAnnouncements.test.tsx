@@ -76,11 +76,11 @@ describe('SiteAnnouncements page', () => {
     vi.clearAllMocks();
   });
 
-  it('exposes the renamed sidebar item and the site announcements entry', () => {
-    const consoleGroup = sidebarGroups.find((group) => group.label === '控制台');
-    const labels = (consoleGroup?.items || []).map((item) => item.label);
+  it('keeps channel management and site announcements in the upstream access group', () => {
+    const accessGroup = sidebarGroups.find((group) => group.label === '接入管理');
+    const labels = (accessGroup?.items || []).map((item) => item.label);
 
-    expect(labels).toContain('站点管理');
+    expect(labels).toContain('渠道管理');
     expect(labels).toContain('站点公告');
   });
 

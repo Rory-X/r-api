@@ -20,7 +20,7 @@ function resolveStorage(storage?: StorageLike | null): StorageLike | null {
 export function clearAppInstallationState(storage?: StorageLike | null): void {
   const target = resolveStorage(storage);
   if (!target) return;
-  clearAuthSession(target as never);
+  clearAuthSession();
   target.removeItem(THEME_MODE_STORAGE_KEY);
   target.removeItem(LEGACY_THEME_STORAGE_KEY);
   target.removeItem(USER_PROFILE_STORAGE_KEY);

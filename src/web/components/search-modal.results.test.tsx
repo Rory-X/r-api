@@ -112,7 +112,7 @@ describe('SearchModal results', () => {
       await flushMicrotasks();
 
       const rendered = JSON.stringify(root.toJSON());
-      expect(rendered).toContain('账号令牌');
+      expect(rendered).toContain('上游 API Token');
       expect(rendered).toContain('search-token');
       expect(rendered).toContain('API Key 连接');
 
@@ -124,7 +124,7 @@ describe('SearchModal results', () => {
         accountButton!.props.onClick();
       });
       const locationAfterAccountClick = root.root.find((node) => node.props?.id === 'location-probe');
-      expect(collectText(locationAfterAccountClick)).toBe('/accounts?segment=apikey&focusAccountId=8');
+      expect(collectText(locationAfterAccountClick)).toBe('/channels/connections?segment=apikey&focusAccountId=8');
     } finally {
       root?.unmount();
     }

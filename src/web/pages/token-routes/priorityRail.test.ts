@@ -10,13 +10,13 @@ import {
 describe('priorityRail helpers', () => {
   it('groups channels into visible priority sections and preserves in-layer order', () => {
     const sections = buildPriorityRailSections([
-      { id: 11, priority: 0 },
-      { id: 12, priority: 0 },
-      { id: 21, priority: 1 },
+      { id: 11, priority: 0, sortOrder: 1 },
+      { id: 12, priority: 0, sortOrder: 0 },
+      { id: 21, priority: 1, sortOrder: 0 },
     ]);
 
     expect(sections).toEqual([
-      { priority: 0, channelCount: 2, channelIds: [11, 12] },
+      { priority: 0, channelCount: 2, channelIds: [12, 11] },
       { priority: 1, channelCount: 1, channelIds: [21] },
     ]);
   });
@@ -52,9 +52,39 @@ describe('priorityRail helpers', () => {
     );
 
     expect(reordered).toEqual([
-      { id: 11, priority: 0 },
-      { id: 12, priority: 0 },
-      { id: 21, priority: 0 },
+      { id: 21, priority: 0, sortOrder: 0 },
+      { id: 11, priority: 0, sortOrder: 1 },
+      { id: 12, priority: 0, sortOrder: 2 },
+    ]);
+  });
+
+  it('reorders channels inside the same layer from top to bottom', () => {
+    expect(applyPriorityRailDrop(
+      [
+        { id: 11, priority: 0, sortOrder: 0 },
+        { id: 12, priority: 0, sortOrder: 1 },
+        { id: 13, priority: 0, sortOrder: 2 },
+      ],
+      11,
+      12,
+    )).toEqual([
+      { id: 12, priority: 0, sortOrder: 0 },
+      { id: 11, priority: 0, sortOrder: 1 },
+      { id: 13, priority: 0, sortOrder: 2 },
+    ]);
+
+    expect(applyPriorityRailDrop(
+      [
+        { id: 11, priority: 0, sortOrder: 0 },
+        { id: 12, priority: 0, sortOrder: 1 },
+        { id: 13, priority: 0, sortOrder: 2 },
+      ],
+      13,
+      12,
+    )).toEqual([
+      { id: 11, priority: 0, sortOrder: 0 },
+      { id: 13, priority: 0, sortOrder: 1 },
+      { id: 12, priority: 0, sortOrder: 2 },
     ]);
   });
 
@@ -70,9 +100,9 @@ describe('priorityRail helpers', () => {
     );
 
     expect(reordered).toEqual([
-      { id: 11, priority: 0 },
-      { id: 12, priority: 1 },
-      { id: 21, priority: 2 },
+      { id: 11, priority: 0, sortOrder: 0 },
+      { id: 12, priority: 1, sortOrder: 0 },
+      { id: 21, priority: 2, sortOrder: 0 },
     ]);
   });
 

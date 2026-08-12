@@ -7,8 +7,9 @@ describe('resolveLoginErrorMessage', () => {
   });
 
   it('returns invalid token message for auth failures', () => {
-    expect(resolveLoginErrorMessage(403, 'Invalid token')).toBe('登录令牌无效');
-    expect(resolveLoginErrorMessage(401, 'Missing Authorization header')).toBe('登录令牌无效');
+    expect(resolveLoginErrorMessage(403, 'Invalid token')).toBe('登录凭据无效');
+    expect(resolveLoginErrorMessage(401, 'Admin session required')).toBe('登录凭据无效');
+    expect(resolveLoginErrorMessage(429, 'Too many requests')).toBe('登录尝试过于频繁，请稍后再试');
   });
 
   it('returns server error message for 5xx', () => {

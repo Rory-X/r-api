@@ -16,7 +16,8 @@ describe('Sites centered modal adoption', () => {
 
     expect(source).toContain('API 请求地址池');
     expect(source).toContain('+ 添加 API 地址');
-    expect(source).toContain('准确主站点 URL（面板/登录/签到地址，如 https://nih.cc）');
+    expect(source).toContain('站点请求/管理地址（如 https://api.nih.cc）');
+    expect(source).toContain('站点主地址（浏览器面板/登录页；不填则跟随请求地址）');
     expect(source).toContain('API 请求地址（如 https://api.nih.cc）');
     expect(source).toContain('label="API 请求地址"');
     expect(source).toContain('API 地址: {buildSiteApiEndpointSummary(site)}');

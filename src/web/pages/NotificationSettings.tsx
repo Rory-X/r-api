@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { api, type RuntimeSettingsPayload } from '../api.js';
+import CenteredModal from '../components/CenteredModal.js';
 import { useToast } from '../components/Toast.js';
 import { tr } from '../i18n.js';
+import { Button, Disclosure, Input, Option, Select, Switch } from '../components/ui/index.js';
 
 type RuntimeSettings = {
     webhookUrl: string;
@@ -25,7 +27,51 @@ type RuntimeSettings = {
     serverChanKeyMasked?: string;
     telegramBotTokenMasked?: string;
     notifyCooldownSec: number;
+    notifyDeliveryPolicy: 'prefer_delivery' | 'prefer_no_duplicate';
 };
+
+type NotificationOutboxRow = {
+    id: number;
+    channel: string;
+    title: string;
+    message: string;
+    level: string;
+    status: 'pending' | 'processing' | 'delivered' | 'delivery_unknown';
+    attemptCount: number;
+    nextAttemptAt?: string | null;
+    lastError?: string | null;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+};
+
+type NotificationOutboxSnapshot = {
+    policy: 'prefer_delivery' | 'prefer_no_duplicate';
+    rows: NotificationOutboxRow[];
+    summary: Record<string, number>;
+    page?: {
+        limit: number;
+        offset: number;
+        total: number;
+        hasMore: boolean;
+    };
+};
+
+const OUTBOX_PREVIEW_LIMIT = 5;
+const OUTBOX_HISTORY_PAGE_SIZE = 20;
+
+const OUTBOX_STATUS_LABELS: Record<NotificationOutboxRow['status'], string> = {
+    pending: '等待投递',
+    processing: '投递中',
+    delivered: '已送达',
+    delivery_unknown: '投递未知',
+};
+
+function formatOutboxDate(value?: string | null): string {
+    if (!value) return '—';
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return value;
+    return new Date(timestamp).toLocaleString();
+}
 
 export default function NotificationSettings() {
     const [runtime, setRuntime] = useState<RuntimeSettings>({
@@ -47,6 +93,7 @@ export default function NotificationSettings() {
         smtpFrom: '',
         smtpTo: '',
         notifyCooldownSec: 300,
+        notifyDeliveryPolicy: 'prefer_delivery',
     });
 
     const [serverChanKey, setServerChanKey] = useState('');
@@ -55,6 +102,13 @@ export default function NotificationSettings() {
     const [loading, setLoading] = useState(true);
     const [savingNotify, setSavingNotify] = useState(false);
     const [testingNotify, setTestingNotify] = useState(false);
+    const [outbox, setOutbox] = useState<NotificationOutboxSnapshot | null>(null);
+    const [outboxLoading, setOutboxLoading] = useState(false);
+    const [outboxHistoryOpen, setOutboxHistoryOpen] = useState(false);
+    const [outboxHistory, setOutboxHistory] = useState<NotificationOutboxSnapshot | null>(null);
+    const [outboxHistoryPage, setOutboxHistoryPage] = useState(1);
+    const [outboxHistoryLoading, setOutboxHistoryLoading] = useState(false);
+    const [retryingOutbox, setRetryingOutbox] = useState<number | 'all' | null>(null);
     const toast = useToast();
 
     const inputStyle: React.CSSProperties = {
@@ -73,30 +127,41 @@ export default function NotificationSettings() {
         setLoading(true);
         try {
             const runtimeInfo = await api.getRuntimeSettings();
+            const webhookUrl = String(runtimeInfo.webhookUrl || '').trim();
+            const barkUrl = String(runtimeInfo.barkUrl || '').trim();
+            const serverChanKeyMasked = String(runtimeInfo.serverChanKeyMasked || '').trim();
+            const telegramBotTokenMasked = String(runtimeInfo.telegramBotTokenMasked || '').trim();
+            const telegramChatId = String(runtimeInfo.telegramChatId || '').trim();
+            const smtpHost = String(runtimeInfo.smtpHost || '').trim();
+            const smtpFrom = String(runtimeInfo.smtpFrom || '').trim();
+            const smtpTo = String(runtimeInfo.smtpTo || '').trim();
             setRuntime({
-                webhookUrl: runtimeInfo.webhookUrl || '',
-                barkUrl: runtimeInfo.barkUrl || '',
-                webhookEnabled: runtimeInfo.webhookEnabled ?? true,
-                barkEnabled: runtimeInfo.barkEnabled ?? true,
-                serverChanEnabled: !!runtimeInfo.serverChanEnabled,
-                telegramEnabled: !!runtimeInfo.telegramEnabled,
+                webhookUrl,
+                barkUrl,
+                webhookEnabled: runtimeInfo.webhookEnabled !== false && !!webhookUrl,
+                barkEnabled: runtimeInfo.barkEnabled !== false && !!barkUrl,
+                serverChanEnabled: !!runtimeInfo.serverChanEnabled && !!serverChanKeyMasked,
+                telegramEnabled: !!runtimeInfo.telegramEnabled && !!telegramBotTokenMasked && !!telegramChatId,
                 telegramApiBaseUrl: runtimeInfo.telegramApiBaseUrl || 'https://api.telegram.org',
-                telegramChatId: runtimeInfo.telegramChatId || '',
+                telegramChatId,
                 telegramUseSystemProxy: !!runtimeInfo.telegramUseSystemProxy,
                 telegramMessageThreadId: runtimeInfo.telegramMessageThreadId || '',
-                smtpEnabled: !!runtimeInfo.smtpEnabled,
-                smtpHost: runtimeInfo.smtpHost || '',
+                smtpEnabled: !!runtimeInfo.smtpEnabled && !!smtpHost && !!smtpFrom && !!smtpTo,
+                smtpHost,
                 smtpPort: Number(runtimeInfo.smtpPort) || 587,
                 smtpSecure: !!runtimeInfo.smtpSecure,
                 smtpUser: runtimeInfo.smtpUser || '',
                 smtpPassMasked: runtimeInfo.smtpPassMasked || '',
-                smtpFrom: runtimeInfo.smtpFrom || '',
-                smtpTo: runtimeInfo.smtpTo || '',
-                serverChanKeyMasked: runtimeInfo.serverChanKeyMasked || '',
-                telegramBotTokenMasked: runtimeInfo.telegramBotTokenMasked || '',
+                smtpFrom,
+                smtpTo,
+                serverChanKeyMasked,
+                telegramBotTokenMasked,
                 notifyCooldownSec: Number.isFinite(Number(runtimeInfo.notifyCooldownSec))
                     ? Math.max(0, Math.trunc(Number(runtimeInfo.notifyCooldownSec)))
                     : 300,
+                notifyDeliveryPolicy: runtimeInfo.notifyDeliveryPolicy === 'prefer_no_duplicate'
+                    ? 'prefer_no_duplicate'
+                    : 'prefer_delivery',
             });
         } catch (err: any) {
             toast.error(err?.message || '加载通知设置失败');
@@ -105,8 +170,41 @@ export default function NotificationSettings() {
         }
     };
 
+    const loadOutbox = async () => {
+        setOutboxLoading(true);
+        try {
+            setOutbox(await api.getNotificationOutbox({ limit: OUTBOX_PREVIEW_LIMIT, offset: 0 }));
+        } catch (err: any) {
+            toast.error(err?.message || '加载通知投递状态失败');
+        } finally {
+            setOutboxLoading(false);
+        }
+    };
+
+    const loadOutboxHistory = async (page: number) => {
+        const nextPage = Math.max(1, Math.trunc(page));
+        setOutboxHistoryLoading(true);
+        try {
+            const snapshot = await api.getNotificationOutbox({
+                limit: OUTBOX_HISTORY_PAGE_SIZE,
+                offset: (nextPage - 1) * OUTBOX_HISTORY_PAGE_SIZE,
+            });
+            setOutboxHistory(snapshot);
+            setOutboxHistoryPage(nextPage);
+        } catch (err: any) {
+            toast.error(err?.message || '加载完整通知投递记录失败');
+        } finally {
+            setOutboxHistoryLoading(false);
+        }
+    };
+
+    const openOutboxHistory = () => {
+        setOutboxHistoryOpen(true);
+        void loadOutboxHistory(1);
+    };
+
     useEffect(() => {
-        loadSettings();
+        void Promise.all([loadSettings(), loadOutbox()]);
     }, []);
 
     const saveNotify = async () => {
@@ -131,6 +229,7 @@ export default function NotificationSettings() {
                 smtpFrom: runtime.smtpFrom,
                 smtpTo: runtime.smtpTo,
                 notifyCooldownSec: Math.max(0, Math.trunc(Number(runtime.notifyCooldownSec) || 0)),
+                notifyDeliveryPolicy: runtime.notifyDeliveryPolicy,
             };
             if (serverChanKey.trim()) payload.serverChanKey = serverChanKey.trim();
             if (telegramBotToken.trim()) payload.telegramBotToken = telegramBotToken.trim();
@@ -147,10 +246,25 @@ export default function NotificationSettings() {
             setTelegramBotToken('');
             setSmtpPass('');
             toast.success('通知设置已保存');
+            await loadOutbox();
         } catch (err: any) {
             toast.error(err?.message || '保存失败');
         } finally {
             setSavingNotify(false);
+        }
+    };
+
+    const retryOutbox = async (id?: number) => {
+        setRetryingOutbox(id === undefined ? 'all' : id);
+        try {
+            await api.retryNotificationOutbox(id);
+            toast.success(id === undefined ? '已重新排队未知投递' : '已重新排队该通知');
+            await loadOutbox();
+            if (outboxHistoryOpen) await loadOutboxHistory(outboxHistoryPage);
+        } catch (err: any) {
+            toast.error(err?.message || '重新排队失败');
+        } finally {
+            setRetryingOutbox(null);
         }
     };
 
@@ -175,22 +289,64 @@ export default function NotificationSettings() {
         );
     }
 
+    const renderOutboxRow = (row: NotificationOutboxRow) => (
+        <div key={row.id} style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: '10px 12px',
+            border: '1px solid var(--color-border-light)',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--color-bg)',
+        }}>
+            <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: 13 }}>{row.title}</strong>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{row.channel}</span>
+                    <span style={{ fontSize: 11, color: row.status === 'delivery_unknown' ? 'var(--color-warning)' : 'var(--color-text-muted)' }}>
+                        {OUTBOX_STATUS_LABELS[row.status]}
+                    </span>
+                </div>
+                <div
+                    title={row.lastError || row.message}
+                    style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                    {row.lastError || row.message} · 尝试 {row.attemptCount} 次 · {formatOutboxDate(row.updatedAt || row.createdAt)}
+                </div>
+            </div>
+            {row.status === 'delivery_unknown' && (
+                <Button
+                    onClick={() => void retryOutbox(row.id)}
+                    disabled={retryingOutbox !== null}
+                    className="btn btn-secondary"
+                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                    {retryingOutbox === row.id ? '排队中...' : '重试'}
+                </Button>
+            )}
+        </div>
+    );
+
+    const outboxHistoryTotal = outboxHistory?.page?.total ?? outbox?.page?.total ?? outbox?.rows.length ?? 0;
+    const outboxHistoryTotalPages = Math.max(1, Math.ceil(outboxHistoryTotal / OUTBOX_HISTORY_PAGE_SIZE));
+
     return (
         <div className="animate-fade-in" style={{ paddingBottom: 40 }}>
             {/* 头部标题与操作 */}
             <div className="page-header">
                 <h2 className="page-title">{tr('通知设置')}</h2>
                 <div className="page-actions">
-                    <button onClick={testNotify} disabled={testingNotify} className="btn btn-success">
+                    <Button onClick={testNotify} disabled={testingNotify} className="btn btn-success">
                         {testingNotify ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 发送中...</> : '发送测试通知'}
-                    </button>
-                    <button onClick={saveNotify} disabled={savingNotify} className="btn btn-primary">
+                    </Button>
+                    <Button onClick={saveNotify} disabled={savingNotify} className="btn btn-primary">
                         {savingNotify ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存通知设置'}
-                    </button>
+                    </Button>
                 </div>
             </div>
 
-            <div style={{ maxWidth: 860, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div className="management-page-stack" style={{ gap: 20 }}>
 
                 <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
                     <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>告警去噪与冷静期</div>
@@ -201,7 +357,7 @@ export default function NotificationSettings() {
                         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>
                             冷静期（秒）
                         </div>
-                        <input
+                        <Input
                             type="number"
                             min={0}
                             value={runtime.notifyCooldownSec}
@@ -214,8 +370,141 @@ export default function NotificationSettings() {
                     </div>
                 </div>
 
+                <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>通知投递策略</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+                        这是网关全局策略，适用于所有通知渠道。投递结果不确定时，可选择继续重试或立即停止，避免重复通知。
+                    </div>
+                    <div style={{ maxWidth: 420 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>
+                            不确定投递结果时
+                        </div>
+                        <Select
+                            aria-label="通知投递策略"
+                            value={runtime.notifyDeliveryPolicy}
+                            onChange={(e) => setRuntime((prev) => ({
+                                ...prev,
+                                notifyDeliveryPolicy: e.target.value === 'prefer_no_duplicate'
+                                    ? 'prefer_no_duplicate'
+                                    : 'prefer_delivery',
+                            }))}
+                            style={{ width: '100%' }}
+                        >
+                            <Option value="prefer_delivery">宁可重发：继续重试，尽量保证送达</Option>
+                            <Option value="prefer_no_duplicate">宁可漏发：停止重试，避免重复通知</Option>
+                        </Select>
+                    </div>
+                </div>
+
+                <div className="card animate-slide-up stagger-3" style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+                        <div>
+                            <div style={{ fontWeight: 600, fontSize: 15 }}>最近通知投递</div>
+                            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                                Outbox 会在服务重启后继续处理；“投递未知”可以人工重新排队。
+                            </div>
+                        </div>
+                        <Button
+                            onClick={() => void retryOutbox()}
+                            disabled={outboxLoading || retryingOutbox !== null || (outbox?.summary.delivery_unknown || 0) === 0}
+                            className="btn btn-secondary"
+                            style={{ whiteSpace: 'nowrap' }}
+                        >
+                            {retryingOutbox === 'all' ? '重新排队中...' : '重试未知投递'}
+                        </Button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '14px 0' }}>
+                        {(['pending', 'processing', 'delivered', 'delivery_unknown'] as const).map((status) => (
+                            <span key={status} style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: '5px 9px',
+                                borderRadius: 999,
+                                background: status === 'delivery_unknown' ? 'var(--color-warning-soft)' : 'var(--color-bg)',
+                                border: '1px solid var(--color-border-light)',
+                                color: status === 'delivery_unknown' ? 'var(--color-warning)' : 'var(--color-text-secondary)',
+                                fontSize: 12,
+                            }}>
+                                {OUTBOX_STATUS_LABELS[status]} {outbox?.summary[status] || 0}
+                            </span>
+                        ))}
+                    </div>
+
+                    {outboxLoading && !outbox ? (
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>加载投递状态...</div>
+                    ) : outbox?.rows.length ? (
+                        <div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {outbox.rows.map(renderOutboxRow)}
+                            </div>
+                            {(outbox.page?.total || outbox.rows.length) > outbox.rows.length && (
+                                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
+                                    <Button type="button" className="btn btn-ghost" onClick={openOutboxHistory}>
+                                        查看全部投递（{outbox.page?.total || outbox.rows.length}）
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无通知投递记录</div>
+                    )}
+                </div>
+
+                <CenteredModal
+                    open={outboxHistoryOpen}
+                    onClose={() => setOutboxHistoryOpen(false)}
+                    title="全部通知投递"
+                    maxWidth={960}
+                    closeOnBackdrop
+                    closeOnEscape
+                    bodyStyle={{ overflow: 'hidden' }}
+                    footer={(
+                        <>
+                            <span style={{ marginRight: 'auto', color: 'var(--color-text-muted)', fontSize: 12 }}>
+                                共 {outboxHistoryTotal} 条 · 第 {outboxHistoryPage}/{outboxHistoryTotalPages} 页
+                            </span>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={outboxHistoryLoading || outboxHistoryPage <= 1}
+                                onClick={() => void loadOutboxHistory(outboxHistoryPage - 1)}
+                            >
+                                上一页
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={outboxHistoryLoading || outboxHistoryPage >= outboxHistoryTotalPages}
+                                onClick={() => void loadOutboxHistory(outboxHistoryPage + 1)}
+                            >
+                                下一页
+                            </Button>
+                            <Button type="button" variant="ghost" onClick={() => setOutboxHistoryOpen(false)}>关闭</Button>
+                        </>
+                    )}
+                >
+                    <div style={{ display: 'grid', gap: 12 }}>
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: 12, lineHeight: 1.6 }}>
+                            按创建时间从新到旧展示，每页 {OUTBOX_HISTORY_PAGE_SIZE} 条；记录区域独立滚动，不会继续拉长设置页。
+                        </div>
+                        <div style={{ maxHeight: 'min(62vh, 620px)', overflowY: 'auto', paddingRight: 4 }}>
+                            {outboxHistoryLoading && !outboxHistory ? (
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>加载中...</div>
+                            ) : outboxHistory?.rows.length ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {outboxHistory.rows.map(renderOutboxRow)}
+                                </div>
+                            ) : (
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无通知投递记录</div>
+                            )}
+                        </div>
+                    </div>
+                </CenteredModal>
+
                 {/* 卡片：Webhook & Bark */}
-                <div className="card animate-slide-up stagger-2" style={{ padding: 24, border: (runtime.webhookEnabled || runtime.barkEnabled) ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
+                <div className="card animate-slide-up stagger-4" style={{ padding: 24, border: (runtime.webhookEnabled || runtime.barkEnabled) ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-primary-light)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -228,31 +517,15 @@ export default function NotificationSettings() {
                         </div>
 
                         <div style={{ display: 'flex', gap: 16 }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                                <span style={{ fontSize: 13, fontWeight: 500, color: runtime.webhookEnabled ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>启用 Webhook</span>
-                                <input
-                                    type="checkbox"
-                                    style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                    checked={runtime.webhookEnabled}
-                                    onChange={(e) => setRuntime((prev) => ({ ...prev, webhookEnabled: e.target.checked }))}
-                                />
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                                <span style={{ fontSize: 13, fontWeight: 500, color: runtime.barkEnabled ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>启用 Bark</span>
-                                <input
-                                    type="checkbox"
-                                    style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                    checked={runtime.barkEnabled}
-                                    onChange={(e) => setRuntime((prev) => ({ ...prev, barkEnabled: e.target.checked }))}
-                                />
-                            </label>
+                            <Switch label="启用 Webhook" checked={runtime.webhookEnabled} onChange={(webhookEnabled) => setRuntime((prev) => ({ ...prev, webhookEnabled }))} />
+                            <Switch label="启用 Bark" checked={runtime.barkEnabled} onChange={(barkEnabled) => setRuntime((prev) => ({ ...prev, barkEnabled }))} />
                         </div>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         <div style={{ opacity: runtime.webhookEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Webhook URL</div>
-                            <input
+                            <Input
                                 value={runtime.webhookUrl}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, webhookUrl: e.target.value }))}
                                 placeholder="https://your-webhook-url (可选)"
@@ -262,7 +535,7 @@ export default function NotificationSettings() {
                         </div>
                         <div style={{ opacity: runtime.barkEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Bark URL</div>
-                            <input
+                            <Input
                                 value={runtime.barkUrl}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, barkUrl: e.target.value }))}
                                 placeholder="https://api.day.app/your_key (可选)"
@@ -273,8 +546,18 @@ export default function NotificationSettings() {
                     </div>
                 </div>
 
+                <Disclosure
+                    className="notification-disclosure animate-slide-up stagger-5"
+                    title={<span className="notification-disclosure-title">
+                        更多渠道
+                        <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 400 }}>
+                            Server酱
+                        </span>
+                    </span>}
+                >
+
                 {/* 卡片：Server酱 */}
-                <div className="card animate-slide-up stagger-3" style={{ padding: 24, border: runtime.serverChanEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--color-border-light)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-warning-soft)', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -286,22 +569,14 @@ export default function NotificationSettings() {
                             </div>
                         </div>
 
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: runtime.serverChanEnabled ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>启用 Server酱</span>
-                            <input
-                                type="checkbox"
-                                style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                checked={runtime.serverChanEnabled}
-                                onChange={(e) => setRuntime((prev) => ({ ...prev, serverChanEnabled: e.target.checked }))}
-                            />
-                        </label>
+                        <Switch label="启用 Server酱" checked={runtime.serverChanEnabled} onChange={(serverChanEnabled) => setRuntime((prev) => ({ ...prev, serverChanEnabled }))} />
                     </div>
 
                     <div style={{ opacity: runtime.serverChanEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
                         <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
                             当前配置: {runtime.serverChanKeyMasked || '未设置'}
                         </code>
-                        <input
+                        <Input
                             type="password"
                             value={serverChanKey}
                             onChange={(e) => setServerChanKey(e.target.value)}
@@ -311,9 +586,10 @@ export default function NotificationSettings() {
                         />
                     </div>
                 </div>
+                </Disclosure>
 
                 {/* 卡片：Telegram */} 
-                <div className="card animate-slide-up stagger-4" style={{ padding: 24, border: runtime.telegramEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
+                <div className="card animate-slide-up stagger-6" style={{ padding: 24, border: runtime.telegramEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-primary-light)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -325,58 +601,16 @@ export default function NotificationSettings() {
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', gap: 16 }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                                <span style={{ fontSize: 13, fontWeight: 500, color: runtime.telegramUseSystemProxy ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>使用系统代理</span>
-                                <input
-                                    type="checkbox"
-                                    style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                    checked={runtime.telegramUseSystemProxy}
-                                    onChange={(e) => setRuntime((prev) => ({ ...prev, telegramUseSystemProxy: e.target.checked }))}
-                                />
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                                <span style={{ fontSize: 13, fontWeight: 500, color: runtime.telegramEnabled ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>启用 Telegram</span>
-                                <input
-                                    type="checkbox"
-                                    style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                    checked={runtime.telegramEnabled}
-                                    onChange={(e) => setRuntime((prev) => ({ ...prev, telegramEnabled: e.target.checked }))}
-                                />
-                            </label>
-                        </div>
+                        <Switch label="启用 Telegram" checked={runtime.telegramEnabled} onChange={(telegramEnabled) => setRuntime((prev) => ({ ...prev, telegramEnabled }))} />
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '16px 20px', opacity: runtime.telegramEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
-                        <div style={{ gridColumn: '1 / -1' }}>
-                            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram API Base URL</div>
-                            <input
-                                value={runtime.telegramApiBaseUrl}
-                                onChange={(e) => setRuntime((prev) => ({ ...prev, telegramApiBaseUrl: e.target.value }))}
-                                placeholder="例如: https://your-proxy.example.com"
-                                style={inputStyle}
-                                disabled={!runtime.telegramEnabled}
-                            />
-                            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
-                                留空或使用默认值时直连官方 Telegram API；如需国内反代，可填写反代前缀。
-                            </div>
-                        </div>
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram Chat ID</div>
-                            <input
+                            <Input
                                 value={runtime.telegramChatId}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, telegramChatId: e.target.value }))}
                                 placeholder="例如: -1001234567890 或 @your_channel"
-                                style={inputStyle}
-                                disabled={!runtime.telegramEnabled}
-                            />
-                        </div>
-                        <div>
-                            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram Topic ID</div>
-                            <input
-                                value={runtime.telegramMessageThreadId}
-                                onChange={(e) => setRuntime((prev) => ({ ...prev, telegramMessageThreadId: e.target.value }))}
-                                placeholder="例如: 77"
                                 style={inputStyle}
                                 disabled={!runtime.telegramEnabled}
                             />
@@ -386,7 +620,7 @@ export default function NotificationSettings() {
                                 Telegram Bot Token
                                 {runtime.telegramBotTokenMasked && <span style={{ color: 'var(--color-primary)', marginLeft: 8, fontSize: 12 }}>(当前已设置)</span>}
                             </div>
-                            <input
+                            <Input
                                 type="password"
                                 value={telegramBotToken}
                                 onChange={(e) => setTelegramBotToken(e.target.value)}
@@ -396,10 +630,64 @@ export default function NotificationSettings() {
                             />
                         </div>
                     </div>
+
+                    <Disclosure
+                        className="notification-advanced-disclosure"
+                        title={<span className="notification-advanced-disclosure-title">
+                            高级设置
+                            <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                                代理、API 地址与 Topic
+                            </span>
+                        </span>}
+                    >
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '16px 20px', marginTop: 16, opacity: runtime.telegramEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram API Base URL</div>
+                                <Input
+                                    value={runtime.telegramApiBaseUrl}
+                                    onChange={(e) => setRuntime((prev) => ({ ...prev, telegramApiBaseUrl: e.target.value }))}
+                                    placeholder="例如: https://your-proxy.example.com"
+                                    style={inputStyle}
+                                    disabled={!runtime.telegramEnabled}
+                                />
+                                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                                    默认直连官方 Telegram API；网络受限时可填写反代前缀。
+                                </div>
+                            </div>
+                            <div>
+                                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram Topic ID</div>
+                                <Input
+                                    value={runtime.telegramMessageThreadId}
+                                    onChange={(e) => setRuntime((prev) => ({ ...prev, telegramMessageThreadId: e.target.value }))}
+                                    placeholder="例如: 77"
+                                    style={inputStyle}
+                                    disabled={!runtime.telegramEnabled}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 10 }}>
+                                <Switch
+                                    label="使用系统代理"
+                                    checked={runtime.telegramUseSystemProxy}
+                                    onChange={(telegramUseSystemProxy) => setRuntime((prev) => ({ ...prev, telegramUseSystemProxy }))}
+                                    disabled={!runtime.telegramEnabled}
+                                />
+                            </div>
+                        </div>
+                    </Disclosure>
                 </div>
 
+                <Disclosure
+                    className="notification-disclosure animate-slide-up stagger-7"
+                    title={<span className="notification-disclosure-title">
+                        邮件通知
+                        <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 400 }}>
+                            SMTP
+                        </span>
+                    </span>}
+                >
+
                 {/* 卡片：SMTP 邮件设置 */}
-                <div className="card animate-slide-up stagger-4" style={{ padding: 24, border: runtime.smtpEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--color-border-light)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-primary-light)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -411,22 +699,14 @@ export default function NotificationSettings() {
                             </div>
                         </div>
 
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: runtime.smtpEnabled ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>启用 SMTP</span>
-                            <input
-                                type="checkbox"
-                                style={{ width: 16, height: 16, cursor: 'pointer' }}
-                                checked={runtime.smtpEnabled}
-                                onChange={(e) => setRuntime((prev) => ({ ...prev, smtpEnabled: e.target.checked }))}
-                            />
-                        </label>
+                        <Switch label="启用 SMTP" checked={runtime.smtpEnabled} onChange={(smtpEnabled) => setRuntime((prev) => ({ ...prev, smtpEnabled }))} />
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '16px 20px', opacity: runtime.smtpEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
                         {/* Host */}
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>SMTP 服务器</div>
-                            <input
+                            <Input
                                 value={runtime.smtpHost}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, smtpHost: e.target.value }))}
                                 placeholder="例如: smtp.qq.com"
@@ -438,7 +718,7 @@ export default function NotificationSettings() {
                         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end' }}>
                             <div style={{ flex: 1 }}>
                                 <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>端口</div>
-                                <input
+                                <Input
                                     type="number"
                                     min={1}
                                     value={runtime.smtpPort}
@@ -447,20 +727,18 @@ export default function NotificationSettings() {
                                     disabled={!runtime.smtpEnabled}
                                 />
                             </div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', paddingBottom: 12 }}>
-                                <input
-                                    type="checkbox"
-                                    checked={runtime.smtpSecure}
-                                    onChange={(e) => setRuntime((prev) => ({ ...prev, smtpSecure: e.target.checked }))}
-                                    disabled={!runtime.smtpEnabled}
-                                />
-                                启用 TLS/SSL
-                            </label>
+                            <Switch
+                                label="启用 TLS/SSL"
+                                checked={runtime.smtpSecure}
+                                onChange={(smtpSecure) => setRuntime((prev) => ({ ...prev, smtpSecure }))}
+                                disabled={!runtime.smtpEnabled}
+                                className="notification-inline-switch"
+                            />
                         </div>
                         {/* User */}
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>账号用户</div>
-                            <input
+                            <Input
                                 value={runtime.smtpUser}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, smtpUser: e.target.value }))}
                                 placeholder="SMTP 用户名"
@@ -474,7 +752,7 @@ export default function NotificationSettings() {
                                 账号密码
                                 {runtime.smtpPassMasked && <span style={{ color: 'var(--color-primary)', marginLeft: 8, fontSize: 12 }}>(当前已设置)</span>}
                             </div>
-                            <input
+                            <Input
                                 type="password"
                                 value={smtpPass}
                                 onChange={(e) => setSmtpPass(e.target.value)}
@@ -486,7 +764,7 @@ export default function NotificationSettings() {
                         {/* From */}
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>发件人地址</div>
-                            <input
+                            <Input
                                 value={runtime.smtpFrom}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, smtpFrom: e.target.value }))}
                                 placeholder="例如: admin@example.com"
@@ -497,7 +775,7 @@ export default function NotificationSettings() {
                         {/* To */}
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>接收地址</div>
-                            <input
+                            <Input
                                 value={runtime.smtpTo}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, smtpTo: e.target.value }))}
                                 placeholder="例如: target@example.com"
@@ -508,6 +786,7 @@ export default function NotificationSettings() {
 
                     </div>
                 </div>
+                </Disclosure>
 
             </div>
         </div>

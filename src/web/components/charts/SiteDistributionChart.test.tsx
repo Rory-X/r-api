@@ -46,6 +46,15 @@ describe('SiteDistributionChart', () => {
       );
     })).resolves.toBeUndefined();
 
+    const shell = renderer.root.find((node) => (
+      typeof node.props.className === 'string'
+      && node.props.className.includes('chart-container')
+    ));
+    expect(shell.props.style).toEqual(expect.objectContaining({
+      width: '100%',
+      height: '100%',
+    }));
+
     renderer.unmount();
   });
 });

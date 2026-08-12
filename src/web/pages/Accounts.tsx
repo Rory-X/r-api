@@ -63,8 +63,8 @@ const ACCOUNT_SEGMENTS: Array<{
   },
   {
     value: "tokens",
-    label: "账号令牌管理",
-    tooltip: "从账号同步或手动维护，供路由实际调用",
+    label: "上游 API Token",
+    tooltip: "从面板账号同步或创建，供模型请求路由使用",
     tooltipSide: "bottom",
     tooltipAlign: "end",
   },
@@ -254,6 +254,7 @@ export default function Accounts() {
     (selectedTokenSite?.platform || "").toLowerCase() === "sub2api";
   const activeAddCredentialMode =
     activeSegment === "apikey" ? "apikey" : "session";
+  const canCustomizeDisplayOrder = activeSegment === "session";
   const createIntentPreset = useMemo(
     () => getSiteInitializationPreset(createIntentPresetId),
     [createIntentPresetId],
@@ -297,10 +298,12 @@ export default function Accounts() {
   );
   const visibleAccounts = useMemo(() => {
     if (activeSegment === "tokens") return [];
-    return sortedAccounts.filter(
+    const sourceAccounts =
+      activeSegment === "session" ? sortedAccounts : accounts;
+    return sourceAccounts.filter(
       (account) => resolveAccountCredentialMode(account) === activeSegment,
     );
-  }, [activeSegment, sortedAccounts]);
+  }, [accounts, activeSegment, sortedAccounts]);
   const allVisibleAccountsSelected =
     visibleAccounts.length > 0 &&
     visibleAccounts.every((account) => selectedAccountIds.includes(account.id));
@@ -1263,7 +1266,7 @@ export default function Accounts() {
                   className="btn btn-ghost"
                   style={{ border: "1px solid var(--color-border)" }}
                 >
-                  排序与操作
+                  {canCustomizeDisplayOrder ? "排序与操作" : "连接操作"}
                 </button>
                 <button
                   type="button"
@@ -1279,22 +1282,24 @@ export default function Accounts() {
               </>
             ) : (
               <>
-                <div
-                  className="accounts-sort-select"
-                  style={{ minWidth: 156, position: "relative", zIndex: 20 }}
-                >
-                  <ModernSelect
-                    size="sm"
-                    value={sortMode}
-                    onChange={(nextValue) => setSortMode(nextValue as SortMode)}
-                    options={[
-                      { value: "custom", label: "自定义排序" },
-                      { value: "balance-desc", label: "余额高到低" },
-                      { value: "balance-asc", label: "余额低到高" },
-                    ]}
-                    placeholder="自定义排序"
-                  />
-                </div>
+                {canCustomizeDisplayOrder && (
+                  <div
+                    className="accounts-sort-select"
+                    style={{ minWidth: 156, position: "relative", zIndex: 20 }}
+                  >
+                    <ModernSelect
+                      size="sm"
+                      value={sortMode}
+                      onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+                      options={[
+                        { value: "custom", label: "自定义排序" },
+                        { value: "balance-desc", label: "余额高到低" },
+                        { value: "balance-asc", label: "余额低到高" },
+                      ]}
+                      placeholder="自定义排序"
+                    />
+                  </div>
+                )}
                 {activeSegment === "session" && (
                   <button
                     onClick={() =>
@@ -1358,24 +1363,26 @@ export default function Accounts() {
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="连接排序与操作"
+        mobileTitle={canCustomizeDisplayOrder ? "连接排序与操作" : "连接操作"}
         mobileContent={
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                排序方式
+            {canCustomizeDisplayOrder && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                  排序方式
+                </div>
+                <ModernSelect
+                  value={sortMode}
+                  onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+                  options={[
+                    { value: "custom", label: "自定义排序" },
+                    { value: "balance-desc", label: "余额高到低" },
+                    { value: "balance-asc", label: "余额低到高" },
+                  ]}
+                  placeholder="自定义排序"
+                />
               </div>
-              <ModernSelect
-                value={sortMode}
-                onChange={(nextValue) => setSortMode(nextValue as SortMode)}
-                options={[
-                  { value: "custom", label: "自定义排序" },
-                  { value: "balance-desc", label: "余额高到低" },
-                  { value: "balance-asc", label: "余额低到高" },
-                ]}
-                placeholder="自定义排序"
-              />
-            </div>
+            )}
             {activeSegment === "session" && (
               <button
                 onClick={async () => {
@@ -2071,7 +2078,7 @@ export default function Accounts() {
               >
                 <div className="info-tip">
                   API Key
-                  连接只用于代理转发，不会自动派生账号令牌。系统会按站点平台能力自动引导到
+                  连接只用于代理转发，不会自动派生上游 API Token。系统会按站点平台能力自动引导到
                   Session 或 API Key 创建流程。
                 </div>
                 {createIntentPreset && (
@@ -2973,43 +2980,47 @@ export default function Accounts() {
                               value={hintMessage}
                             />
                             <div className="mobile-card-actions">
-                              <button
-                                onClick={() => handleTogglePin(a)}
-                                disabled={!!actionLoading[`pin-toggle-${a.id}`]}
-                                className={`btn btn-link ${a.isPinned ? "btn-link-warning" : "btn-link-primary"}`}
-                              >
-                                {actionLoading[`pin-toggle-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
-                                ) : a.isPinned ? (
-                                  "取消置顶"
-                                ) : (
-                                  "置顶"
-                                )}
-                              </button>
-                              {sortMode === "custom" && (
+                              {canCustomizeDisplayOrder && (
                                 <>
                                   <button
-                                    onClick={() =>
-                                      handleMoveCustomOrder(a, "up")
-                                    }
-                                    disabled={
-                                      !!actionLoading[`reorder-${a.id}`]
-                                    }
-                                    className="btn btn-link btn-link-muted"
+                                    onClick={() => handleTogglePin(a)}
+                                    disabled={!!actionLoading[`pin-toggle-${a.id}`]}
+                                    className={`btn btn-link ${a.isPinned ? "btn-link-warning" : "btn-link-primary"}`}
                                   >
-                                    ↑ 上移
+                                    {actionLoading[`pin-toggle-${a.id}`] ? (
+                                      <span className="spinner spinner-sm" />
+                                    ) : a.isPinned ? (
+                                      "取消置顶"
+                                    ) : (
+                                      "置顶"
+                                    )}
                                   </button>
-                                  <button
-                                    onClick={() =>
-                                      handleMoveCustomOrder(a, "down")
-                                    }
-                                    disabled={
-                                      !!actionLoading[`reorder-${a.id}`]
-                                    }
-                                    className="btn btn-link btn-link-muted"
-                                  >
-                                    ↓ 下移
-                                  </button>
+                                  {sortMode === "custom" && (
+                                    <>
+                                      <button
+                                        onClick={() =>
+                                          handleMoveCustomOrder(a, "up")
+                                        }
+                                        disabled={
+                                          !!actionLoading[`reorder-${a.id}`]
+                                        }
+                                        className="btn btn-link btn-link-muted"
+                                      >
+                                        ↑ 上移
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleMoveCustomOrder(a, "down")
+                                        }
+                                        disabled={
+                                          !!actionLoading[`reorder-${a.id}`]
+                                        }
+                                        className="btn btn-link btn-link-muted"
+                                      >
+                                        ↓ 下移
+                                      </button>
+                                    </>
+                                  )}
                                 </>
                               )}
                               {capabilities.canRefreshBalance && (
@@ -3297,43 +3308,47 @@ export default function Accounts() {
                             style={{ textAlign: "right" }}
                           >
                             <div className="accounts-row-actions">
-                              <button
-                                onClick={() => handleTogglePin(a)}
-                                disabled={!!actionLoading[`pin-toggle-${a.id}`]}
-                                className={`btn btn-link ${a.isPinned ? "btn-link-warning" : "btn-link-primary"}`}
-                              >
-                                {actionLoading[`pin-toggle-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
-                                ) : a.isPinned ? (
-                                  "取消置顶"
-                                ) : (
-                                  "置顶"
-                                )}
-                              </button>
-                              {sortMode === "custom" && (
+                              {canCustomizeDisplayOrder && (
                                 <>
                                   <button
-                                    onClick={() =>
-                                      handleMoveCustomOrder(a, "up")
-                                    }
-                                    disabled={
-                                      !!actionLoading[`reorder-${a.id}`]
-                                    }
-                                    className="btn btn-link btn-link-muted"
+                                    onClick={() => handleTogglePin(a)}
+                                    disabled={!!actionLoading[`pin-toggle-${a.id}`]}
+                                    className={`btn btn-link ${a.isPinned ? "btn-link-warning" : "btn-link-primary"}`}
                                   >
-                                    ↑
+                                    {actionLoading[`pin-toggle-${a.id}`] ? (
+                                      <span className="spinner spinner-sm" />
+                                    ) : a.isPinned ? (
+                                      "取消置顶"
+                                    ) : (
+                                      "置顶"
+                                    )}
                                   </button>
-                                  <button
-                                    onClick={() =>
-                                      handleMoveCustomOrder(a, "down")
-                                    }
-                                    disabled={
-                                      !!actionLoading[`reorder-${a.id}`]
-                                    }
-                                    className="btn btn-link btn-link-muted"
-                                  >
-                                    ↓
-                                  </button>
+                                  {sortMode === "custom" && (
+                                    <>
+                                      <button
+                                        onClick={() =>
+                                          handleMoveCustomOrder(a, "up")
+                                        }
+                                        disabled={
+                                          !!actionLoading[`reorder-${a.id}`]
+                                        }
+                                        className="btn btn-link btn-link-muted"
+                                      >
+                                        ↑
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleMoveCustomOrder(a, "down")
+                                        }
+                                        disabled={
+                                          !!actionLoading[`reorder-${a.id}`]
+                                        }
+                                        className="btn btn-link btn-link-muted"
+                                      >
+                                        ↓
+                                      </button>
+                                    </>
+                                  )}
                                 </>
                               )}
                               {capabilities.canRefreshBalance && (

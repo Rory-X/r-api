@@ -3,6 +3,7 @@ import {
   buildAccountFocusPath,
   buildEventNavigationPath,
   buildSiteFocusPath,
+  buildTokenFocusPath,
   clearFocusParams,
   readFocusAccountIntent,
   readFocusAnnouncementId,
@@ -11,11 +12,13 @@ import {
 
 describe('navigationFocus helpers', () => {
   it('builds focus paths for site and account', () => {
-    expect(buildSiteFocusPath(12)).toBe('/sites?focusSiteId=12');
-    expect(buildSiteFocusPath(0)).toBe('/sites');
-    expect(buildAccountFocusPath(34)).toBe('/accounts?focusAccountId=34');
-    expect(buildAccountFocusPath(34, { openRebind: true })).toBe('/accounts?focusAccountId=34&openRebind=1');
-    expect(buildAccountFocusPath(-1)).toBe('/accounts');
+    expect(buildSiteFocusPath(12)).toBe('/channels/sites?focusSiteId=12');
+    expect(buildSiteFocusPath(0)).toBe('/channels/sites');
+    expect(buildAccountFocusPath(34)).toBe('/channels/connections?focusAccountId=34');
+    expect(buildAccountFocusPath(34, { openRebind: true })).toBe('/channels/connections?focusAccountId=34&openRebind=1');
+    expect(buildAccountFocusPath(-1)).toBe('/channels/connections');
+    expect(buildTokenFocusPath(56)).toBe('/channels/connections?segment=tokens&focusTokenId=56');
+    expect(buildTokenFocusPath(0)).toBe('/channels/connections?segment=tokens');
   });
 
   it('parses focus params from query string', () => {
@@ -50,19 +53,19 @@ describe('navigationFocus helpers', () => {
       relatedType: 'account',
       relatedId: 18,
       type: 'token',
-    })).toBe('/accounts?focusAccountId=18&openRebind=1');
+    })).toBe('/channels/connections?focusAccountId=18&openRebind=1');
 
     expect(buildEventNavigationPath({
       relatedType: 'account',
       relatedId: 18,
       type: 'checkin',
-    })).toBe('/accounts?focusAccountId=18');
+    })).toBe('/channels/connections?focusAccountId=18');
 
     expect(buildEventNavigationPath({
       relatedType: 'site',
       relatedId: 9,
       type: 'status',
-    })).toBe('/sites?focusSiteId=9');
+    })).toBe('/channels/sites?focusSiteId=9');
 
     expect(buildEventNavigationPath({
       relatedType: 'site_announcement',

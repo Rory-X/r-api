@@ -68,7 +68,7 @@ describe('RouteCard sortable shell', () => {
   it('applies sortable transform to the outer channel shell instead of the inner row card', () => {
     const root = create(
       <RouteCard
-        route={buildRoute()}
+        route={buildRoute({ routingStrategy: 'manual' })}
         brand={null}
         expanded
         onToggleExpand={vi.fn()}

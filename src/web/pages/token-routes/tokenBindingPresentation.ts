@@ -59,7 +59,7 @@ function buildDirectBindingPresentation(
       bindingModeLabel: 'OAuth授权',
       badgeTone: 'warning',
       effectiveTokenName: accountName,
-      helperText: `当前直接使用连接「${accountName}」的 OAuth 授权，不依赖账号令牌。`,
+      helperText: `当前直接使用连接「${accountName}」的 OAuth 授权，不依赖上游 API Token。`,
       followOptionLabel: `固定使用：${accountName}(OAuth 授权)`,
       followOptionDescription: `直接使用连接「${accountName}」的 OAuth 授权`,
     };
@@ -70,7 +70,7 @@ function buildDirectBindingPresentation(
     bindingModeLabel: 'API令牌',
     badgeTone: 'warning',
     effectiveTokenName: accountName,
-    helperText: `当前直接使用连接「${accountName}」保存的 API Key，不依赖账号令牌。`,
+    helperText: `当前直接使用连接「${accountName}」保存的 API Key，不依赖上游 API Token。`,
     followOptionLabel: `固定使用：${accountName}(跟随 API Key 设置)`,
     followOptionDescription: `直接使用连接「${accountName}」保存的 API Key`,
   };

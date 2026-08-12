@@ -72,6 +72,7 @@ describe('tokenBindingPresentation', () => {
     expect(result.isFollowingAccountDefault).toBe(false);
     expect(result.effectiveTokenName).toBe('elysiver_api');
     expect(result.helperText).toContain('连接「elysiver_api」保存的 API Key');
+    expect(result.helperText).toContain('不依赖上游 API Token');
     expect(result.followOptionLabel).toBe('固定使用：elysiver_api(跟随 API Key 设置)');
     expect(result.followOptionDescription).toContain('API Key');
   });
@@ -87,6 +88,7 @@ describe('tokenBindingPresentation', () => {
     expect(result.isFollowingAccountDefault).toBe(false);
     expect(result.effectiveTokenName).toBe('mail@urlk.cn');
     expect(result.helperText).toContain('OAuth 授权');
+    expect(result.helperText).toContain('不依赖上游 API Token');
     expect(result.helperText).not.toContain('默认令牌');
     expect(result.followOptionLabel).toBe('固定使用：mail@urlk.cn(OAuth 授权)');
     expect(result.followOptionDescription).toContain('OAuth 授权');

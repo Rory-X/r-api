@@ -165,8 +165,11 @@ export function normalizeChannels(channels: RouteChannel[]): RouteChannel[] {
   return [...(channels || [])].sort((a, b) => {
     const pa = a.priority ?? 0;
     const pb = b.priority ?? 0;
-    if (pa === pb) return (a.id ?? 0) - (b.id ?? 0);
-    return pa - pb;
+    if (pa !== pb) return pa - pb;
+    const orderA = a.sortOrder ?? 0;
+    const orderB = b.sortOrder ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return (a.id ?? 0) - (b.id ?? 0);
   });
 }
 

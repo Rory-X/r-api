@@ -5,6 +5,7 @@ import { getPriorityTagStyle } from './utils.js';
 type PriorityRailChannelLike = {
   id: number;
   priority: number;
+  sortOrder?: number;
 };
 
 type BuildPriorityRailDragTargetsOptions = {
@@ -23,7 +24,7 @@ export function isPriorityRailNewLayerId(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith(PRIORITY_RAIL_NEW_LAYER_PREFIX);
 }
 
-function parsePriorityRailNewLayerPriority(value: string): number | null {
+export function parsePriorityRailNewLayerPriority(value: string): number | null {
   const raw = value.slice(PRIORITY_RAIL_NEW_LAYER_PREFIX.length);
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) ? parsed : null;
@@ -34,7 +35,7 @@ export function buildPriorityRailSections(
 ): PriorityRailSection[] {
   const grouped = new Map<number, number[]>();
 
-  for (const channel of channels || []) {
+  for (const channel of normalizePriorityRailChannels(channels || [])) {
     const priority = Number.isFinite(channel.priority) ? channel.priority : 0;
     if (!grouped.has(priority)) grouped.set(priority, []);
     grouped.get(priority)!.push(channel.id);
@@ -53,9 +54,24 @@ function normalizePriorityRailChannels<T extends PriorityRailChannelLike>(channe
   return [...(channels || [])].sort((a, b) => {
     const priorityA = Number.isFinite(a.priority) ? a.priority : 0;
     const priorityB = Number.isFinite(b.priority) ? b.priority : 0;
-    if (priorityA === priorityB) return a.id - b.id;
-    return priorityA - priorityB;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    const orderA = Number.isFinite(a.sortOrder) ? a.sortOrder ?? 0 : 0;
+    const orderB = Number.isFinite(b.sortOrder) ? b.sortOrder ?? 0 : 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.id - b.id;
   });
+}
+
+function denseScheduleChannels<T extends PriorityRailChannelLike>(
+  buckets: Array<{ priority: number; channels: T[] }>,
+): T[] {
+  return buckets
+    .filter((bucket) => bucket.channels.length > 0)
+    .flatMap((bucket, priority) => bucket.channels.map((channel, sortOrder) => ({
+      ...channel,
+      priority,
+      sortOrder,
+    })));
 }
 
 export function buildPriorityRailDragTargets(
@@ -89,35 +105,46 @@ export function applyPriorityRailDrop<T extends PriorityRailChannelLike>(
   const activeChannel = normalized.find((channel) => channel.id === activeId);
   if (!activeChannel) return normalized;
 
+  const buckets = Array.from(
+    normalized.reduce((grouped, channel) => {
+      const priority = Number.isFinite(channel.priority) ? channel.priority : 0;
+      if (!grouped.has(priority)) grouped.set(priority, []);
+      grouped.get(priority)!.push(channel);
+      return grouped;
+    }, new Map<number, T[]>()),
+  )
+    .sort((left, right) => left[0] - right[0])
+    .map(([priority, bucketChannels]) => ({ priority, channels: bucketChannels }));
+
+  const sourceBucket = buckets.find((bucket) => bucket.channels.some((channel) => channel.id === activeId));
+  if (!sourceBucket) return normalized;
+  sourceBucket.channels = sourceBucket.channels.filter((channel) => channel.id !== activeId);
+
   if (isPriorityRailNewLayerId(overId)) {
     const afterPriority = parsePriorityRailNewLayerPriority(overId);
     if (afterPriority == null) return normalized;
-    const targetPriority = afterPriority + 1;
-
-    return normalizePriorityRailChannels(
-      normalized.map((channel) => {
-        const priority = Number.isFinite(channel.priority) ? channel.priority : 0;
-        if (channel.id === activeId) return { ...channel, priority: targetPriority };
-        if (channel.id !== activeId && priority > afterPriority) {
-          return { ...channel, priority: priority + 1 };
-        }
-        return channel;
-      }),
-    );
+    const targetBucketIndex = buckets.findIndex((bucket) => bucket.priority === afterPriority);
+    if (targetBucketIndex < 0 || (sourceBucket.priority === afterPriority && sourceBucket.channels.length === 0)) {
+      return normalized;
+    }
+    buckets.splice(targetBucketIndex + 1, 0, {
+      priority: afterPriority + 1,
+      channels: [activeChannel],
+    });
+    return denseScheduleChannels(buckets);
   }
 
   const targetChannel = normalized.find((channel) => channel.id === Number(overId));
   if (!targetChannel || targetChannel.id === activeId) return normalized;
+  const targetBucket = buckets.find((bucket) => bucket.channels.some((channel) => channel.id === targetChannel.id));
+  if (!targetBucket) return normalized;
+  const targetIndex = targetBucket.channels.findIndex((channel) => channel.id === targetChannel.id);
+  const activeFlatIndex = normalized.findIndex((channel) => channel.id === activeId);
+  const targetFlatIndex = normalized.findIndex((channel) => channel.id === targetChannel.id);
+  const insertionIndex = targetIndex + (activeFlatIndex < targetFlatIndex ? 1 : 0);
+  targetBucket.channels.splice(insertionIndex, 0, activeChannel);
 
-  const targetPriority = Number.isFinite(targetChannel.priority) ? targetChannel.priority : 0;
-
-  return normalizePriorityRailChannels(
-    normalized.map((channel) => (
-      channel.id === activeId
-        ? { ...channel, priority: targetPriority }
-        : channel
-    )),
-  );
+  return denseScheduleChannels(buckets);
 }
 
 export function buildPriorityRailNodeStyle(priority: number, highlighted: boolean): CSSProperties {

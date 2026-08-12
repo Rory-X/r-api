@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildEventNavigationPath } from '../pages/helpers/navigationFocus.js';
+import { displayProgramEventTitle } from '../pages/helpers/programEventPresentation.js';
 import { useI18n } from '../i18n.js';
 import { useAnimatedVisibility } from './useAnimatedVisibility.js';
 
@@ -122,6 +123,8 @@ export default function NotificationPanel({
         )}
         {events.map((ev: any) => {
           const targetPath = buildEventNavigationPath(ev);
+          const eventTitle = displayProgramEventTitle(ev.title || '-');
+          const eventMessage = String(ev.message || '');
           const openTarget = () => {
             onClose();
             navigate(targetPath);
@@ -152,15 +155,15 @@ export default function NotificationPanel({
                 width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 5,
                 background: levelColors[ev.level] || 'var(--color-info)',
               }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  <span style={{ fontWeight: 500, fontSize: 13 }}>{ev.title}</span>
-                  <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border-light)' }}>
+              <div className="notification-event-content">
+                <div className="notification-event-heading">
+                  <span className="notification-event-title" title={eventTitle}>{eventTitle}</span>
+                  <span className="notification-event-type">
                     {tr(typeLabels[ev.type] || ev.type)}
                   </span>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>{ev.message}</div>
-                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                <div className="notification-event-message" title={eventMessage}>{eventMessage}</div>
+                <div className="notification-event-time">
                   {formatDateTimeMinuteLocal(ev.createdAt)}
                 </div>
               </div>

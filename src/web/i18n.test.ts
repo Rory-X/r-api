@@ -8,6 +8,8 @@ describe('translateText', () => {
 
   it('translates exact key in en mode', () => {
     expect(translateText('模型广场', 'en')).toBe('Model Marketplace');
+    expect(translateText('上游 API Token', 'en')).toBe('Upstream API Tokens');
+    expect(translateText('同步全部面板账号', 'en')).toBe('Sync All Panel Accounts');
   });
 
   it('supports phrase replacement for mixed text', () => {

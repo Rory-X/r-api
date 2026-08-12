@@ -61,11 +61,11 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
 
   if (loading) {
     return (
-      <div style={containerStyle}>
+      <div data-testid="site-trend-chart" data-state="loading" style={containerStyle}>
         <div style={headerStyle}>
           <div className="skeleton" style={{ width: 200, height: 32, borderRadius: 'var(--radius-sm)' }} />
         </div>
-        <div className="skeleton" style={{ width: '100%', height: 300, borderRadius: 'var(--radius-sm)' }} />
+        <div className="skeleton" style={{ width: '100%', flex: 1, minHeight: 300, borderRadius: 'var(--radius-sm)' }} />
       </div>
     );
   }
@@ -74,11 +74,11 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
 
   if (!data || data.length === 0 || flatData.length === 0) {
     return (
-      <div style={containerStyle}>
+      <div data-testid="site-trend-chart" data-state="empty" style={containerStyle}>
         <div style={headerStyle}>
           <MetricToggle metric={metric} onChange={setMetric} />
         </div>
-        <div className="empty-state" style={{ padding: 48 }}>
+        <div className="empty-state" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48 }}>
           <div className="empty-state-title">暂无趋势数据</div>
           <div className="empty-state-desc">数据加载后将自动展示趋势图表</div>
         </div>
@@ -165,11 +165,11 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
   /* ---------- render ---------- */
 
   return (
-    <div style={containerStyle}>
+    <div data-testid="site-trend-chart" data-state="ready" style={containerStyle}>
       <div style={headerStyle}>
         <MetricToggle metric={metric} onChange={setMetric} />
       </div>
-      <div style={{ width: '100%', height: 320 }}>
+      <div style={{ width: '100%', flex: 1, minHeight: 320 }}>
         <VChart spec={spec as any} style={{ width: '100%', height: '100%' }} />
       </div>
     </div>
@@ -210,6 +210,10 @@ function MetricToggle({
 /* ------------------------------------------------------------------ */
 
 const containerStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  width: '100%',
+  height: '100%',
   background: 'var(--color-bg-card)',
   borderRadius: 'var(--radius-md)',
   border: '1px solid var(--color-border-light)',

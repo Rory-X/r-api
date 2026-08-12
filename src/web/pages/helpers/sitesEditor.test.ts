@@ -16,6 +16,7 @@ describe('buildSiteSaveAction', () => {
       {
         name: 'site-a',
         url: 'https://a.example.com/',
+        homepageUrl: 'https://www.a.example.com',
         externalCheckinUrl: 'https://checkin.a.example.com',
         platform: 'new-api',
         proxyUrl: 'socks5://127.0.0.1:1080',
@@ -25,7 +26,7 @@ describe('buildSiteSaveAction', () => {
         ],
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
-        globalWeight: 1.2,
+        codexFingerprintEnabled: false,globalWeight: 1.2,
         postRefreshProbeEnabled: true,
         postRefreshProbeModel: 'gpt-4o',
         postRefreshProbeScope: 'single',
@@ -38,6 +39,7 @@ describe('buildSiteSaveAction', () => {
       payload: {
         name: 'site-a',
         url: 'https://a.example.com/',
+        homepageUrl: 'https://www.a.example.com',
         externalCheckinUrl: 'https://checkin.a.example.com',
         platform: 'new-api',
         proxyUrl: 'socks5://127.0.0.1:1080',
@@ -47,7 +49,7 @@ describe('buildSiteSaveAction', () => {
         ],
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
-        globalWeight: 1.2,
+        codexFingerprintEnabled: false,globalWeight: 1.2,
         postRefreshProbeEnabled: true,
         postRefreshProbeModel: 'gpt-4o',
         postRefreshProbeScope: 'single',
@@ -62,11 +64,12 @@ describe('buildSiteSaveAction', () => {
       {
         name: 'site-b',
         url: 'https://b.example.com',
+        homepageUrl: '',
         externalCheckinUrl: '',
         platform: 'one-api',
         proxyUrl: '',
         useSystemProxy: true,
-        apiEndpoints: [],
+        codexFingerprintEnabled: true,apiEndpoints: [],
         customHeaders: '',
         globalWeight: 0.8,
       },
@@ -78,11 +81,12 @@ describe('buildSiteSaveAction', () => {
       payload: {
         name: 'site-b',
         url: 'https://b.example.com',
+        homepageUrl: '',
         externalCheckinUrl: '',
         platform: 'one-api',
         proxyUrl: '',
         useSystemProxy: true,
-        apiEndpoints: [],
+        codexFingerprintEnabled: true,apiEndpoints: [],
         customHeaders: '',
         globalWeight: 0.8,
       },
@@ -96,11 +100,12 @@ describe('buildSiteSaveAction', () => {
         {
           name: 'site-c',
           url: 'https://c.example.com',
+          homepageUrl: '',
           externalCheckinUrl: '',
           platform: '',
           proxyUrl: '',
           useSystemProxy: false,
-          apiEndpoints: [],
+          codexFingerprintEnabled: false,apiEndpoints: [],
           customHeaders: '',
           globalWeight: 1,
         },
@@ -112,6 +117,7 @@ describe('buildSiteSaveAction', () => {
     const legacySite = {
       name: 'site-d',
       url: 'https://d.example.com',
+      homepageUrl: 'https://home.d.example.com',
       externalCheckinUrl: null,
       platform: 'new-api',
       proxyUrl: 'http://127.0.0.1:8080',
@@ -133,6 +139,8 @@ describe('buildSiteSaveAction', () => {
     expect(emptySiteForm().apiEndpoints).toEqual([emptySiteApiEndpoint()]);
     expect(emptySiteForm().proxyUrl).toBe('');
     expect(siteFormFromSite(legacySite)).not.toHaveProperty('apiKey');
+    expect(siteFormFromSite(legacySite).homepageUrl).toBe('https://home.d.example.com');
+    expect(siteFormFromSite({ url: 'https://legacy.example.com' }).homepageUrl).toBe('');
     expect(siteFormFromSite({
       proxyUrl: 'http://127.0.0.1:8080',
     }).proxyUrl).toBe('http://127.0.0.1:8080');

@@ -1,5 +1,5 @@
 import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { api } from '../api.js';
 import { BrandGlyph, getBrand, InlineBrandIcon, type BrandInfo } from '../components/BrandIcon.js';
@@ -64,6 +64,7 @@ import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBa
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
 import RouteCard from './token-routes/RouteCard.js';
 import AddChannelModal from './token-routes/AddChannelModal.js';
+import RoutingPolicyPanel from './token-routes/RoutingPolicyPanel.js';
 
 const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   routeCandidates: [],
@@ -104,6 +105,7 @@ function prefersReducedMotion(): boolean {
 function getRouteRoutingStrategySuccessMessage(value: RouteRoutingStrategy): string {
   if (value === 'round_robin') return '已切换为轮询策略';
   if (value === 'stable_first') return '已切换为稳定优先策略';
+  if (value === 'manual') return '已切换为手动调度模式';
   return '已切换为权重随机策略';
 }
 
@@ -180,6 +182,8 @@ export function DesktopDetailPanelPresence({
 
 export default function TokenRoutes() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const routeWorkspaceView = searchParams.get('view') === 'strategy' ? 'strategy' : 'orchestration';
   const [routeSummaries, setRouteSummaries] = useState<RouteSummaryRow[]>([]);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
   const [missingTokenModelsByName, setMissingTokenModelsByName] = useState<MissingTokenModelsByName>({});
@@ -291,6 +295,16 @@ export default function TokenRoutes() {
     if (candidatesLoadedRef.current) {
       loadCandidates(true);
     }
+  };
+
+  const refreshRouteDecision = async (route: RouteSummaryRow) => {
+    const decision = isRouteExactModel(route)
+      ? (await api.getRouteDecision(route.modelPattern))?.decision || null
+      : (await api.getRouteWideDecisionsBatch([route.id]))?.decisions?.[String(route.id)] || null;
+    setDecisionByRoute((prev) => ({
+      ...prev,
+      [route.id]: decision as RouteDecision | null,
+    }));
   };
 
   const loadRef = useRef(load);
@@ -620,6 +634,11 @@ export default function TokenRoutes() {
       await load();
     } catch (e: any) {
       toast.error(e?.message || '路由策略已保存，但刷新列表失败');
+    }
+    try {
+      await refreshRouteDecision({ ...route, routingStrategy });
+    } catch (e: any) {
+      toast.info(e?.message || '路由策略已保存，但选中概率刷新失败');
     }
   };
 
@@ -1123,6 +1142,30 @@ export default function TokenRoutes() {
     }
   };
 
+  const getSharedSchedulingGroupNames = (route: RouteSummaryRow, sourceRouteIds: number[]): string[] => {
+    if (!isExplicitGroupRoute(route) || sourceRouteIds.length === 0) return [];
+    return routeSummaries
+      .filter((candidate) => (
+        candidate.id !== route.id
+        && isExplicitGroupRoute(candidate)
+        && (candidate.sourceRouteIds || []).some((sourceRouteId) => sourceRouteIds.includes(sourceRouteId))
+      ))
+      .map((candidate) => resolveRouteTitle(candidate));
+  };
+
+  const confirmSharedSchedulingImpact = (
+    route: RouteSummaryRow,
+    sourceRouteIds: number[],
+    settingName: string,
+  ): boolean => {
+    const affectedNames = getSharedSchedulingGroupNames(route, sourceRouteIds);
+    if (affectedNames.length === 0) return true;
+    const confirmFn = typeof globalThis.confirm === 'function' ? globalThis.confirm : null;
+    return !confirmFn || confirmFn(
+      `当前群组的${settingName}会直接回写来源通道，并同步影响：${affectedNames.join('、')}。是否继续？`,
+    );
+  };
+
   const handleChannelDragEnd = async (routeId: number, event: DragEndEvent) => {
     if (savingPriorityByRoute[routeId]) return;
 
@@ -1131,76 +1174,64 @@ export default function TokenRoutes() {
 
     const route = routeSummaries.find((item) => item.id === routeId);
     if (!route) return;
+    if (normalizeRouteRoutingStrategyValue(route.routingStrategy) !== 'manual') {
+      toast.info('请先切换到手动调度模式');
+      return;
+    }
 
     const channels = channelsByRouteId[routeId] || [];
-    const activeChannel = channels.find((channel) => channel.id === Number(active.id));
+    const enabledChannels = channels.filter((channel) => channel.enabled !== false);
+    const activeChannel = enabledChannels.find((channel) => channel.id === Number(active.id));
     if (!activeChannel) return;
 
     const overIsNewLayer = isPriorityRailNewLayerId(over.id);
     const targetChannel = overIsNewLayer
       ? null
-      : channels.find((channel) => channel.id === Number(over.id));
+      : enabledChannels.find((channel) => channel.id === Number(over.id));
 
     if (!overIsNewLayer && !targetChannel) return;
-    if (!overIsNewLayer && (targetChannel?.priority ?? 0) === (activeChannel.priority ?? 0)) return;
-
-    const reordered = applyPriorityRailDrop(channels, Number(active.id), over.id);
-    const changedChannels = reordered.filter((channel) => {
-      const previous = channels.find((item) => item.id === channel.id);
-      return (previous?.priority ?? 0) !== channel.priority;
+    const reorderedEnabledChannels = applyPriorityRailDrop(enabledChannels, Number(active.id), over.id);
+    const changedChannels = reorderedEnabledChannels.filter((channel) => {
+      const previous = enabledChannels.find((item) => item.id === channel.id);
+      return (previous?.priority ?? 0) !== channel.priority
+        || (previous?.sortOrder ?? 0) !== (channel.sortOrder ?? 0);
     });
 
     if (changedChannels.length === 0) return;
 
-    if (isExplicitGroupRoute(route)) {
-      const changedSourceRouteIds = Array.from(new Set(
-        changedChannels
-          .map((channel) => channel.routeId)
-          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
-      ));
-      if (changedSourceRouteIds.length > 0) {
-        const affectedGroups = routeSummaries.filter((candidate) => (
-          candidate.id !== route.id
-          && isExplicitGroupRoute(candidate)
-          && (candidate.sourceRouteIds || []).some((sourceRouteId) => changedSourceRouteIds.includes(sourceRouteId))
-        ));
-        if (affectedGroups.length > 0) {
-          const affectedNames = affectedGroups.map((candidate) => resolveRouteTitle(candidate));
-          const confirmFn = typeof globalThis.confirm === 'function' ? globalThis.confirm : null;
-          const confirmed = !confirmFn
-            || confirmFn(`当前群组的优先级桶会直接回写来源通道，并同步影响：${affectedNames.join('、')}。是否继续？`);
-          if (!confirmed) return;
-        }
-      }
-    }
+    const changedSourceRouteIds = Array.from(new Set(
+      changedChannels
+        .map((channel) => channel.routeId)
+        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
+    ));
+    if (!confirmSharedSchedulingImpact(route, changedSourceRouteIds, '调度顺序')) return;
 
     const previousChannels = channels.map((channel) => ({ ...channel }));
+    const reorderedEnabledById = new Map(reorderedEnabledChannels.map((channel) => [channel.id, channel]));
+    const reordered = channels.map((channel) => reorderedEnabledById.get(channel.id) ?? channel);
 
     setChannels(routeId, reordered);
     setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
 
     try {
       await api.batchUpdateChannels(
-        reordered.map((channel) => ({
+        reorderedEnabledChannels.map((channel) => ({
           id: channel.id,
           priority: channel.priority,
+          sortOrder: channel.sortOrder ?? 0,
         })),
+        routeId,
       );
 
-      if (route && isRouteExactModel(route)) {
-        try {
-          const res = await api.getRouteDecision(route.modelPattern);
-          setDecisionByRoute((prev) => ({
-            ...prev,
-            [routeId]: (res?.decision || null) as RouteDecision | null,
-          }));
-        } catch {
-          // ignore route decision refresh failures after reorder
-        }
+      try {
+        await refreshRouteDecision(route);
+      } catch {
+        toast.info('调度顺序已保存，但决策预览刷新失败');
       }
+      toast.success('调度顺序已保存');
     } catch (e: any) {
       setChannels(routeId, previousChannels);
-      toast.error(e.message || '保存通道优先级失败，已回滚');
+      toast.error(e.message || '保存调度顺序失败，已回滚');
     } finally {
       setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: false }));
     }
@@ -1272,19 +1303,7 @@ export default function TokenRoutes() {
         await loadChannels(routeId, true);
         const route = routeSummaries.find((item) => item.id === routeId);
         if (route) {
-          if (isRouteExactModel(route)) {
-            const res = await api.getRouteDecision(route.modelPattern);
-            setDecisionByRoute((prev) => ({
-              ...prev,
-              [routeId]: (res?.decision || null) as RouteDecision | null,
-            }));
-          } else {
-            const res = await api.getRouteWideDecisionsBatch([routeId]);
-            setDecisionByRoute((prev) => ({
-              ...prev,
-              [routeId]: (res?.decisions?.[String(routeId)] || null) as RouteDecision | null,
-            }));
-          }
+          await refreshRouteDecision(route);
         }
       } catch {
         toast.error('已清除，但刷新失败');
@@ -1514,6 +1533,41 @@ export default function TokenRoutes() {
 
   return (
     <div className="animate-fade-in" style={{ minHeight: 400 }}>
+      <div className="route-workspace-tabs" role="tablist" aria-label="路由工作区">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={routeWorkspaceView === 'orchestration'}
+          className={routeWorkspaceView === 'orchestration' ? 'is-active' : ''}
+          onClick={() => {
+            const nextSearchParams = new URLSearchParams(searchParams);
+            nextSearchParams.delete('view');
+            setSearchParams(nextSearchParams);
+          }}
+        >
+          <strong>路由编排</strong>
+          <span>管理模型路由、优先级和渠道顺序</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={routeWorkspaceView === 'strategy'}
+          className={routeWorkspaceView === 'strategy' ? 'is-active' : ''}
+          onClick={() => {
+            const nextSearchParams = new URLSearchParams(searchParams);
+            nextSearchParams.set('view', 'strategy');
+            setSearchParams(nextSearchParams);
+          }}
+        >
+          <strong>调度策略</strong>
+          <span>配置首字学习、失败保护和候选评分</span>
+        </button>
+      </div>
+
+      {routeWorkspaceView === 'strategy' ? (
+        <RoutingPolicyPanel />
+      ) : (
+        <>
       {/* Toolbar: search + sort + actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <div className="toolbar-search" style={{ minWidth: 220, flex: 1, maxWidth: 360 }}>
@@ -2035,6 +2089,8 @@ export default function TokenRoutes() {
           onCreateTokenForMissing={handleCreateTokenForMissingAccount}
           existingChannelAccountIds={new Set((channelsByRouteId[addChannelModalRoute.id] || []).map((c) => c.accountId))}
         />
+      )}
+        </>
       )}
     </div>
   );

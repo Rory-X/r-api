@@ -13,6 +13,7 @@ const { apiMock, getBrandMock } = vi.hoisted(() => ({
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
     updateRoute: vi.fn(),
+    updateChannel: vi.fn(),
     rebuildRoutes: vi.fn(),
     deleteRoute: vi.fn(),
     deleteChannel: vi.fn(),
@@ -143,6 +144,7 @@ describe('TokenRoutes desktop detail panel', () => {
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
+    apiMock.updateChannel.mockResolvedValue({});
     apiMock.rebuildRoutes.mockResolvedValue({ rebuild: { createdRoutes: 0, createdChannels: 0 } });
     apiMock.deleteRoute.mockResolvedValue({});
     apiMock.deleteChannel.mockResolvedValue({});
@@ -201,7 +203,56 @@ describe('TokenRoutes desktop detail panel', () => {
       expect(detailPanels).toHaveLength(1);
       const detailPanelText = collectText(detailPanels[0]!);
       expect(detailPanelText).toContain('gpt-4o-mini');
-      expect(detailPanelText).toContain('路由策略');
+      expect(detailPanelText).toContain('调度模式');
+      expect(detailPanelText).toContain('自动权重候选池');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows manual group order directly in the detail row without a weight editor', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 1,
+        modelPattern: 'gpt-4o-mini',
+        displayName: 'gpt-4o-mini',
+        displayIcon: null,
+        modelMapping: null,
+        routingStrategy: 'manual',
+        enabled: true,
+        channelCount: 1,
+        enabledChannelCount: 1,
+        siteNames: ['site-a'],
+        decisionSnapshot: null,
+        decisionRefreshedAt: null,
+      },
+    ]);
+    let root!: ReactTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const summaryCard = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+      ));
+      await act(async () => {
+        await summaryCard.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(root.root.findByProps({ 'aria-label': '组内顺序第 1' })).toBeTruthy();
+      expect(root.root.findAll((node) => node.props['aria-label'] === '通道权重')).toHaveLength(0);
+      expect(apiMock.updateChannel).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
     }

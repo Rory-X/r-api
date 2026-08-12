@@ -61,6 +61,14 @@ interface ModelRow {
   accounts: ModelAccountInfo[];
 }
 
+interface ModelCapabilityMatrixItem {
+  modelName: string;
+  effectiveStatus: 'manual_override' | 'active' | 'candidate_retired';
+  source: 'manual' | 'discovered' | 'sync_state';
+  consecutiveMissing: number;
+  available: boolean | null;
+}
+
 interface ModelsMarketplaceResponse {
   models: ModelRow[];
   meta?: {
@@ -168,6 +176,7 @@ export default function Models() {
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [metadataHydrating, setMetadataHydrating] = useState(false);
+  const [capabilityMatrix, setCapabilityMatrix] = useState<ModelCapabilityMatrixItem[]>([]);
   const isMobile = useIsMobile();
   const filterPanelPresence = useAnimatedVisibility(!isMobile && !filterCollapsed, 220);
   const latestPrimaryRequestRef = useRef(0);
@@ -199,6 +208,15 @@ export default function Models() {
       if (requestId !== latestPrimaryRequestRef.current) return null;
       const next = res as ModelsMarketplaceResponse;
       setData(next);
+      try {
+        const matrixResponse = await api.getModelSyncMatrix?.();
+        const matrixItems = Array.isArray((matrixResponse as { items?: unknown } | undefined)?.items)
+          ? (matrixResponse as { items: ModelCapabilityMatrixItem[] }).items
+          : [];
+        setCapabilityMatrix(matrixItems);
+      } catch {
+        setCapabilityMatrix([]);
+      }
       if (refresh && next.meta?.refreshRequested) {
         if (next.meta.refreshReused) {
           toast.info(tr('模型广场刷新进行中'));
@@ -217,6 +235,31 @@ export default function Models() {
       }
     }
   }, [toast]);
+
+  const capabilityByModel = useMemo(() => {
+    const grouped = new Map<string, ModelCapabilityMatrixItem[]>();
+    for (const item of capabilityMatrix) {
+      const key = item.modelName.trim().toLowerCase();
+      if (!key) continue;
+      const rows = grouped.get(key) || [];
+      rows.push(item);
+      grouped.set(key, rows);
+    }
+    return grouped;
+  }, [capabilityMatrix]);
+
+  const renderCapabilityBadges = (modelName: string) => {
+    const rows = capabilityByModel.get(modelName.trim().toLowerCase()) || [];
+    if (rows.length === 0) return null;
+    const manualCount = rows.filter((row) => row.source === 'manual').length;
+    const retiredCount = rows.filter((row) => row.effectiveStatus === 'candidate_retired').length;
+    return (
+      <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', marginLeft: 6, verticalAlign: 'middle' }}>
+        {manualCount > 0 && <span className="badge badge-info" style={{ fontSize: 10 }}>手工覆盖 {manualCount}</span>}
+        {retiredCount > 0 && <span className="badge badge-warning" style={{ fontSize: 10 }}>候选退役 {retiredCount}</span>}
+      </span>
+    );
+  };
 
   const hydrateMarketplaceMetadata = useCallback(async (baseModels: ModelRow[]) => {
     if (!shouldHydrateMarketplaceMetadata(baseModels)) return;
@@ -658,7 +701,7 @@ export default function Models() {
                 <div className="model-card-header">
                   <BrandIcon model={m.name} size={44} />
                   <div className="model-card-info">
-                    <div className="model-card-name">{m.name}</div>
+                    <div className="model-card-name">{m.name}{renderCapabilityBadges(m.name)}</div>
                     <div className="model-card-meta">
                       <span>
                         <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
@@ -890,7 +933,7 @@ export default function Models() {
                       </td>
                       <td>
                         <code style={{ fontSize: 12, padding: '3px 8px', background: 'var(--color-bg)', borderRadius: 4, border: '1px solid var(--color-border-light)' }}>
-                          {m.name}
+                          {m.name}{renderCapabilityBadges(m.name)}
                         </code>
                       </td>
                       <td><span className="badge badge-info">{m.accountCount}</span></td>

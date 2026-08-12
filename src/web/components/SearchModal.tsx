@@ -231,7 +231,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
 
           {results?.accountTokens.length ? (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('账号令牌')}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('上游 API Token')}</div>
               {results.accountTokens.map((token) => (
                 <button
                   key={token.id}

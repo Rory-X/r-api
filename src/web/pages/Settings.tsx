@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api } from '../api.js';
+import { useNavigate } from 'react-router-dom';
+import { api, type AdminTotpStatus } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import ChangeKeyModal from '../components/ChangeKeyModal.js';
+import AdminTotpModal from '../components/AdminTotpModal.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import ModernSelect from '../components/ModernSelect.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
+import { Button, Checkbox, Input, NumberField } from '../components/ui/index.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
 import {
@@ -20,27 +23,12 @@ import {
 } from './settings/payloadRulesVisual.js';
 import { PAYLOAD_RULE_PROTOCOL_OPTIONS } from './settings/payloadRuleProtocolOptions.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
-import {
-  applyRoutingProfilePreset,
-  resolveRoutingProfilePreset,
-  type RoutingWeights,
-} from './helpers/routingProfiles.js';
-import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
-import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 
-const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
 const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = '我确认我使用的中转站全部允许批量测活，如因开启此功能被中转站封号，自行负责。';
-const SECONDS_PER_DAY = 24 * 60 * 60;
-const ROUTE_COOLDOWN_UNIT_OPTIONS = [
-  { value: 'second', label: '秒', multiplierSec: 1 },
-  { value: 'minute', label: '分钟', multiplierSec: 60 },
-  { value: 'hour', label: '小时', multiplierSec: 60 * 60 },
-  { value: 'day', label: '天', multiplierSec: SECONDS_PER_DAY },
-] as const;
 const CHECKIN_SCHEDULE_MODE_OPTIONS = [
   { value: 'cron', label: 'Cron' },
   { value: 'interval', label: '间隔签到' },
@@ -53,7 +41,6 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
   };
 });
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
-type RouteCooldownUnit = typeof ROUTE_COOLDOWN_UNIT_OPTIONS[number]['value'];
 type SettingsPillTone = 'neutral' | 'primary' | 'danger' | 'warning';
 type PayloadRulesEditorSectionKey = PayloadRuleAction;
 type PayloadRulesEditorDrafts = Record<PayloadRulesEditorSectionKey, string>;
@@ -62,6 +49,13 @@ type RuntimeSettings = {
   checkinCron: string;
   checkinScheduleMode: 'cron' | 'interval';
   checkinIntervalHours: number;
+  checkinSchedulePolicy: {
+    timeZone: string;
+    windowStart: string;
+    windowEnd: string;
+    jitterMinutes: number;
+    catchUp: boolean;
+  };
   balanceRefreshCron: string;
   logCleanupCron: string;
   logCleanupUsageLogsEnabled: boolean;
@@ -70,18 +64,11 @@ type RuntimeSettings = {
   modelAvailabilityProbeEnabled: boolean;
   codexUpstreamWebsocketEnabled: boolean;
   responsesCompactFallbackToResponsesEnabled: boolean;
-  disableCrossProtocolFallback: boolean;
   proxySessionChannelConcurrencyLimit: number;
   proxySessionChannelQueueWaitMs: number;
-  routingFallbackUnitCost: number;
-  proxyFirstByteTimeoutSec: number;
-  routeFailureCooldownMaxValue: number;
-  routeFailureCooldownMaxUnit: RouteCooldownUnit;
-  routingWeights: RoutingWeights;
   systemProxyUrl: string;
   proxyErrorKeywords: string[];
   proxyEmptyContentFailEnabled: boolean;
-  proxyTokenMasked?: string;
   adminIpAllowlist?: string[];
   currentAdminIp?: string;
   globalBlockedBrands?: string[];
@@ -270,14 +257,6 @@ function parsePayloadRulesFromDrafts(
   };
 }
 
-const defaultWeights: RoutingWeights = {
-  baseWeightFactor: 0.5,
-  valueScoreFactor: 0.5,
-  costWeight: 0.4,
-  balanceWeight: 0.3,
-  usageWeight: 0.3,
-};
-
 function getDialectDefaults(dialect: DbDialect) {
   if (dialect === 'mysql') {
     return { port: '3306', database: 'mysql' };
@@ -309,41 +288,20 @@ function inferUrlDialect(connectionString: string): 'mysql' | 'postgres' | null 
   return null;
 }
 
-function resolveRouteCooldownInput(seconds: number | null | undefined): {
-  value: number;
-  unit: RouteCooldownUnit;
-} {
-  const normalizedSeconds = Number.isFinite(Number(seconds)) && Number(seconds) > 0
-    ? Math.max(1, Math.trunc(Number(seconds)))
-    : 30 * SECONDS_PER_DAY;
-
-  for (const option of [...ROUTE_COOLDOWN_UNIT_OPTIONS].reverse()) {
-    if (normalizedSeconds % option.multiplierSec === 0) {
-      return {
-        value: normalizedSeconds / option.multiplierSec,
-        unit: option.value,
-      };
-    }
-  }
-
-  return {
-    value: normalizedSeconds,
-    unit: 'second',
-  };
-}
-
-function toRouteCooldownSeconds(value: number, unit: RouteCooldownUnit): number {
-  const normalizedValue = Number.isFinite(value) && value > 0 ? Math.max(1, Math.trunc(value)) : 1;
-  const unitConfig = ROUTE_COOLDOWN_UNIT_OPTIONS.find((option) => option.value === unit) || ROUTE_COOLDOWN_UNIT_OPTIONS[0];
-  return normalizedValue * unitConfig.multiplierSec;
-}
-
 export default function Settings() {
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [runtime, setRuntime] = useState<RuntimeSettings>({
     checkinCron: '0 8 * * *',
     checkinScheduleMode: 'cron',
     checkinIntervalHours: 6,
+    checkinSchedulePolicy: {
+      timeZone: '',
+      windowStart: '00:00',
+      windowEnd: '23:59',
+      jitterMinutes: 0,
+      catchUp: true,
+    },
     balanceRefreshCron: '0 * * * *',
     logCleanupCron: '0 6 * * *',
     logCleanupUsageLogsEnabled: false,
@@ -352,25 +310,22 @@ export default function Settings() {
     modelAvailabilityProbeEnabled: false,
     codexUpstreamWebsocketEnabled: false,
     responsesCompactFallbackToResponsesEnabled: false,
-    disableCrossProtocolFallback: false,
     proxySessionChannelConcurrencyLimit: 2,
     proxySessionChannelQueueWaitMs: 1500,
-    routingFallbackUnitCost: 1,
-    proxyFirstByteTimeoutSec: 0,
-    routeFailureCooldownMaxValue: 30,
-    routeFailureCooldownMaxUnit: 'day',
-    routingWeights: defaultWeights,
     systemProxyUrl: '',
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
   });
-  const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
   const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
   const [maskedToken, setMaskedToken] = useState('');
+  const [adminTotpStatus, setAdminTotpStatus] = useState<AdminTotpStatus>({
+    enabled: false,
+    recoveryCodesRemaining: 0,
+    enabledAt: null,
+  });
   const [loading, setLoading] = useState(true);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [testingCheckin, setTestingCheckin] = useState(false);
-  const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
   const [savingModelAvailabilityProbe, setSavingModelAvailabilityProbe] = useState(false);
   const [savingProxyTransport, setSavingProxyTransport] = useState(false);
@@ -382,8 +337,6 @@ export default function Settings() {
   const [payloadAdvancedDirty, setPayloadAdvancedDirty] = useState(false);
   const [savingPayloadRules, setSavingPayloadRules] = useState(false);
   const [showPayloadRulesEditor, setShowPayloadRulesEditor] = useState(false);
-  const [savingRouting, setSavingRouting] = useState(false);
-  const [showAdvancedRouting, setShowAdvancedRouting] = useState(false);
   const [allBrandNames, setAllBrandNames] = useState<string[] | null>(null);
   const [blockedBrands, setBlockedBrands] = useState<string[]>([]);
   const [savingBrandFilter, setSavingBrandFilter] = useState(false);
@@ -414,6 +367,7 @@ export default function Settings() {
   const [migrationSummary, setMigrationSummary] = useState<DatabaseMigrationSummary | null>(null);
   const [runtimeDatabaseState, setRuntimeDatabaseState] = useState<RuntimeDatabaseState | null>(null);
   const [showChangeKey, setShowChangeKey] = useState(false);
+  const [showAdminTotp, setShowAdminTotp] = useState(false);
   const [modelAvailabilityProbeConfirmOpen, setModelAvailabilityProbeConfirmOpen] = useState(false);
   const modelAvailabilityProbeConfirmPresence = useAnimatedVisibility(modelAvailabilityProbeConfirmOpen, 220);
   const [modelAvailabilityProbeConfirmationInput, setModelAvailabilityProbeConfirmationInput] = useState('');
@@ -423,11 +377,6 @@ export default function Settings() {
   const [factoryResetting, setFactoryResetting] = useState(false);
   const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
   const toast = useToast();
-
-  const activeRoutingProfile = useMemo(
-    () => resolveRoutingProfilePreset(runtime.routingWeights),
-    [runtime.routingWeights],
-  );
 
   const configuredPayloadRuleCount = useMemo(
     () => payloadVisualRules.filter((rule) => !isVisualPayloadRuleBlank(rule)).length,
@@ -660,13 +609,32 @@ export default function Settings() {
         api.getRuntimeDatabaseConfig(),
       ]);
       setMaskedToken(authInfo.masked || '****');
-      const routeCooldownInput = resolveRouteCooldownInput(runtimeInfo.tokenRouterFailureCooldownMaxSec);
+      setAdminTotpStatus(authInfo.totp || {
+        enabled: false,
+        recoveryCodesRemaining: 0,
+        enabledAt: null,
+      });
       setRuntime({
         checkinCron: runtimeInfo.checkinCron || '0 8 * * *',
         checkinScheduleMode: runtimeInfo.checkinScheduleMode === 'interval' ? 'interval' : 'cron',
         checkinIntervalHours: Number(runtimeInfo.checkinIntervalHours) >= 1
           ? Math.min(24, Math.trunc(Number(runtimeInfo.checkinIntervalHours)))
           : 6,
+        checkinSchedulePolicy: {
+          timeZone: typeof runtimeInfo.checkinSchedulePolicy?.timeZone === 'string'
+            ? runtimeInfo.checkinSchedulePolicy.timeZone
+            : '',
+          windowStart: typeof runtimeInfo.checkinSchedulePolicy?.windowStart === 'string'
+            ? runtimeInfo.checkinSchedulePolicy.windowStart
+            : '00:00',
+          windowEnd: typeof runtimeInfo.checkinSchedulePolicy?.windowEnd === 'string'
+            ? runtimeInfo.checkinSchedulePolicy.windowEnd
+            : '23:59',
+          jitterMinutes: Number(runtimeInfo.checkinSchedulePolicy?.jitterMinutes) >= 0
+            ? Math.min(180, Math.trunc(Number(runtimeInfo.checkinSchedulePolicy.jitterMinutes)))
+            : 0,
+          catchUp: runtimeInfo.checkinSchedulePolicy?.catchUp !== false,
+        },
         balanceRefreshCron: runtimeInfo.balanceRefreshCron || '0 * * * *',
         logCleanupCron: runtimeInfo.logCleanupCron || '0 6 * * *',
         logCleanupUsageLogsEnabled: !!runtimeInfo.logCleanupUsageLogsEnabled,
@@ -677,31 +645,17 @@ export default function Settings() {
         modelAvailabilityProbeEnabled: !!runtimeInfo.modelAvailabilityProbeEnabled,
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
-        disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
         proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
           ? Math.trunc(Number(runtimeInfo.proxySessionChannelConcurrencyLimit))
           : 2,
         proxySessionChannelQueueWaitMs: Number(runtimeInfo.proxySessionChannelQueueWaitMs) >= 0
           ? Math.trunc(Number(runtimeInfo.proxySessionChannelQueueWaitMs))
           : 1500,
-        routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
-          ? Number(runtimeInfo.routingFallbackUnitCost)
-          : 1,
-        proxyFirstByteTimeoutSec: Number(runtimeInfo.proxyFirstByteTimeoutSec) >= 0
-          ? Math.trunc(Number(runtimeInfo.proxyFirstByteTimeoutSec))
-          : 0,
-        routeFailureCooldownMaxValue: routeCooldownInput.value,
-        routeFailureCooldownMaxUnit: routeCooldownInput.unit,
-        routingWeights: {
-          ...defaultWeights,
-          ...(runtimeInfo.routingWeights || {}),
-        },
         systemProxyUrl: typeof runtimeInfo.systemProxyUrl === 'string' ? runtimeInfo.systemProxyUrl : '',
         proxyErrorKeywords: Array.isArray(runtimeInfo.proxyErrorKeywords)
           ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string')
           : [],
         proxyEmptyContentFailEnabled: !!runtimeInfo.proxyEmptyContentFailEnabled,
-        proxyTokenMasked: runtimeInfo.proxyTokenMasked || '',
         adminIpAllowlist: Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.filter((item: unknown) => typeof item === 'string')
           : [],
@@ -766,14 +720,6 @@ export default function Settings() {
     loadSettings();
   }, []);
 
-  const normalizeProxyTokenSuffix = (raw: string) => {
-    const compact = raw.replace(/\s+/g, '');
-    if (compact.toLowerCase().startsWith(PROXY_TOKEN_PREFIX)) {
-      return compact.slice(PROXY_TOKEN_PREFIX.length);
-    }
-    return compact;
-  };
-
   const parseProxyErrorKeywords = (raw: string) => raw
     .split(/\r?\n|,/g)
     .map((item) => item.trim())
@@ -786,6 +732,7 @@ export default function Settings() {
         checkinCron: runtime.checkinCron,
         checkinScheduleMode: runtime.checkinScheduleMode,
         checkinIntervalHours: runtime.checkinIntervalHours,
+        checkinSchedulePolicy: runtime.checkinSchedulePolicy,
         balanceRefreshCron: runtime.balanceRefreshCron,
         logCleanupCron: runtime.logCleanupCron,
         logCleanupUsageLogsEnabled: runtime.logCleanupUsageLogsEnabled,
@@ -809,25 +756,6 @@ export default function Settings() {
       toast.error(err?.message || '触发签到失败');
     } finally {
       setTestingCheckin(false);
-    }
-  };
-
-  const saveProxyToken = async () => {
-    const suffix = proxyTokenSuffix.trim();
-    if (!suffix) {
-      toast.info('请输入 sk- 后的令牌内容');
-      return;
-    }
-    setSavingToken(true);
-    try {
-      const res = await api.updateRuntimeSettings({ proxyToken: `${PROXY_TOKEN_PREFIX}${suffix}` });
-      setRuntime((prev) => ({ ...prev, proxyTokenMasked: res.proxyTokenMasked || prev.proxyTokenMasked }));
-      setProxyTokenSuffix('');
-      toast.success('Proxy token updated');
-    } catch (err: any) {
-      toast.error(err?.message || '保存失败');
-    } finally {
-      setSavingToken(false);
     }
   };
 
@@ -1043,36 +971,6 @@ export default function Settings() {
     syncPayloadVisualRulesFromObject(parsedPayloadRules.value);
     setPayloadAdvancedDirty(false);
     toast.success('已将高级 JSON 同步到可视化规则');
-  };
-
-  const saveRouting = async () => {
-    setSavingRouting(true);
-    try {
-      await api.updateRuntimeSettings({
-        routingWeights: runtime.routingWeights,
-        routingFallbackUnitCost: runtime.routingFallbackUnitCost,
-        proxyFirstByteTimeoutSec: Number.isFinite(runtime.proxyFirstByteTimeoutSec)
-          ? Math.max(0, Math.trunc(runtime.proxyFirstByteTimeoutSec))
-          : 0,
-        tokenRouterFailureCooldownMaxSec: toRouteCooldownSeconds(
-          runtime.routeFailureCooldownMaxValue,
-          runtime.routeFailureCooldownMaxUnit,
-        ),
-        disableCrossProtocolFallback: runtime.disableCrossProtocolFallback,
-      });
-      toast.success('Routing weights saved');
-    } catch (err: any) {
-      toast.error(err?.message || '保存失败');
-    } finally {
-      setSavingRouting(false);
-    }
-  };
-
-  const applyRoutingPreset = (preset: 'balanced' | 'stable' | 'cost') => {
-    setRuntime((prev) => ({
-      ...prev,
-      routingWeights: applyRoutingProfilePreset(preset),
-    }));
   };
 
   const handleSaveBrandFilter = async () => {
@@ -1315,18 +1213,48 @@ export default function Settings() {
         <h2 className="page-title">系统设置</h2>
       </div>
 
-      <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="management-page-stack" style={{ gap: 16 }}>
         <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>管理员登录令牌</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>管理员安全</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 8 }}>登录凭据</div>
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 12 }}>
             {maskedToken || '****'}
           </code>
-          <button onClick={() => setShowChangeKey(true)} className="btn btn-primary">修改登录令牌</button>
+          <Button variant="primary" onClick={() => setShowChangeKey(true)}>修改登录凭据</Button>
+          <div style={{ height: 1, background: 'var(--color-border-light)', margin: '18px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 5 }}>TOTP 双重验证</div>
+              <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--color-text-muted)' }}>
+                {adminTotpStatus.enabled
+                  ? `登录时需要动态验证码；剩余 ${adminTotpStatus.recoveryCodesRemaining} 枚恢复码。`
+                  : '为 WebUI 管理员登录增加验证器动态验证码。'}
+              </div>
+            </div>
+            <span style={getSettingsPillStyle(adminTotpStatus.enabled ? 'primary' : 'neutral')}>
+              {adminTotpStatus.enabled ? '已启用' : '未启用'}
+            </span>
+          </div>
+          <Button variant="ghost" onClick={() => setShowAdminTotp(true)}>
+            {adminTotpStatus.enabled ? '管理双重验证' : '启用双重验证'}
+          </Button>
           <ChangeKeyModal
             open={showChangeKey}
             onClose={() => {
               setShowChangeKey(false);
-              api.getAuthInfo().then((r: any) => setMaskedToken(r.masked || '****')).catch(() => { });
+              api.getAuthInfo().then((info) => {
+                setMaskedToken(info.masked || '****');
+                setAdminTotpStatus(info.totp);
+              }).catch(() => { });
+            }}
+          />
+          <AdminTotpModal
+            open={showAdminTotp}
+            status={adminTotpStatus}
+            onStatusChange={setAdminTotpStatus}
+            onClose={() => {
+              setShowAdminTotp(false);
+              api.getAuthInfo().then((info) => setAdminTotpStatus(info.totp)).catch(() => { });
             }}
           />
         </div>
@@ -1384,6 +1312,86 @@ export default function Settings() {
                 style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
               />
             </div>
+          </div>
+          <div
+            style={{
+              marginTop: 16,
+              paddingTop: 16,
+              borderTop: '1px solid var(--color-border-light)',
+              display: 'grid',
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>签到执行窗口</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.6 }}>
+                自动任务只会在该时区窗口内执行。结束时间早于开始时间时，窗口自动跨越午夜。
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr 1fr 1fr', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>IANA 时区</div>
+                <Input
+                  value={runtime.checkinSchedulePolicy.timeZone}
+                  onChange={(e) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinSchedulePolicy: { ...prev.checkinSchedulePolicy, timeZone: e.target.value },
+                  }))}
+                  placeholder="留空使用服务器时区"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>开始时间</div>
+                <Input
+                  type="time"
+                  value={runtime.checkinSchedulePolicy.windowStart}
+                  onChange={(e) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinSchedulePolicy: { ...prev.checkinSchedulePolicy, windowStart: e.target.value },
+                  }))}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>结束时间</div>
+                <Input
+                  type="time"
+                  value={runtime.checkinSchedulePolicy.windowEnd}
+                  onChange={(e) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinSchedulePolicy: { ...prev.checkinSchedulePolicy, windowEnd: e.target.value },
+                  }))}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>最大抖动（分钟）</div>
+                <NumberField
+                  min={0}
+                  max={180}
+                  value={runtime.checkinSchedulePolicy.jitterMinutes}
+                  onChange={(e) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinSchedulePolicy: {
+                      ...prev.checkinSchedulePolicy,
+                      jitterMinutes: Math.min(180, Math.max(0, Math.trunc(Number(e.target.value) || 0))),
+                    },
+                  }))}
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+            <Checkbox
+              label="服务重启或错过执行后，在窗口内补签"
+              className="settings-schedule-catch-up"
+              aria-label="服务重启或错过执行后，在窗口内补签"
+                checked={runtime.checkinSchedulePolicy.catchUp}
+              onChange={(catchUp) => setRuntime((prev) => ({
+                  ...prev,
+                checkinSchedulePolicy: { ...prev.checkinSchedulePolicy, catchUp },
+                }))}
+            />
           </div>
           <div
             style={{
@@ -1824,8 +1832,7 @@ export default function Settings() {
           <ResponsiveFormGrid columns={2}>
             <div style={settingsModernFieldCardStyle}>
               <div style={settingsModernFieldLabelStyle}>会话通道并发上限</div>
-              <input
-                type="number"
+              <NumberField
                 min={0}
                 value={runtime.proxySessionChannelConcurrencyLimit}
                 onChange={(e) => {
@@ -1845,8 +1852,7 @@ export default function Settings() {
             </div>
             <div style={settingsModernFieldCardStyle}>
               <div style={settingsModernFieldLabelStyle}>排队等待时间（毫秒）</div>
-              <input
-                type="number"
+              <NumberField
                 min={0}
                 step={100}
                 value={runtime.proxySessionChannelQueueWaitMs}
@@ -1944,293 +1950,18 @@ export default function Settings() {
           </div>
         </div>
 
-        <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游访问令牌（PROXY_TOKEN）</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。
+        <div className="settings-routing-entry animate-slide-up stagger-5">
+          <div>
+            <span className="settings-routing-entry-kicker">路由与运行</span>
+            <h3>调度策略已迁移到路由工作区</h3>
+            <p>历史首字速度学习、首字超时、失败冷却、协议回退和候选评分现在统一在路由页维护。</p>
           </div>
-          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
-            当前：{runtime.proxyTokenMasked || '未设置'}
-          </code>
-          <div
-            style={{
-              display: 'flex',
-              gap: 10,
-              alignItems: 'stretch',
-              marginBottom: 10,
-              minWidth: 0,
-              flexWrap: 'wrap',
-            }}
+          <Button
+            variant="soft-primary"
+            onClick={() => navigate('/routes?view=strategy')}
           >
-            <div
-              style={{
-                ...inputStyle,
-                flex: 1,
-                minWidth: 200,
-                marginBottom: 0,
-                padding: 0,
-                display: 'flex',
-                alignItems: 'center',
-                overflow: 'hidden',
-              }}
-            >
-              <span
-                style={{
-                  padding: '10px 12px',
-                  borderRight: '1px solid var(--color-border-light)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 13,
-                  color: 'var(--color-text-secondary)',
-                  userSelect: 'none',
-                  background: 'color-mix(in srgb, var(--color-text-muted) 6%, transparent)',
-                }}
-              >
-                {PROXY_TOKEN_PREFIX}
-              </span>
-              <input
-                type="text"
-                value={proxyTokenSuffix}
-                onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
-                placeholder="请输入 sk- 后的令牌内容"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: 'none',
-                  outline: 'none',
-                  background: 'transparent',
-                  color: 'var(--color-text-primary)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 13,
-                  padding: '10px 12px',
-                }}
-              />
-            </div>
-            <button
-              type="button"
-              className="btn btn-soft-primary"
-              aria-label="随机生成访问令牌后缀"
-              title="生成高熵随机后缀（不会自动保存）"
-              style={{
-                flexShrink: 0,
-                padding: '10px 18px',
-                fontSize: 13,
-                gap: 8,
-                alignSelf: 'stretch',
-              }}
-              onClick={() => {
-                const full = generateDownstreamSkKey(PROXY_TOKEN_PREFIX);
-                setProxyTokenSuffix(full.slice(PROXY_TOKEN_PREFIX.length));
-              }}
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z"
-                />
-              </svg>
-              随机生成
-            </button>
-          </div>
-          <button onClick={saveProxyToken} disabled={savingToken} className="btn btn-primary">
-            {savingToken ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '更新下游访问令牌'}
-          </button>
-        </div>
-
-        <div className="card animate-slide-up stagger-5" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>路由策略</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            先选择预设策略，只有需要精调时再展开高级参数。
-          </div>
-          <div style={{ marginBottom: 12, maxWidth: 280 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-                无实测/配置/目录价时默认单价
-            </div>
-            <input
-              type="number"
-              min={0.000001}
-              step={0.000001}
-              value={runtime.routingFallbackUnitCost}
-              onChange={(e) => {
-                const nextValue = Number(e.target.value);
-                setRuntime((prev) => ({
-                  ...prev,
-                  routingFallbackUnitCost: Number.isFinite(nextValue) && nextValue > 0 ? nextValue : prev.routingFallbackUnitCost,
-                }));
-              }}
-              style={inputStyle}
-            />
-          </div>
-          <div style={{ marginBottom: 12, maxWidth: 420 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-              普通失败冷却上限
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <input
-                type="number"
-                aria-label="路由失败冷却上限数值"
-                min={1}
-                step={1}
-                value={runtime.routeFailureCooldownMaxValue}
-                onChange={(e) => {
-                  const nextValue = Number(e.target.value);
-                  setRuntime((prev) => ({
-                    ...prev,
-                    routeFailureCooldownMaxValue: Number.isFinite(nextValue) && nextValue > 0
-                      ? Math.max(1, Math.trunc(nextValue))
-                      : prev.routeFailureCooldownMaxValue,
-                  }));
-                }}
-                style={{ ...inputStyle, flex: '1 1 180px', marginBottom: 0 }}
-              />
-              <div style={{ width: 132, minWidth: 132 }}>
-                <ModernSelect
-                  size="sm"
-                  value={runtime.routeFailureCooldownMaxUnit}
-                  onChange={(nextValue) => {
-                    setRuntime((prev) => ({
-                      ...prev,
-                      routeFailureCooldownMaxUnit: nextValue as RouteCooldownUnit,
-                    }));
-                  }}
-                  options={ROUTE_COOLDOWN_UNIT_OPTIONS.map((option) => ({
-                    value: option.value,
-                    label: option.label,
-                  }))}
-                  placeholder="选择单位"
-                />
-              </div>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 6, lineHeight: 1.6 }}>
-              支持秒、分钟、小时、天。只封顶普通失败与轮询分级冷却；429 限额类冷却仍优先遵循上游 reset 提示，避免过早重试。
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-            <button
-              onClick={() => applyRoutingPreset('balanced')}
-              className="btn btn-ghost"
-              style={{
-                border: activeRoutingProfile === 'balanced' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                color: activeRoutingProfile === 'balanced' ? 'var(--color-primary)' : undefined,
-              }}
-            >
-              均衡
-            </button>
-            <button
-              onClick={() => applyRoutingPreset('stable')}
-              className="btn btn-ghost"
-              style={{
-                border: activeRoutingProfile === 'stable' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                color: activeRoutingProfile === 'stable' ? 'var(--color-primary)' : undefined,
-              }}
-            >
-              稳定优先
-            </button>
-            <button
-              onClick={() => applyRoutingPreset('cost')}
-              className="btn btn-ghost"
-              style={{
-                border: activeRoutingProfile === 'cost' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                color: activeRoutingProfile === 'cost' ? 'var(--color-primary)' : undefined,
-              }}
-            >
-              成本优先
-            </button>
-            <button
-              onClick={() => setShowAdvancedRouting((prev) => !prev)}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
-            >
-              {showAdvancedRouting ? '收起高级参数' : '展开高级参数'}
-            </button>
-          </div>
-
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={runtime.disableCrossProtocolFallback}
-              onChange={(e) => setRuntime((prev) => ({
-                ...prev,
-                disableCrossProtocolFallback: e.target.checked,
-              }))}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                失败时不尝试其他协议
-              </span>
-              <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-                仅影响 chat / messages / responses 之间的协议切换；不会关闭同协议兼容重试、OAuth 刷新或通道级重试。
-              </span>
-            </span>
-          </label>
-
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-              首字超时（无首包 / 首 token）
-            </div>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              aria-label="首字超时秒数"
-              value={runtime.proxyFirstByteTimeoutSec}
-              onChange={(e) => {
-                const nextValue = Number(e.target.value);
-                setRuntime((prev) => ({
-                  ...prev,
-                  proxyFirstByteTimeoutSec: Number.isFinite(nextValue) && nextValue >= 0
-                    ? Math.trunc(nextValue)
-                    : prev.proxyFirstByteTimeoutSec,
-                }));
-              }}
-              style={inputStyle}
-            />
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7, marginTop: 6 }}>
-              `0` 表示关闭。只有在指定时间内完全没有任何首包 / 首 token 返回时才切换，已经开始输出的请求不会被这项超时打断。
-            </div>
-          </div>
-
-          <div className={`anim-collapse ${showAdvancedRouting ? 'is-open' : ''}`.trim()}>
-            <div className="anim-collapse-inner" style={{ paddingTop: 2 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-              {([
-                ['baseWeightFactor', '基础权重因子'],
-                ['valueScoreFactor', '价值分因子'],
-                ['costWeight', '成本权重'],
-                ['balanceWeight', '余额权重'],
-                ['usageWeight', '使用频次权重'],
-              ] as Array<[keyof RoutingWeights, string]>).map(([key, label]) => (
-                <div key={key}>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{label}</div>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={runtime.routingWeights[key]}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setRuntime((prev) => ({
-                        ...prev,
-                        routingWeights: {
-                          ...prev.routingWeights,
-                          [key]: Number.isFinite(v) ? v : 0,
-                        },
-                      }));
-                    }}
-                    style={inputStyle}
-                  />
-                </div>
-              ))}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <button onClick={saveRouting} disabled={savingRouting} className="btn btn-primary">
-              {savingRouting ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存路由策略'}
-            </button>
-          </div>
+            前往调度策略
+          </Button>
         </div>
 
         {/* Global Brand Filter */}
@@ -2615,8 +2346,9 @@ export default function Settings() {
             </button>
             <button
               onClick={() => {
-                clearAuthSession(localStorage);
-                window.location.reload();
+                void api.logoutAdmin().catch(() => {}).finally(() => {
+                  window.location.reload();
+                });
               }}
               className="btn btn-danger"
             >

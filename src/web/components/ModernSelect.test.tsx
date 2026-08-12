@@ -90,4 +90,36 @@ describe('ModernSelect', () => {
     ));
     expect(optionButtons.map((node) => collectInstanceText(node))).toEqual(['Gamma APIhttps://third.example.com']);
   });
+
+  it('binds tooltip descriptions to individual option rows', () => {
+    const root = create(
+      <ModernSelect
+        value="stable"
+        onChange={() => {}}
+        optionDescriptionTooltipSide="right"
+        options={[
+          { value: 'weighted', label: '权重随机', description: '按权重和健康度随机选择' },
+          { value: 'stable', label: '稳定优先', description: '优先选择稳定站点' },
+        ]}
+      />,
+    );
+
+    const optionButtons = root.root.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.className === 'string'
+      && node.props.className.includes('modern-select-option')
+    ));
+
+    expect(optionButtons.map((node) => ({
+      tooltip: node.props['data-tooltip'],
+      side: node.props['data-tooltip-side'],
+    }))).toEqual([
+      { tooltip: '按权重和健康度随机选择', side: 'right' },
+      { tooltip: '优先选择稳定站点', side: 'right' },
+    ]);
+    expect(collectInstanceText(optionButtons[0])).toBe('权重随机');
+    expect(optionButtons[0].props['aria-label']).toBe('权重随机: 按权重和健康度随机选择');
+
+    root.unmount();
+  });
 });

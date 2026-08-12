@@ -365,7 +365,7 @@ describe('RouteCard', () => {
   it('renders desktop priority rail summaries for multiple channel layers', () => {
     const root = create(
       <RouteCard
-        route={buildRoute()}
+        route={buildRoute({ routingStrategy: 'manual' })}
         brand={null}
         expanded
         onToggleExpand={vi.fn()}
@@ -417,19 +417,19 @@ describe('RouteCard', () => {
     );
 
     const text = collectText(root.root);
-    expect(text).toContain('P0 · 1');
-    expect(text).toContain('P1 · 1');
+    expect(text).toContain('P0 主用层 · 1');
+    expect(text).toContain('P1 回退层 · 1');
     expect(text).toContain('user_a');
     expect(text).toContain('user_b');
 
     const p0RailNode = root.root.find((node) => (
       node.type === 'div'
-      && collectText(node) === 'P0 · 1'
+      && collectText(node) === 'P0 主用层 · 1'
       && node.props?.style?.borderRadius === 999
     ));
     const p1RailNode = root.root.find((node) => (
       node.type === 'div'
-      && collectText(node) === 'P1 · 1'
+      && collectText(node) === 'P1 回退层 · 1'
       && node.props?.style?.borderRadius === 999
     ));
 
@@ -505,7 +505,7 @@ describe('RouteCard', () => {
   it('uses translate-only rect sorting for flat channel shell rows', () => {
     const root = create(
       <RouteCard
-        route={buildRoute()}
+        route={buildRoute({ routingStrategy: 'manual' })}
         brand={null}
         expanded
         onToggleExpand={vi.fn()}
@@ -549,7 +549,7 @@ describe('RouteCard', () => {
   it('shows a new-layer drop target while dragging inside compact desktop detail panels', () => {
     const renderCard = () => (
       <RouteCard
-        route={buildRoute()}
+        route={buildRoute({ routingStrategy: 'manual' })}
         brand={null}
         expanded
         compact
@@ -603,7 +603,7 @@ describe('RouteCard', () => {
       root.update(renderCard());
     });
 
-    expect(collectText(root.root)).toContain('放到新档位');
+    expect(collectText(root.root)).toContain('移至新的回退层');
     const shells = root.root.findAll((node) => (
       node.type === 'div'
       && node.props['data-testid'] === 'route-channel-shell'
@@ -623,7 +623,7 @@ describe('RouteCard', () => {
   it('keeps compact desktop detail bucket headers outside draggable channel shells', () => {
     const root = create(
       <RouteCard
-        route={buildRoute()}
+        route={buildRoute({ routingStrategy: 'manual' })}
         brand={null}
         expanded
         compact
@@ -673,18 +673,18 @@ describe('RouteCard', () => {
     ));
 
     expect(bucketHeaders.map((node) => collectText(node))).toEqual([
-      'P0 · 2 通道',
-      'P1 · 1 通道',
+      'P0 主用层 · 2 通道同层从上到下',
+      'P1 回退层 · 1 通道同层从上到下',
     ]);
     expect(shells).toHaveLength(3);
-    expect(collectText(shells[0]!)).not.toContain('P0 · 2 通道');
-    expect(collectText(shells[2]!)).not.toContain('P1 · 1 通道');
+    expect(collectText(shells[0]!)).not.toContain('P0 主用层 · 2 通道');
+    expect(collectText(shells[2]!)).not.toContain('P1 回退层 · 1 通道');
   });
 
   it('renders desktop channel rows in sortable shell order within a single sortable list', () => {
     const root = create(
       <RouteCard
-        route={buildRoute()}
+        route={buildRoute({ routingStrategy: 'manual' })}
         brand={null}
         expanded
         onToggleExpand={vi.fn()}
@@ -734,7 +734,65 @@ describe('RouteCard', () => {
     expect(directShells.map((child) => child.props['data-channel-id'])).toEqual([11, 12, 21]);
   });
 
-  it('omits long explanatory copy in compact detail panels', () => {
+  it('keeps disabled channels outside manual scheduling layers', () => {
+    const root = create(
+      <RouteCard
+        route={buildRoute({ routingStrategy: 'manual', channelCount: 3, enabledChannelCount: 2 })}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[
+          buildChannel({ id: 11, priority: 0, sortOrder: 0, account: { username: 'enabled-primary' } }),
+          buildChannel({ id: 12, priority: 0, sortOrder: 1, enabled: false, account: { username: 'disabled-channel' } }),
+          buildChannel({ id: 21, priority: 1, sortOrder: 0, account: { username: 'enabled-fallback' } }),
+        ]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const sortableContext = root.root.findByType(SortableContext);
+    const sortableList = root.root.findByProps({ 'data-testid': 'route-channel-sortable-list' });
+    const disabledPool = root.root.findByProps({ 'data-testid': 'route-disabled-channel-pool' });
+    const sortableChannelIds = sortableList.findAllByProps({ 'data-testid': 'route-channel-shell' })
+      .map((node) => node.props['data-channel-id']);
+    const disabledChannelIds = disabledPool.findAllByProps({ 'data-testid': 'route-channel-shell' })
+      .map((node) => node.props['data-channel-id']);
+
+    expect(sortableContext.props.items).toEqual([11, 21]);
+    expect(sortableChannelIds).toEqual([11, 21]);
+    expect(disabledChannelIds).toEqual([12]);
+    expect(collectText(sortableList)).not.toContain('disabled-channel');
+    expect(collectText(disabledPool)).toContain('已停用通道');
+    expect(collectText(disabledPool)).toContain('不参与调度');
+    expect(disabledPool.findAll((node) => node.props['aria-label'] === '拖拽调整优先级层或组内顺序')).toHaveLength(0);
+  });
+
+  it('keeps compact strategy guidance focused on the selected mode', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
@@ -778,10 +836,11 @@ describe('RouteCard', () => {
 
     const detailText = collectText(root.root);
     expect(detailText).not.toContain('通配符路由按请求实时决策');
-    expect(detailText).not.toContain(getRouteRoutingStrategyDescription('weighted'));
+    expect(detailText).toContain(getRouteRoutingStrategyDescription('weighted'));
+    expect(detailText).not.toContain('页面展示当前决策概率；自动调度下不提供 P/W 编辑。');
   });
 
-  it('places compact route strategy and add channel controls on the same row', () => {
+  it('shows all four scheduling modes directly in compact detail panels', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -824,21 +883,91 @@ describe('RouteCard', () => {
       node.type === 'div'
       && node.props['data-testid'] === 'compact-route-action-row'
     ));
-    const strategySelectWrap = compactActionRow.find((node) => (
+    const strategySelector = compactActionRow.find((node) => (
       node.type === 'div'
-      && node.props['data-testid'] === 'compact-route-strategy-select'
+      && node.props['data-testid'] === 'route-strategy-selector'
     ));
     const addChannelButton = compactActionRow.find((node) => (
       node.type === 'button'
       && collectText(node).includes('添加通道')
     ));
+    const strategyButtons = strategySelector.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props['data-strategy'] === 'string'
+    ));
+    const weightedStrategyOption = strategyButtons.find((node) => node.props['data-strategy'] === 'weighted');
 
-    expect(compactActionRow.props.style.flexDirection).toBe('row');
-    expect(compactActionRow.props.style.justifyContent).toBe('flex-start');
-    expect(collectText(compactActionRow)).toContain('路由策略');
+    expect(collectText(compactActionRow)).toContain('调度模式');
     expect(collectText(compactActionRow)).toContain('添加通道');
-    expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
+    expect(strategyButtons.map((node) => collectText(node))).toEqual([
+      '自动权重',
+      '自动轮询',
+      '自动稳定',
+      '手动顺序',
+    ]);
     expect(addChannelButton.props.style.marginLeft).toBe('auto');
+    expect(weightedStrategyOption?.props['aria-checked']).toBe(true);
+    expect(weightedStrategyOption?.props['data-tooltip']).toBe(getRouteRoutingStrategyDescription('weighted'));
+  });
+
+  it('renders order controls only for manual scheduling mode', () => {
+    const renderCard = (routingStrategy: RouteSummaryRow['routingStrategy']) => (
+      <RouteCard
+        route={buildRoute({ routingStrategy })}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[
+          buildChannel({ id: 11, priority: 0, weight: 70 }),
+          buildChannel({ id: 12, accountId: 102, priority: 1, weight: 30 }),
+        ]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />
+    );
+    const root = create(renderCard('weighted'));
+
+    for (const strategy of ['weighted', 'round_robin', 'stable_first'] as const) {
+      act(() => root.update(renderCard(strategy)));
+      const automaticPool = root.root.findByProps({ 'data-testid': 'route-automatic-channel-pool' });
+      expect(automaticPool.props['data-strategy']).toBe(strategy);
+      expect(root.root.findAllByProps({ 'data-testid': 'route-channel-sortable-list' })).toHaveLength(0);
+      expect(root.root.findAll((node) => node.props['aria-label'] === '拖拽调整优先级层或组内顺序')).toHaveLength(0);
+      expect(root.root.findAll((node) => node.props['aria-label'] === '通道权重')).toHaveLength(0);
+    }
+
+    act(() => root.update(renderCard('manual')));
+    expect(root.root.findAllByProps({ 'data-testid': 'route-automatic-channel-pool' })).toHaveLength(0);
+    expect(root.root.findByProps({ 'data-testid': 'route-channel-sortable-list' })).toBeTruthy();
+    expect(root.root.findAll((node) => node.props['aria-label'] === '拖拽调整优先级层或组内顺序')).toHaveLength(2);
+    expect(root.root.findAll((node) => node.props['aria-label'] === '通道权重')).toHaveLength(0);
+    expect(root.root.findAll((node) => String(node.props['aria-label'] || '').startsWith('组内顺序第'))).toHaveLength(2);
+    expect(collectText(root.root)).toContain('P0 主用层');
+    expect(collectText(root.root)).toContain('P1 回退层');
   });
 
   it('keeps compact status badges inline with the route name', () => {

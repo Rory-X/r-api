@@ -11,6 +11,8 @@ const { apiMock } = vi.hoisted(() => ({
     getProxyLogsQuery: vi.fn(),
     getProxyLogsMeta: vi.fn(),
     getProxyLogDetail: vi.fn(),
+    getProxyRequestLedgers: vi.fn(),
+    getProxyRequestLedgerDetail: vi.fn(),
     getProxyDebugTraces: vi.fn(),
     getProxyDebugTraceDetail: vi.fn(),
     getRuntimeSettings: vi.fn(),
@@ -75,6 +77,7 @@ function buildListResponse(overrides?: Partial<{
         clientAppId: 'cherry_studio',
         clientAppName: 'Cherry Studio',
         clientConfidence: 'heuristic',
+        downstreamKeyId: 42,
         downstreamKeyName: '移动端灰度',
         downstreamKeyGroupName: '项目A',
         downstreamKeyTags: ['VIP', '灰度'],
@@ -176,6 +179,7 @@ describe('ProxyLogs server-driven page', () => {
       clientAppId: 'cherry_studio',
       clientAppName: 'Cherry Studio',
       clientConfidence: 'heuristic',
+      downstreamKeyId: 42,
       downstreamKeyName: '移动端灰度',
       downstreamKeyGroupName: '项目A',
       downstreamKeyTags: ['VIP', '灰度'],
@@ -208,6 +212,25 @@ describe('ProxyLogs server-driven page', () => {
           promptTokensIncludeCache: false,
         },
       },
+    });
+    apiMock.getProxyRequestLedgers.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 20,
+      offset: 0,
+      summary: {
+        total: 0,
+        active: 0,
+        succeeded: 0,
+        failed: 0,
+        cancelled: 0,
+        unknown: 0,
+        sentUnknown: 0,
+      },
+    });
+    apiMock.getProxyRequestLedgerDetail.mockResolvedValue({
+      requestId: 'req-unused',
+      attempts: [],
     });
     apiMock.getProxyDebugTraces.mockResolvedValue({
       items: [
@@ -280,7 +303,9 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('Cherry Studio');
       expect(text).toContain('Codex');
       expect(text).toContain('推测');
-      expect(text).toContain('下游 Key: 移动端灰度');
+      expect(text).toContain('下游 Key');
+      expect(text).toContain('移动端灰度');
+      expect(text).toContain('#42');
       expect(text).toContain('流式');
       expect(text).toContain('首字');
     } finally {
@@ -863,6 +888,160 @@ describe('ProxyLogs server-driven page', () => {
       expect(rowText).toContain('openclaw');
       expect(rowText).toContain('Codex');
       expect(rowText).not.toContain('推测');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('distinguishes same-named downstream keys by key id in rows and expanded detail', async () => {
+    const baseLog = buildListResponse().items[0];
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
+      items: [
+        {
+          ...baseLog,
+          id: 101,
+          downstreamKeyId: 17,
+          downstreamKeyName: 'ccodex',
+        },
+        {
+          ...baseLog,
+          id: 102,
+          createdAt: '2026-03-09 15:59:50',
+          downstreamKeyId: 18,
+          downstreamKeyName: 'ccodex',
+        },
+      ],
+      total: 2,
+    }));
+    apiMock.getProxyLogDetail.mockResolvedValue({
+      ...baseLog,
+      id: 101,
+      downstreamKeyId: 17,
+      downstreamKeyName: 'ccodex',
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const firstKey = root.root.findByProps({
+        'data-testid': 'proxy-log-downstream-key-row-101',
+      });
+      const secondKey = root.root.findByProps({
+        'data-testid': 'proxy-log-downstream-key-row-102',
+      });
+      expect(collectText(firstKey)).toContain('ccodex');
+      expect(collectText(firstKey)).toContain('#17');
+      expect(collectText(secondKey)).toContain('ccodex');
+      expect(collectText(secondKey)).toContain('#18');
+
+      const stopKeyRowClick = vi.fn();
+      const keyLocatorButton = firstKey.findByProps({
+        'aria-label': '定位下游 Key #17',
+      });
+      await act(async () => keyLocatorButton.props.onClick({ stopPropagation: stopKeyRowClick }));
+      expect(stopKeyRowClick).toHaveBeenCalled();
+      const keyLocator = root.root.findByProps({
+        'data-testid': 'proxy-log-key-locator',
+      });
+      expect(collectText(keyLocator)).toContain('ccodex');
+      expect(collectText(keyLocator)).toContain('#17');
+      expect(collectText(root.root)).toContain('打开下游 Key 管理');
+      const closeLocator = root.root.find((node) => (
+        node.type === 'button' && collectText(node).trim() === '关闭'
+      ));
+      await act(async () => closeLocator.props.onClick());
+
+      const firstRow = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      await act(async () => firstRow.props.onClick());
+      await flushMicrotasks();
+
+      const detailKey = root.root.findByProps({
+        'data-testid': 'proxy-log-downstream-key-detail-101',
+      });
+      expect(collectText(detailKey)).toContain('下游 Key');
+      expect(collectText(detailKey)).toContain('ccodex');
+      expect(collectText(detailKey)).toContain('#17');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows the concrete upstream target when the routed account has no username', async () => {
+    const baseLog = buildListResponse().items[0];
+    const unnamedAccountLog = {
+      ...baseLog,
+      errorMessage: '[downstream:/v1/responses] [upstream:/api/chat]',
+      accountId: 19,
+      siteId: 7,
+      username: null,
+      siteName: 'aihub',
+      siteUrl: 'https://aihub.example.com',
+    };
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
+      items: [unnamedAccountLog],
+    }));
+    apiMock.getProxyLogDetail.mockResolvedValue({
+      ...unnamedAccountLog,
+      routeId: 45,
+      channelId: 67,
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      await act(async () => row.props.onClick());
+      await flushMicrotasks();
+
+      const target = root.root.findByProps({
+        'data-testid': 'proxy-log-upstream-target-detail-101',
+      });
+      const text = collectText(target);
+      expect(text).toContain('API 去向');
+      expect(text).toContain('aihub');
+      expect(text).toContain('https://aihub.example.com');
+      expect(text).toContain('账号：未命名账号 · #19');
+      expect(text).toContain('路由 #45');
+      expect(text).toContain('通道 #67');
+      expect(text).toContain('上游路径：/api/chat');
+      expect(text).not.toContain('未知账号');
+
+      const stopTargetClick = vi.fn();
+      const accountLocatorButton = target.findByProps({
+        'aria-label': '定位渠道账号 #19',
+      });
+      await act(async () => accountLocatorButton.props.onClick({ stopPropagation: stopTargetClick }));
+      expect(stopTargetClick).toHaveBeenCalled();
+      const locator = root.root.findByProps({
+        'data-testid': 'proxy-log-upstream-locator',
+      });
+      const locatorText = collectText(locator);
+      expect(locatorText).toContain('渠道账号');
+      expect(locatorText).toContain('未命名账号 · #19');
+      expect(locatorText).toContain('路由#45');
+      expect(locatorText).toContain('通道#67');
+      expect(locatorText).toContain('上游路径/api/chat');
+      expect(collectText(root.root)).toContain('打开渠道账号管理');
     } finally {
       root?.unmount();
     }

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-type TooltipSide = 'top' | 'bottom';
+export type TooltipSide = 'top' | 'right' | 'bottom' | 'left';
 type TooltipAlign = 'start' | 'center' | 'end';
 
 type ActiveTooltip = {
@@ -15,15 +15,19 @@ type TooltipPosition = {
   left: number;
   top: number;
   arrowLeft: number;
+  arrowTop: number;
   side: TooltipSide;
 };
+
+type RectLike = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
 function readTooltipSide(target: HTMLElement): TooltipSide {
-  return target.getAttribute('data-tooltip-side') === 'bottom' ? 'bottom' : 'top';
+  const side = target.getAttribute('data-tooltip-side');
+  return side === 'right' || side === 'bottom' || side === 'left' ? side : 'top';
 }
 
 function readTooltipAlign(target: HTMLElement): TooltipAlign {
@@ -38,6 +42,86 @@ function resolveTooltipTarget(eventTarget: EventTarget | null): HTMLElement | nu
   if (!target) return null;
   const text = target.getAttribute('data-tooltip');
   return text && text.trim() ? target : null;
+}
+
+export function resolveTooltipPosition({
+  targetRect,
+  bubbleRect,
+  viewportWidth,
+  viewportHeight,
+  side,
+  align,
+  viewportPadding = 12,
+  gap = 10,
+}: {
+  targetRect: RectLike;
+  bubbleRect: Pick<RectLike, 'width' | 'height'>;
+  viewportWidth: number;
+  viewportHeight: number;
+  side: TooltipSide;
+  align: TooltipAlign;
+  viewportPadding?: number;
+  gap?: number;
+}): TooltipPosition {
+  let resolvedSide = side;
+  if (
+    side === 'right'
+    && targetRect.right + gap + bubbleRect.width > viewportWidth - viewportPadding
+    && targetRect.left - gap - bubbleRect.width >= viewportPadding
+  ) {
+    resolvedSide = 'left';
+  } else if (
+    side === 'left'
+    && targetRect.left - gap - bubbleRect.width < viewportPadding
+    && targetRect.right + gap + bubbleRect.width <= viewportWidth - viewportPadding
+  ) {
+    resolvedSide = 'right';
+  } else if (
+    side === 'bottom'
+    && targetRect.bottom + gap + bubbleRect.height > viewportHeight - viewportPadding
+    && targetRect.top - gap - bubbleRect.height >= viewportPadding
+  ) {
+    resolvedSide = 'top';
+  } else if (
+    side === 'top'
+    && targetRect.top - gap - bubbleRect.height < viewportPadding
+    && targetRect.bottom + gap + bubbleRect.height <= viewportHeight - viewportPadding
+  ) {
+    resolvedSide = 'bottom';
+  }
+
+  const horizontal = resolvedSide === 'left' || resolvedSide === 'right';
+  let left: number;
+  let top: number;
+
+  if (horizontal) {
+    left = resolvedSide === 'right'
+      ? targetRect.right + gap
+      : targetRect.left - gap - bubbleRect.width;
+    if (align === 'start') top = targetRect.top;
+    else if (align === 'end') top = targetRect.bottom - bubbleRect.height;
+    else top = targetRect.top + targetRect.height / 2 - bubbleRect.height / 2;
+  } else {
+    if (align === 'start') left = targetRect.left;
+    else if (align === 'end') left = targetRect.right - bubbleRect.width;
+    else left = targetRect.left + targetRect.width / 2 - bubbleRect.width / 2;
+    top = resolvedSide === 'bottom'
+      ? targetRect.bottom + gap
+      : targetRect.top - gap - bubbleRect.height;
+  }
+
+  left = clamp(left, viewportPadding, viewportWidth - viewportPadding - bubbleRect.width);
+  top = clamp(top, viewportPadding, viewportHeight - viewportPadding - bubbleRect.height);
+
+  const targetCenterX = targetRect.left + targetRect.width / 2;
+  const targetCenterY = targetRect.top + targetRect.height / 2;
+  return {
+    left,
+    top,
+    arrowLeft: clamp(targetCenterX - left, 14, bubbleRect.width - 14),
+    arrowTop: clamp(targetCenterY - top, 14, bubbleRect.height - 14),
+    side: resolvedSide,
+  };
 }
 
 export default function TooltipLayer() {
@@ -86,32 +170,14 @@ export default function TooltipLayer() {
 
     const targetRect = activeTooltip.target.getBoundingClientRect();
     const bubbleRect = bubbleRef.current.getBoundingClientRect();
-    const viewportPadding = 12;
-    const gap = 10;
-
-    let left = targetRect.left;
-    if (activeTooltip.align === 'center') {
-      left = targetRect.left + targetRect.width / 2 - bubbleRect.width / 2;
-    } else if (activeTooltip.align === 'end') {
-      left = targetRect.right - bubbleRect.width;
-    }
-
-    let top = activeTooltip.side === 'bottom'
-      ? targetRect.bottom + gap
-      : targetRect.top - gap - bubbleRect.height;
-
-    left = clamp(left, viewportPadding, window.innerWidth - viewportPadding - bubbleRect.width);
-    top = clamp(top, viewportPadding, window.innerHeight - viewportPadding - bubbleRect.height);
-
-    const targetCenter = targetRect.left + targetRect.width / 2;
-    const arrowLeft = clamp(targetCenter - left, 14, bubbleRect.width - 14);
-
-    setPosition({
-      left,
-      top,
-      arrowLeft,
+    setPosition(resolveTooltipPosition({
+      targetRect,
+      bubbleRect,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
       side: activeTooltip.side,
-    });
+      align: activeTooltip.align,
+    }));
   }, [activeTooltip, hideTooltip]);
 
   const scheduleRefresh = useCallback(() => {
@@ -219,7 +285,11 @@ export default function TooltipLayer() {
         {activeTooltip.text}
         <span
           className={`tooltip-bubble-arrow tooltip-bubble-arrow-${position?.side ?? activeTooltip.side}`}
-          style={position ? { left: position.arrowLeft } : undefined}
+          style={position
+            ? (position.side === 'left' || position.side === 'right'
+              ? { top: position.arrowTop }
+              : { left: position.arrowLeft })
+            : undefined}
         />
       </div>
     </div>

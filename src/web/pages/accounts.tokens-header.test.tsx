@@ -45,7 +45,7 @@ describe('Accounts tokens embedded header', () => {
     vi.clearAllMocks();
   });
 
-  it('reuses the accounts page header when showing the 账号令牌 segment', async () => {
+  it('reuses the accounts page header when showing the 上游 API Token segment', async () => {
     apiMock.getAccounts.mockResolvedValue([
       {
         id: 1,
@@ -84,9 +84,9 @@ describe('Accounts tokens embedded header', () => {
       const buttonTexts = root.root
         .findAll((node) => node.type === 'button')
         .map((node) => collectText(node));
-      expect(buttonTexts).toContain('同步站点令牌');
-      expect(buttonTexts).toContain('同步全部账号');
-      expect(buttonTexts).toContain('+ 新增令牌');
+      expect(buttonTexts).toContain('同步上游 Token');
+      expect(buttonTexts).toContain('同步全部面板账号');
+      expect(buttonTexts).toContain('在上游创建 Token');
     } finally {
       root?.unmount();
     }

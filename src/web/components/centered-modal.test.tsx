@@ -56,6 +56,31 @@ describe('CenteredModal component', () => {
     expect(source).toContain('createPortal');
   });
 
+  it('uses the requested desktop width instead of being locked to the legacy 500px shell', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <CenteredModal open onClose={() => {}} title="宽弹框" maxWidth={880}>
+            <div>long content</div>
+          </CenteredModal>,
+        );
+      });
+
+      const content = root.root.find((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.split(' ').includes('modal-content')
+      ));
+
+      expect(content.props.style).toMatchObject({
+        maxWidth: 880,
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('renders safely without touching document.body or listeners when no usable body exists', async () => {
     globalThis.document = {
       addEventListener: vi.fn(),
