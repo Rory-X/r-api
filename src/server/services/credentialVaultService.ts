@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { and, desc, eq, lte, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, lte, type SQL } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { insertAndGetById } from '../db/insertHelpers.js';
@@ -20,10 +20,10 @@ const VALID_KINDS = new Set<CredentialVaultKind>([
   'browser_storage',
   'integration_secret',
 ]);
-const VALID_STATUSES = new Set(['active', 'revoked', 'expired']);
+const VALID_STATUSES = new Set(['active', 'disabled', 'revoked', 'expired']);
 type DbExecutor = typeof db;
 
-export type CredentialVaultStatus = 'active' | 'revoked' | 'expired';
+export type CredentialVaultStatus = 'active' | 'disabled' | 'revoked' | 'expired';
 
 export type CredentialVaultMetadata = {
   origin?: string;
@@ -319,6 +319,29 @@ export async function listCredentialVaultItems(options?: {
   return rows.map(toPublicItem);
 }
 
+export async function findActiveCredentialVaultItemBySecret(input: {
+  siteId?: number | null;
+  accountId?: number | null;
+  kind: CredentialVaultKind;
+  secret: string;
+}): Promise<CredentialVaultPublicItem | null> {
+  const siteId = input.siteId == null ? null : normalizeId(input.siteId);
+  const accountId = input.accountId == null ? null : normalizeId(input.accountId);
+  const kind = normalizeKind(input.kind);
+  const secret = normalizeSecret(input.secret);
+  const conditions: SQL[] = [
+    eq(schema.credentialVaultItems.kind, kind),
+    eq(schema.credentialVaultItems.status, 'active'),
+    eq(schema.credentialVaultItems.fingerprint, fingerprintSecret(kind, secret)),
+  ];
+  if (siteId !== null) conditions.push(eq(schema.credentialVaultItems.siteId, siteId));
+  if (accountId !== null) conditions.push(eq(schema.credentialVaultItems.accountId, accountId));
+  const row = await db.select().from(schema.credentialVaultItems)
+    .where(and(...conditions))
+    .get();
+  return row ? toPublicItem(row) : null;
+}
+
 export async function resolveCredentialVaultSecret(id: number): Promise<{
   item: CredentialVaultPublicItem;
   secret: string;
@@ -354,7 +377,25 @@ export async function revokeCredentialVaultItem(id: number): Promise<boolean> {
     status: 'revoked',
     revokedAt: now,
     updatedAt: now,
-  }).where(and(eq(schema.credentialVaultItems.id, id), eq(schema.credentialVaultItems.status, 'active'))).run();
+  }).where(and(
+    eq(schema.credentialVaultItems.id, id),
+    inArray(schema.credentialVaultItems.status, ['active', 'disabled']),
+  )).run();
+  return Number(result?.changes || 0) > 0;
+}
+
+export async function setCredentialVaultItemEnabled(id: number, enabled: boolean): Promise<boolean> {
+  const row = await db.select({ status: schema.credentialVaultItems.status })
+    .from(schema.credentialVaultItems)
+    .where(eq(schema.credentialVaultItems.id, id))
+    .get();
+  if (!row) return false;
+  if (enabled && row.status !== 'disabled') return false;
+  if (!enabled && row.status !== 'active') return false;
+  const result = await db.update(schema.credentialVaultItems).set({
+    status: enabled ? 'active' : 'disabled',
+    updatedAt: new Date().toISOString(),
+  }).where(eq(schema.credentialVaultItems.id, id)).run();
   return Number(result?.changes || 0) > 0;
 }
 

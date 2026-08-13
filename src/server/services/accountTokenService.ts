@@ -476,6 +476,23 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
 }
 
 export async function listTokensWithRelations(accountId?: number) {
+  const routeChannelRows = await db.select({
+    accountId: schema.routeChannels.accountId,
+    tokenId: schema.routeChannels.tokenId,
+    enabled: schema.routeChannels.enabled,
+  }).from(schema.routeChannels).all();
+  const routeUsageByTokenId = new Map<number, { total: number; enabled: number }>();
+  const fallbackRouteUsageByAccountId = new Map<number, { total: number; enabled: number }>();
+  for (const channel of routeChannelRows) {
+    const usageMap = channel.tokenId == null ? fallbackRouteUsageByAccountId : routeUsageByTokenId;
+    const key = channel.tokenId == null ? channel.accountId : channel.tokenId;
+    if (!key) continue;
+    const current = usageMap.get(key) || { total: 0, enabled: 0 };
+    current.total += 1;
+    if (channel.enabled !== false) current.enabled += 1;
+    usageMap.set(key, current);
+  }
+
   const base = db.select()
     .from(schema.accountTokens)
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
@@ -489,10 +506,21 @@ export async function listTokensWithRelations(accountId?: number) {
     .filter((row) => !isApiKeyConnection(row.accounts))
     .map((row) => {
     const { token, ...tokenMeta } = row.account_tokens;
+    const explicitUsage = routeUsageByTokenId.get(row.account_tokens.id) || { total: 0, enabled: 0 };
+    const fallbackUsage = row.account_tokens.isDefault
+      && normalizeTokenForDisplay(token) === normalizeTokenForDisplay(row.accounts.apiToken)
+      ? (fallbackRouteUsageByAccountId.get(row.accounts.id) || { total: 0, enabled: 0 })
+      : { total: 0, enabled: 0 };
+    const routeUsage = {
+      total: explicitUsage.total + fallbackUsage.total,
+      enabled: explicitUsage.enabled + fallbackUsage.enabled,
+    };
     return {
       ...tokenMeta,
       valueStatus: resolveAccountTokenValueStatus(row.account_tokens),
       tokenMasked: maskToken(token, row.sites.platform),
+      routeUsageCount: routeUsage.total,
+      activeRouteUsageCount: routeUsage.enabled,
       account: {
         id: row.accounts.id,
         username: row.accounts.username,

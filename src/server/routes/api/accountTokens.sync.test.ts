@@ -525,6 +525,51 @@ describe('account tokens sync routes with site status', () => {
     expect(response.json()).toEqual([]);
   });
 
+  it('reports how many route channels use each managed token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'routed-token',
+      token: 'sk-routed-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-route-usage',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: route.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'gpt-route-usage',
+        enabled: true,
+      },
+      {
+        routeId: route.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'gpt-route-usage-disabled',
+        enabled: false,
+      },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/account-tokens',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([
+      expect.objectContaining({
+        id: token.id,
+        routeUsageCount: 2,
+        activeRouteUsageCount: 1,
+      }),
+    ]);
+  });
+
   it('sync-all skips disabled-site accounts and syncs active-site accounts', async () => {
     const disabled = await seedAccount({ siteStatus: 'disabled' });
     const active = await seedAccount({ siteStatus: 'active' });

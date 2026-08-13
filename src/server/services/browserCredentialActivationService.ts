@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { insertAndGetById } from '../db/insertHelpers.js';
 import {
   getProxyUrlFromExtraConfig,
   mergeAccountExtraConfig,
@@ -24,6 +25,7 @@ export type BrowserCredentialActivationResult = {
   username: string | null;
   apiTokenFound: boolean;
   idempotent: boolean;
+  created: boolean;
 };
 
 function parseCaptureSecret(secret: string): BrowserCaptureSecret {
@@ -109,6 +111,40 @@ function readSnapshotRuntime(raw: string): BrowserCredentialRuntime | undefined 
   }
 }
 
+async function nextAccountSortOrder(): Promise<number> {
+  const rows = await db.select({ sortOrder: schema.accounts.sortOrder })
+    .from(schema.accounts)
+    .all();
+  return rows.reduce((maximum, row) => Math.max(maximum, row.sortOrder || 0), -1) + 1;
+}
+
+async function createBrowserCredentialAccount(input: {
+  siteId: number;
+  username: string | null;
+  accessToken: string;
+  apiToken: string | null;
+  extraConfig: string;
+}): Promise<typeof schema.accounts.$inferSelect> {
+  const now = new Date().toISOString();
+  return insertAndGetById<typeof schema.accounts.$inferSelect>({
+    table: schema.accounts,
+    idColumn: schema.accounts.id,
+    values: {
+      siteId: input.siteId,
+      username: input.username,
+      accessToken: input.accessToken,
+      apiToken: input.apiToken,
+      status: 'active',
+      checkinEnabled: true,
+      sortOrder: await nextAccountSortOrder(),
+      extraConfig: input.extraConfig,
+      createdAt: now,
+      updatedAt: now,
+    },
+    insertErrorMessage: '浏览器凭证账号创建失败',
+  });
+}
+
 export function browserCaptureRuntimeInternals() {
   return { parseCaptureSecret, readField, readUsername, readPositiveInteger };
 }
@@ -125,19 +161,24 @@ export async function activateBrowserRecoveryCredential(input: {
   }
 
   const accountId = input.accountId == null ? task.accountId : Math.trunc(Number(input.accountId));
-  if (!accountId || !Number.isFinite(accountId) || accountId <= 0) {
-    throw new Error('请先选择要绑定的账号');
+  if (accountId != null && (!Number.isFinite(accountId) || accountId <= 0)) {
+    throw new Error('目标账号无效');
   }
-  const row = await db.select().from(schema.accounts)
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(eq(schema.accounts.id, accountId)).get();
-  if (!row) throw new Error('目标账号不存在');
-  if (row.sites.id !== task.siteId) throw new Error('目标账号与浏览器凭证任务站点不匹配');
+  const row = accountId == null
+    ? null
+    : await db.select().from(schema.accounts)
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.accounts.id, accountId)).get();
+  if (accountId != null && !row) throw new Error('目标账号不存在');
+  if (row && row.sites.id !== task.siteId) throw new Error('目标账号与浏览器凭证任务站点不匹配');
+  const site = row?.sites || await db.select().from(schema.sites)
+    .where(eq(schema.sites.id, task.siteId)).get();
+  if (!site) throw new Error('目标站点不存在');
 
-  const adapter = getAdapter(row.sites.platform);
+  const adapter = getAdapter(site.platform);
   const contract = adapter?.getContract();
   const runtime = readSnapshotRuntime(task.contractSnapshot) || contract?.browser.runtime;
-  if (!runtime) throw new Error(`站点 ${row.sites.platform} 未声明浏览器凭证启用方式`);
+  if (!runtime) throw new Error(`站点 ${site.platform} 未声明浏览器凭证启用方式`);
 
   const resolved = await resolveCredentialVaultSecret(task.resultCredentialId);
   if (!resolved) throw new Error('恢复凭证不存在、已撤销或已过期');
@@ -145,23 +186,26 @@ export async function activateBrowserRecoveryCredential(input: {
   const accessToken = readField(capture, runtime.field);
   if (!accessToken) throw new Error(`恢复凭证缺少运行时字段 ${runtime.field}`);
   const platformUserId = readPositiveInteger(capture, runtime.platformUserIdField)
-    || resolvePlatformUserId(row.accounts.extraConfig, row.accounts.username);
-  if (!adapter) throw new Error(`不支持的平台: ${row.sites.platform}`);
-  const idempotent = hasBoundCredential(row.accounts.extraConfig, task.resultCredentialId);
+    || (row ? resolvePlatformUserId(row.accounts.extraConfig, row.accounts.username) : undefined);
+  if (!adapter) throw new Error(`不支持的平台: ${site.platform}`);
 
   let verified;
   try {
     verified = await withAccountProxyOverride(
-      getProxyUrlFromExtraConfig(row.accounts.extraConfig),
-      () => adapter.verifyToken(row.sites.url, accessToken, platformUserId),
+      row ? getProxyUrlFromExtraConfig(row.accounts.extraConfig) : null,
+      () => adapter.verifyToken(site.url, accessToken, platformUserId),
     );
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : '浏览器凭证验证失败');
   }
   if (verified.tokenType !== 'session') throw new Error('浏览器凭证验证失败：未识别为可用会话');
 
-  const username = verified.userInfo?.username?.trim() || readUsername(capture, runtime) || row.accounts.username || null;
-  const apiToken = verified.apiToken?.trim() || row.accounts.apiToken || null;
+  const username = verified.userInfo?.username?.trim()
+    || readUsername(capture, runtime)
+    || resolved.item.metadata?.username
+    || row?.accounts.username
+    || null;
+  const apiToken = verified.apiToken?.trim() || row?.accounts.apiToken || null;
   const extraConfigPatch: Record<string, unknown> = {
     credentialMode: 'session',
     browserCredentialId: task.resultCredentialId,
@@ -177,14 +221,24 @@ export async function activateBrowserRecoveryCredential(input: {
     }
   }
 
+  const account = row?.accounts || await createBrowserCredentialAccount({
+    siteId: site.id,
+    username,
+    accessToken,
+    apiToken,
+    extraConfig: mergeAccountExtraConfig(undefined, extraConfigPatch),
+  });
+  const created = !row;
+  const idempotent = !created && hasBoundCredential(account.extraConfig, task.resultCredentialId);
+
   await applyAccountUpdateWorkflow({
-    accountId,
+    accountId: account.id,
     updates: {
       accessToken,
       ...(username ? { username } : {}),
       ...(apiToken ? { apiToken } : {}),
       status: 'active',
-      extraConfig: mergeAccountExtraConfig(row.accounts.extraConfig, extraConfigPatch),
+      extraConfig: mergeAccountExtraConfig(account.extraConfig, extraConfigPatch),
     },
     preferredApiToken: apiToken,
     refreshModels: true,
@@ -192,16 +246,24 @@ export async function activateBrowserRecoveryCredential(input: {
   });
 
   await db.update(schema.credentialVaultItems).set({
-    accountId,
+    accountId: account.id,
     updatedAt: new Date().toISOString(),
   }).where(eq(schema.credentialVaultItems.id, task.resultCredentialId)).run();
 
+  if (task.accountId == null) {
+    await db.update(schema.browserCredentialRecoveryTasks).set({
+      accountId: account.id,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.browserCredentialRecoveryTasks.id, task.id)).run();
+  }
+
   return {
-    accountId,
+    accountId: account.id,
     credentialId: task.resultCredentialId,
     tokenType: 'session',
     username,
     apiTokenFound: Boolean(apiToken),
     idempotent,
+    created,
   };
 }

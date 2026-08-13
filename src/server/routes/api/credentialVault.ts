@@ -9,7 +9,7 @@ import {
 } from '../../services/credentialVaultService.js';
 import type { SiteCredentialKind } from '../../services/platforms/siteAdapterContract.js';
 
-const STATUSES = new Set<CredentialVaultStatus>(['active', 'revoked', 'expired']);
+const STATUSES = new Set<CredentialVaultStatus>(['active', 'disabled', 'revoked', 'expired']);
 
 function parsePositiveId(value: unknown): number | null {
   const parsed = Number(value);
