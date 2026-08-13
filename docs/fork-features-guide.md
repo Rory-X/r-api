@@ -10,10 +10,10 @@
 2. 在 **连接管理** 添加账号、Session 或上游 API Key。
 3. 刷新账号状态和模型，确认路由已经生成。
 4. 在 **下游密钥** 创建一个 `sk-...` 密钥。
-5. 将 Metapi 的 Base URL 和该密钥交给 Codex 或其他客户端使用。
+5. 将 r-api 的 Base URL 和该密钥交给 Codex 或其他客户端使用。
 
 > [!IMPORTANT]
-> Metapi 只提供网关 Base URL 和下游 Key，不负责替 Codex、Claude Code 等客户端完成账号授权或写入客户端配置。
+> r-api 只提供网关 Base URL 和下游 Key，不负责替 Codex、Claude Code 等客户端完成账号授权或写入客户端配置。
 
 ## 1. 接入上游并生成可用网关
 

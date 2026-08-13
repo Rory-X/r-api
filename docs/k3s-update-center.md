@@ -4,7 +4,7 @@
 
 ---
 
-本页适用于已经把 Metapi 部署到 **K3s / Kubernetes + Helm** 的用户。
+本页适用于已经把 r-api 部署到 **K3s / Kubernetes + Helm** 的用户。
 
 K3s 更新中心的日常入口位于：
 
@@ -18,7 +18,7 @@ K3s 更新中心的日常入口位于：
 - 哪些配置仍然需要主服务环境变量或 helper manifest
 - 哪些前提不满足时，页面虽然能打开，但无法真正部署
 
-如果你现在的环境只是一个最普通的 **Docker Compose 安装**，只有一个 Metapi 容器，其他什么都没有，那么先记住一句话：
+如果你现在的环境只是一个最普通的 **Docker Compose 安装**，只有一个 r-api 容器，其他什么都没有，那么先记住一句话：
 
 > [!IMPORTANT]
 > **如果你只是想原地给现有 Compose 容器加一个“后台点按钮更新”的能力，那你现在大概率用不上这页。**
@@ -37,7 +37,7 @@ K3s 更新中心的日常入口位于：
 | Deploy Helper URL | UI：设置 → 更新中心 | 例如集群内 Service 地址 |
 | Namespace / Release Name / Chart Ref / Image Repository | UI：设置 → 更新中心 | 都是页面里直接填的部署配置 |
 | GitHub Releases / Docker Hub / 默认部署来源 | UI：设置 → 更新中心 | 属于页面里的版本来源策略 |
-| 主 Metapi 到 helper 的认证 token | 主 Metapi 环境变量 | `DEPLOY_HELPER_TOKEN` 或 `UPDATE_CENTER_HELPER_TOKEN` |
+| 主 r-api 到 helper 的认证 token | 主 r-api 环境变量 | `DEPLOY_HELPER_TOKEN` 或 `UPDATE_CENTER_HELPER_TOKEN` |
 | helper 自己监听在哪个地址和端口 | helper 环境变量 / manifest | `DEPLOY_HELPER_HOST` / `DEPLOY_HELPER_PORT` |
 | helper 自己的 Bearer Token | helper 环境变量 / manifest | `DEPLOY_HELPER_TOKEN`，且必须与主服务一致 |
 | chart 是否真的支持 digest 部署 | chart 文件本身 | 这不是 UI，也不是普通 env，要看 chart 模板 |
@@ -51,10 +51,10 @@ K3s 更新中心的日常入口位于：
 
 | 你的现状 | 是否适用 | 你现在该怎么做 |
 |------|------------|--------------|
-| 只有一个 `docker compose up -d` 跑起来的 Metapi 容器 | 不需要 | 继续用普通 Docker 升级方式 |
+| 只有一个 `docker compose up -d` 跑起来的 r-api 容器 | 不需要 | 继续用普通 Docker 升级方式 |
 | 目前是 Docker Compose，准备迁到 K3s / Helm 来获得滚动更新 | 需要 | 把本页当成迁移后的目标架构说明，先完成迁移，再启用更新中心 |
-| 有 K3s / Kubernetes 集群，但 Metapi 不是用 Helm release 部署的 | 暂时不建议 | 这套更新中心无法直接接管现有部署 |
-| Metapi 已经是 Helm release，想在后台里看版本并手动点一次升级 | 需要 | 继续看下文 |
+| 有 K3s / Kubernetes 集群，但 r-api 不是用 Helm release 部署的 | 暂时不建议 | 这套更新中心无法直接接管现有部署 |
+| r-api 已经是 Helm release，想在后台里看版本并手动点一次升级 | 需要 | 继续看下文 |
 
 ## 如果你现在只有一个 Docker Compose 容器
 
@@ -104,7 +104,7 @@ docker compose up -d
 2. 评估迁移后的运行数据库。
    - 如果你迁到 K3s 只是想“单副本 + 更规范部署”，SQLite 仍然可以先用。
    - 如果你更看重后续可维护性、滚动发布体验和外部持久化，通常更建议切到 MySQL / PostgreSQL。
-3. 在新环境里先把 Metapi 作为 Helm release 跑起来。
+3. 在新环境里先把 r-api 作为 Helm release 跑起来。
 4. 确认新实例可正常登录、数据正常、代理请求正常。
 5. 再部署 Deploy Helper，并启用更新中心。
 
@@ -123,7 +123,7 @@ docker compose up -d
 
 ## 那这个功能到底是干什么的
 
-对已经在 K3s / Kubernetes 里跑 Metapi 的用户，这个“更新中心”主要解决的是：
+对已经在 K3s / Kubernetes 里跑 r-api 的用户，这个“更新中心”主要解决的是：
 
 - 在后台里看当前运行版本
 - 看官方 GitHub Releases / Docker Hub 有没有新的稳定版
@@ -145,13 +145,13 @@ docker compose up -d
 ## 使用它之前，你至少要已经有这些东西
 
 - 一个可用的 K3s / Kubernetes 集群
-- 用 Helm 部署的 Metapi release
+- 用 Helm 部署的 r-api release
 - 你的 chart 至少支持下面三个 values：
   - `image.repository`
   - `image.tag`
   - `image.digest`
 - 目标 Deployment 带有 `app.kubernetes.io/instance=<releaseName>` 标签
-- 主 Metapi 服务可以访问：
+- 主 r-api 服务可以访问：
   - GitHub API
   - Docker Hub API
   - Deploy Helper 的集群内地址
@@ -160,7 +160,7 @@ docker compose up -d
 
 ## helper 是什么
 
-Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 Metapi 功能，只负责接受主 Metapi 发来的部署请求，然后在集群里执行：
+Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 r-api 功能，只负责接受主 r-api 发来的部署请求，然后在集群里执行：
 
 - `helm history`
 - `helm get values`
@@ -176,7 +176,7 @@ Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 Me
 
 只有当你已经满足下面这个目标时，才值得去配：
 
-- “我已经在 K3s / Helm 里跑 Metapi 了，现在想在后台里看版本，并且人工点一下完成升级”
+- “我已经在 K3s / Helm 里跑 r-api 了，现在想在后台里看版本，并且人工点一下完成升级”
 
 如果你现在只是：
 
@@ -272,9 +272,9 @@ helm template metapi /opt/metapi-k3s/chart \
 
 那说明这份 chart 还是 tag 语义，先不要继续配置更新中心。
 
-### 2. 让主 Metapi 和 helper 用同一个 token
+### 2. 让主 r-api 和 helper 用同一个 token
 
-主 Metapi 端支持这两个环境变量，设置一个即可：
+主 r-api 端支持这两个环境变量，设置一个即可：
 
 - `DEPLOY_HELPER_TOKEN`
 - `UPDATE_CENTER_HELPER_TOKEN`
@@ -295,7 +295,7 @@ helper 端使用：
 
 | 字段 | 怎么理解 | 典型示例 |
 |------|--------|----------|
-| `Deploy Helper URL` | 主 Metapi 访问 helper 的地址 | `http://metapi-deploy-helper.ai.svc.cluster.local:9850` |
+| `Deploy Helper URL` | 主 r-api 访问 helper 的地址 | `http://metapi-deploy-helper.ai.svc.cluster.local:9850` |
 | `Namespace` | 目标 release 所在命名空间 | `ai` |
 | `Release Name` | Helm release 名 | `metapi` |
 | `Chart Ref` | helper Pod 能访问到的 chart 引用 | `/opt/metapi-k3s/chart` |
@@ -350,7 +350,7 @@ helper 端使用：
 
 ## 这套能力当前不适合什么场景
 
-- 只有一台 Docker 主机、一个 Compose 文件、一个 Metapi 容器
+- 只有一台 Docker 主机、一个 Compose 文件、一个 r-api 容器
 - 想让后台直接远程更新 Docker Compose 服务
 - 没有 Helm release，只是手工 apply 的 Deployment
 - 需要全自动无人值守升级

@@ -16,8 +16,6 @@
   <img alt="GitHub Release" src="https://img.shields.io/github/v/release/Rory-X/r-api?label=Release&logo=github&style=flat">
 </a><a href="https://github.com/Rory-X/r-api/stargazers">
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/Rory-X/r-api?style=flat&logo=github&label=Stars">
-</a><a href="https://atomgit.com/cita-777/metapi">
-  <img alt="AtomGit Stars" src="https://atomgit.com/cita-777/metapi/star/badge.svg">
 </a><a href="https://deepwiki.com/Rory-X/r-api">
   <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
 </a><a href="https://hub.docker.com/r/1467078763/metapi">

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi" width="280">
+<img src="docs/logos/logo-full.png" alt="r-api" width="280">
 
 **A relay for relays — aggregate scattered AI relay stations into one unified gateway**
 
@@ -17,13 +17,13 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
+<a href="https://github.com/Rory-X/r-api/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/Rory-X/r-api?label=Release&logo=github&style=flat">
 </a><!--
---><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
+--><a href="https://github.com/Rory-X/r-api/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/Rory-X/r-api?style=flat&logo=github&label=Stars">
 </a><!--
---><a href="https://deepwiki.com/cita-777/metapi">
+--><a href="https://deepwiki.com/Rory-X/r-api">
   <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
 </a><!--
 --><a href="https://hub.docker.com/r/1467078763/metapi">
@@ -40,7 +40,7 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 --><a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
 </a><!--
---><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+--><a href="https://render.com/deploy?repo=https://github.com/Rory-X/r-api">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 </p>
@@ -66,7 +66,7 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 
 ## 🌐 Live Demo
 
-> Try Metapi without deploying — full-featured demo instance:
+> Try r-api without deploying — full-featured demo instance:
 
 | | |
 |---|---|
@@ -83,7 +83,7 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 
 The AI ecosystem is seeing a growing number of aggregation relay stations based on New API / One API and similar projects. Managing balances, model lists, and API keys across multiple sites is scattered and time-consuming.
 
-**Metapi** acts as the **Meta-Aggregation Layer** on top of these relay stations, unifying multiple sites into **one endpoint (with configurable per-project downstream API Keys)** — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models. Currently supported upstream platforms:
+**r-api** acts as the **Meta-Aggregation Layer** on top of these relay stations, unifying multiple sites into **one endpoint (with configurable per-project downstream API Keys)** — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models. Currently supported upstream platforms:
 
 - [New API](https://github.com/QuantumNous/new-api)
 - [One API](https://github.com/songquanpeng/one-api)
@@ -93,7 +93,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 - [AnyRouter](https://anyrouter.top) — Universal routing platform
 - [Sub2API](https://github.com/Wei-Shaw/sub2api) — Subscription-based relay
 
-| Pain Point | How Metapi Solves It |
+| Pain Point | How r-api Solves It |
 | --- | --- |
 | One key per site, tedious client config | **Unified proxy endpoint + optional per-project downstream keys** — all site models auto-aggregated under `/v1/*` |
 | No idea which site offers the cheapest model | **Smart routing** auto-selects the optimal channel by cost, balance, and usage |
@@ -175,7 +175,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 
 **Downstream Clients** (Cursor · Claude Code · Codex · Open WebUI · Cherry Studio, etc.)
 &emsp;↓ &ensp;`Authorization: Bearer <PROXY_TOKEN>`
-**Metapi Gateway**
+**r-api Gateway**
 &emsp;• Unified `/v1` proxy for core OpenAI / Claude-compatible endpoints (Responses, Chat Completions, Messages, Completions, Embeddings, Images, Models)
 &emsp;• Smart Routing Engine — weighted selection by cost, balance, and availability; auto-cooldown & retry on failure
 &emsp;• Model Discovery — auto-aggregates all upstream models with zero config
@@ -306,11 +306,11 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 ### Docker Compose (Recommended)
 
 ```bash
-mkdir metapi && cd metapi
+mkdir r-api && cd r-api
 
 cat > docker-compose.yml << 'EOF'
 services:
-  metapi:
+  r-api:
     image: 1467078763/metapi:latest
     ports:
       - "4000:4000"
@@ -339,7 +339,7 @@ docker compose up -d
 <summary><strong>One-line Docker command</strong></summary>
 
 ```bash
-docker run -d --name metapi \
+docker run -d --name r-api \
   -p 4000:4000 \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
@@ -436,7 +436,7 @@ Full configuration reference: [docs/configuration.md](docs/configuration.md)
 
 ## Proxy API Endpoints
 
-Metapi exposes standard OpenAI / Claude compatible endpoints:
+r-api exposes standard OpenAI / Claude compatible endpoints:
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
@@ -527,7 +527,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 | Project | Description |
 | --- | --- |
-| [New API](https://github.com/QuantumNous/new-api) | Next-gen LLM gateway, one of Metapi's primary upstreams |
+| [New API](https://github.com/QuantumNous/new-api) | Next-gen LLM gateway, one of r-api's primary upstreams |
 | [One API](https://github.com/songquanpeng/one-api) | Classic OpenAI API aggregation |
 | [OneHub](https://github.com/MartialBE/one-hub) | Enhanced One API fork |
 | [DoneHub](https://github.com/deanxv/done-hub) | Enhanced OneHub fork |
@@ -537,7 +537,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 | Project | Description |
 | --- | --- |
-| [All API Hub](https://github.com/qixing-jk/all-api-hub) | Browser extension — all-in-one relay account manager, Metapi's original inspiration |
+| [All API Hub](https://github.com/qixing-jk/all-api-hub) | Browser extension — all-in-one relay account manager, r-api's original inspiration |
 | [LLM Metadata](https://github.com/nicepkg/llm-metadata) | LLM model metadata library, used for model description reference |
 | [New API](https://github.com/QuantumNous/new-api) | Platform adapter reference implementation |
 
@@ -545,7 +545,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 ## Data & Privacy
 
-Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
+r-api is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
 
 ---
 
@@ -553,9 +553,9 @@ Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in 
 
 All forms of contribution are welcome!
 
-- Report bugs — [Submit an Issue](https://github.com/cita-777/metapi/issues)
-- Feature suggestions — [Start a Discussion](https://github.com/cita-777/metapi/issues)
-- Code contributions — [Submit a Pull Request](https://github.com/cita-777/metapi/pulls)
+- Report bugs — [Submit an Issue](https://github.com/Rory-X/r-api/issues)
+- Feature suggestions — [Start a Discussion](https://github.com/Rory-X/r-api/issues)
+- Code contributions — [Submit a Pull Request](https://github.com/Rory-X/r-api/pulls)
 - Contributing guide — [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -575,7 +575,7 @@ If you discover a security issue, please refer to [SECURITY.md](SECURITY.md) and
 
 ## Thanks
 
-Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi. A lot of the product polish in this project came directly from community usage and iteration.
+Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to r-api. A lot of the product polish in this project came directly from community usage and iteration.
 
 Special thanks to all contributors:
 
@@ -590,13 +590,13 @@ Special thanks to all contributors:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=Rory-X/r-api&type=date&legend=top-left&v=2)](https://www.star-history.com/#Rory-X/r-api&type=date&legend=top-left)
 
 ---
 
 <div align="center">
 
-**If Metapi helps you, a Star is the best support!**
+**If r-api helps you, a Star is the best support!**
 
 <sub>Built with love by the AI community</sub>
 

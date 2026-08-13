@@ -13,7 +13,7 @@ Local Connector 是本项目的本地优先控制面协议。服务器负责配�
 
 ## 本机参考实现
 
-Connector 使用独立 npm 包 `metapi-connector` 发布，不发布整个 Metapi 服务仓库。Node.js 25 或更高版本可全局安装：
+Connector 使用独立 npm 包 `metapi-connector` 发布，不发布整个 r-api 服务仓库。Node.js 25 或更高版本可全局安装：
 
 ```bash
 npm install --global metapi-connector
@@ -61,7 +61,7 @@ metapi-connector status \
 
 常驻 `metapi-connector run --direct` 会同时启动独立的 local-first 看板，首选地址为 `http://127.0.0.1:4765/`；如果端口被占用，会选择后续可用端口。运行实例把最终端口、URL、PID 与健康接口原子写入数据目录内权限为 `0600` 的 `connector.dashboard.json`，正常停止时删除；新实例持有独占运行锁后会先清理崩溃遗留的旧 discovery。`metapi-connector dashboard` 会校验 discovery PID、探测 `/healthz` 和 `/api/status` 后输出实际地址，因此脚本和快捷方式不应假定端口永远是 4765。看板数据直接来自 Connector 进程与本地耐久队列，不依赖管理控制台页面：
 
-- Connector 到 Metapi 的连通状态、连续失败次数和当前动作；
+- Connector 到 r-api 的连通状态、连续失败次数和当前动作；
 - Codex App Server 连接模式、正在运行的 Thread、活动 Turn 和等待标记；
 - App Server 审批、用户输入和 MCP elicitation 的本机 pending 状态；
 - 普通事件、动作结果、Bridge 事件和 Bridge 结果的离线积压；

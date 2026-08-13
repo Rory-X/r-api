@@ -1,4 +1,4 @@
-# Metapi Engineering Rules
+# r-api Engineering Rules
 
 These rules apply to the whole repository unless a deeper `AGENTS.md` overrides
 them. They are intentionally opinionated and mechanical so humans and agents can

@@ -23,8 +23,8 @@
 
 这套能力只适用于：
 
-- 你已经在 K3s / Kubernetes 中部署了 Metapi
-- 而且当前 Metapi 是通过 Helm release 管理的
+- 你已经在 K3s / Kubernetes 中部署了 r-api
+- 而且当前 r-api 是通过 Helm release 管理的
 
 它不适用于：
 
@@ -33,7 +33,7 @@
 
 但如果你是老用户，**正在计划从 Docker Compose 迁到 K3s / Helm，以获得滚动更新能力**，那么这一节和对应专题页是值得提前看的。它写的不是“怎么原地升级 Compose”，而是“迁移完成后你会如何使用更新中心”。
 
-如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
+如果你已经通过 Helm 在 K3s / Kubernetes 中部署 r-api，并希望在管理后台中：
 
 - 查看当前运行版本
 - 检查 GitHub Releases / Docker Hub 的稳定版
@@ -77,7 +77,7 @@
 
 ## Render 一键部署（免费 24h 运行）
 
-<a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+<a href="https://render.com/deploy?repo=https://github.com/Rory-X/r-api">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 
@@ -85,7 +85,7 @@
 
 | 组件 | 作用 | 免费额度 |
 |------|------|----------|
-| [Render](https://render.com) | 运行 Metapi 容器 | Free Web Service（750 小时/月，闲置 15 分钟自动休眠） |
+| [Render](https://render.com) | 运行 r-api 容器 | Free Web Service（750 小时/月，闲置 15 分钟自动休眠） |
 | [TiDB Serverless](https://tidbcloud.com) | MySQL 兼容数据库，替代 SQLite 实现数据持久化 | 5 GiB 存储 + 5000 万 Request Units/月 |
 | [UptimeRobot](https://uptimerobot.com) | 每 5 分钟 ping 一次，防止 Render 免费实例休眠 | 50 个免费监控 |
 
@@ -122,7 +122,7 @@
 **方式二：手动创建**
 
 1. 在 [Render Dashboard](https://dashboard.render.com) 点击 **New → Web Service**
-2. 连接你的 GitHub 仓库（或使用公开仓库地址 `https://github.com/cita-777/metapi`）
+2. 连接你的 GitHub 仓库（或使用公开仓库地址 `https://github.com/Rory-X/r-api`）
 3. 配置：
    - **Environment**: Docker
    - **Dockerfile Path**: `./docker/Dockerfile`
@@ -168,7 +168,7 @@ Render 免费实例在 15 分钟无流量后会自动休眠。使用 UptimeRobot
 ### 标准步骤
 
 ```bash
-mkdir metapi && cd metapi
+mkdir r-api && cd r-api
 
 # 创建 docker-compose.yml（参见快速上手）
 # 设置环境变量
@@ -202,7 +202,7 @@ docker compose --env-file .env up -d
 ## Docker 命令部署
 
 ```bash
-docker run -d --name metapi \
+docker run -d --name r-api \
   -p 4000:4000 \
   -e ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret \
   -e AUTH_TOKEN=your-admin-token \
@@ -225,7 +225,7 @@ docker run -d --name metapi \
 
 ### 桌面版特性
 
-- 内置本地 Metapi 服务，无需手动准备 Node.js 运行环境
+- 内置本地 r-api 服务，无需手动准备 Node.js 运行环境
 - 托盘菜单支持重新打开窗口、重启后端、开机自启
 - 支持基于 GitHub Releases 的应用内更新检查
 

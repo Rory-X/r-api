@@ -1,11 +1,11 @@
-# Metapi 项目结构
+# r-api 项目结构
 
 本文档只说明当前仓库里长期维护的主目录，帮助贡献者快速判断代码、脚本和文档应当放在哪里。
 
 ## 顶层目录
 
 ```text
-metapi/
+r-api/
 ├── build/                # 打包静态资源（如 Electron 图标）
 ├── data/                 # 默认运行时数据目录（SQLite、日志、导出文件）
 ├── dist/                 # 构建产物（web / server / desktop）

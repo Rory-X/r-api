@@ -2,13 +2,13 @@
 
 ## Overview / 概述
 
-The security of Metapi is important to us. This document outlines our security policy and how to report vulnerabilities.
+The security of r-api is important to us. This document outlines our security policy and how to report vulnerabilities.
 
-Metapi 的安全对我们很重要。本文档概述了我们的安全政策以及如何报告漏洞。
+r-api 的安全对我们很重要。本文档概述了我们的安全政策以及如何报告漏洞。
 
-Since Metapi is a self-hosted meta-aggregation layer that manages sensitive credentials (API keys, account passwords) and proxies AI API requests, security is a critical concern.
+Since r-api is a self-hosted meta-aggregation layer that manages sensitive credentials (API keys, account passwords) and proxies AI API requests, security is a critical concern.
 
-由于 Metapi 是一个自托管的元聚合层，管理敏感凭证（API 密钥、账号密码）并代理 AI API 请求，因此安全性至关重要。
+由于 r-api 是一个自托管的元聚合层，管理敏感凭证（API 密钥、账号密码）并代理 AI API 请求，因此安全性至关重要。
 
 ## Supported Versions / 支持的版本
 
@@ -21,13 +21,13 @@ We provide security updates for the following versions / 我们为以下版本�
 | Older releases / 旧版本 | ⚠️ Best effort / 尽力而为 |
 | Forks / 分支 | ❌ Not supported / 不支持 |
 
-**Recommendation** / **建议**: Always use the latest stable release from [GitHub Releases](https://github.com/cita-777/metapi/releases) or the `main` branch for the most up-to-date security patches.
+**Recommendation** / **建议**: Always use the latest stable release from [GitHub Releases](https://github.com/Rory-X/r-api/releases) or the `main` branch for the most up-to-date security patches.
 
-始终使用 [GitHub Releases](https://github.com/cita-777/metapi/releases) 的最新稳定版本或 `main` 分支以获得最新的安全补丁。
+始终使用 [GitHub Releases](https://github.com/Rory-X/r-api/releases) 的最新稳定版本或 `main` 分支以获得最新的安全补丁。
 
 ## Security Considerations / 安全注意事项
 
-When deploying Metapi, please consider / 部署 Metapi 时，请考虑:
+When deploying r-api, please consider / 部署 r-api 时，请考虑:
 
 ### Credential Storage / 凭证存储
 
@@ -64,12 +64,12 @@ When deploying Metapi, please consider / 部署 Metapi 时，请考虑:
 Use one of these private channels / 使用以下私密渠道之一:
 
 1. **GitHub Security Advisory** (Preferred) / **GitHub 安全公告**（首选）
-   - Go to: https://github.com/cita-777/metapi/security/advisories/new
+   - Go to: https://github.com/Rory-X/r-api/security/advisories/new
    - This allows for coordinated disclosure and CVE assignment / 这允许协调披露和 CVE 分配
 
 2. **Email** / **邮件**
    - Send to: `cita-777@users.noreply.github.com`
-   - Subject: `[Metapi Security] <brief description>` / 主题：`[Metapi Security] <简要描述>`
+   - Subject: `[r-api Security] <brief description>` / 主题：`[r-api Security] <简要描述>`
 
 ### What to Include / 应包含的内容
 
@@ -87,7 +87,7 @@ To help us understand and address the issue quickly, please include / 为了帮�
 ### Example Report / 报告示例
 
 ```
-Subject: [Metapi Security] SQL Injection in account search
+Subject: [r-api Security] SQL Injection in account search
 
 Description:
 The account search endpoint is vulnerable to SQL injection through the
@@ -101,7 +101,7 @@ Affected Version:
 v1.2.2 and earlier
 
 Reproduction:
-1. Login to Metapi admin panel
+1. Login to r-api admin panel
 2. Navigate to /api/accounts/search?name=' OR '1'='1
 3. Observe all accounts returned
 
@@ -153,8 +153,8 @@ If a vulnerability is accidentally posted publicly / 如果漏洞被意外公开
 
 Security updates will be announced through / 安全更新将通过以下方式公布:
 
-- [GitHub Security Advisories](https://github.com/cita-777/metapi/security/advisories)
-- [GitHub Releases](https://github.com/cita-777/metapi/releases) with `[SECURITY]` tag / 带有 `[SECURITY]` 标签
+- [GitHub Security Advisories](https://github.com/Rory-X/r-api/security/advisories)
+- [GitHub Releases](https://github.com/Rory-X/r-api/releases) with `[SECURITY]` tag / 带有 `[SECURITY]` 标签
 - Project README and documentation / 项目 README 和文档
 
 Subscribe to repository notifications to stay informed / 订阅仓库通知以保持了解。
@@ -173,6 +173,6 @@ If you have questions about this security policy, please contact `cita-777@users
 
 ---
 
-**Thank you for helping keep Metapi and its users safe!**
+**Thank you for helping keep r-api and its users safe!**
 
-**感谢您帮助保护 Metapi 及其用户的安全！**
+**感谢您帮助保护 r-api 及其用户的安全！**

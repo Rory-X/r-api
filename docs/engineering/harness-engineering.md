@@ -1,4 +1,4 @@
-# Metapi Harness Engineering
+# r-api Harness Engineering
 
 This document captures the repo-level engineering taste that should remain true
 even when future work is performed by autonomous agents. The goal is not to
@@ -7,7 +7,7 @@ review-friendly, and hard to drift.
 
 ## Why This Exists
 
-`metapi` already has strong local discipline in several areas:
+`r-api` already has strong local discipline in several areas:
 
 - architecture tests that pin important boundaries
 - schema parity and runtime bootstrap verification across databases

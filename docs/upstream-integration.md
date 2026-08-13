@@ -1,6 +1,6 @@
 # 🔌 上游接入指南
 
-本文档详细说明如何将不同类型的 AI 中转站、官方兼容入口和 OAuth 连接接入 Metapi。
+本文档详细说明如何将不同类型的 AI 中转站、官方兼容入口和 OAuth 连接接入 r-api。
 
 [返回文档中心](./README.md)
 
@@ -8,7 +8,7 @@
 
 ## 概述
 
-Metapi 当前支持三类上游接入方式：
+r-api 当前支持三类上游接入方式：
 
 1. **中转聚合平台** — New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API / CPA 等
 2. **官方 API 端点** — OpenAI / Claude (Anthropic) / Gemini (Google) 直连
@@ -28,7 +28,7 @@ Metapi 当前支持三类上游接入方式：
 
 ### 通用步骤
 
-1. **登录管理后台** — 访问 `http://your-metapi-host:4000`，使用 `AUTH_TOKEN` 登录
+1. **登录管理后台** — 访问 `http://your-r-api-host:4000`，使用 `AUTH_TOKEN` 登录
 2. **进入站点管理** — 点击左侧菜单「站点管理」
 3. **添加站点** — 点击「添加站点」按钮
 4. **填写站点信息** — 根据站点类型填写对应字段；如果是官方入口，也可以直接选择预设
@@ -95,7 +95,7 @@ New API 支持三种凭证类型：
 
 #### 特殊说明
 
-**User ID 自动探测：** New API 通常需要在请求头中携带 `New-API-User` / `Veloera-User` / `voapi-user` 等字段。Metapi 会自动：
+**User ID 自动探测：** New API 通常需要在请求头中携带 `New-API-User` / `Veloera-User` / `voapi-user` 等字段。r-api 会自动：
 
 1. 从 JWT Token 中解码 User ID
 2. 从 Session Cookie 中提取 User ID（支持 Gob 编码解析）
@@ -141,7 +141,7 @@ One API 支持与 New API 相同的三种凭证类型（用户名密码 / Access
 
 OneHub 继承 One API 的凭证体系，支持用户名密码、Access Token、API Key 三种方式。
 
-**额外功能：** OneHub 支持 Token 分组（`token_group`），Metapi 会自动识别并保留分组信息。
+**额外功能：** OneHub 支持 Token 分组（`token_group`），r-api 会自动识别并保留分组信息。
 
 ---
 
@@ -179,7 +179,7 @@ DoneHub 完全兼容 OneHub 的凭证体系，配置方式相同，DoneHub 获�
 
 Veloera 基于 New API 架构，支持相同的凭证类型。特别注意：
 
-- Veloera 需要 `Veloera-User` 请求头，Metapi 会自动添加
+- Veloera 需要 `Veloera-User` 请求头，r-api 会自动添加
 
 ---
 
@@ -203,14 +203,14 @@ Sub2API 常见 JWT 短期会话机制，和传统 NewAPI 站点差异较大。�
 
 ![Sub2API 认证字段示例](./screenshots/sub2api-auth-f12.png)
 
-然后回到 Metapi 账号添加处：
+然后回到 r-api 账号添加处：
 
 ![Sub2API Session 配置](./screenshots/sub2api-session-config.png)
 
 1. 在「凭证模式」里选择 Session 模式，分别粘贴 F12 界面中的 `auth_token`、`refresh_token`、`token_expires_at` 字段进行验证，无需配置用户 ID。
-2. 不要使用账号密码登录，Metapi 不支持代替 Sub2API 做登录
+2. 不要使用账号密码登录，r-api 不支持代替 Sub2API 做登录
 3. Sub2API 通常为订阅制使用，不支持签到；如果你只关心代理调用，也可以直接改用 API Key 模式
-4. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi 会再尝试用它发现模型
+4. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，r-api 会再尝试用它发现模型
 
 ---
 
@@ -304,7 +304,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 | 自动签到 | ❌ 不适用 |
 | 上游 API Token 管理 | ❌ 不适用 |
 
-**协议转换：** Metapi 自动处理 OpenAI 格式与 Claude Messages API 格式的双向转换，下游客户端可使用 OpenAI SDK 调用 Claude 模型。
+**协议转换：** r-api 自动处理 OpenAI 格式与 Claude Messages API 格式的双向转换，下游客户端可使用 OpenAI SDK 调用 Claude 模型。
 
 ---
 
@@ -336,7 +336,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 | 自动签到 | ❌ 不适用 |
 | 上游 API Token 管理 | ❌ 不适用 |
 
-**协议转换：** Metapi 自动处理 OpenAI 格式与 Gemini `generateContent` API 格式的双向转换。
+**协议转换：** r-api 自动处理 OpenAI 格式与 Gemini `generateContent` API 格式的双向转换。
 
 ---
 
@@ -399,7 +399,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 1. 进入左侧菜单 **OAuth 管理**
 2. 选择对应 provider 发起授权
 3. 如果是远程部署，按页面提示使用 SSH 隧道或手动回填 callback URL
-4. 授权成功后，Metapi 会自动创建或复用对应站点与连接
+4. 授权成功后，r-api 会自动创建或复用对应站点与连接
 
 完整流程见 [OAuth 管理](./oauth.md)。
 
@@ -440,14 +440,14 @@ CPA 这类站点推荐直接使用 **API Key**：
 **配置方式：**
 
 1. 在站点编辑页面填写「外部签到 URL」
-2. Metapi 会向该 URL 发送 POST 请求执行签到
+2. r-api 会向该 URL 发送 POST 请求执行签到
 3. 请求头自动携带账号凭证
 
 ### API 请求地址池
 
 现在不少站点已经不是“一个 URL 同时负责后台面板和 `/v1/*` API 请求”。
 
-Metapi 当前支持把这两层拆开：
+r-api 当前支持把这两层拆开：
 
 - **主站点 URL**：用于登录、签到、后台接口、系统访问令牌管理
 - **API 请求地址池**：用于真正转发 `/v1/*`、`/chat/completions`、`/responses` 等模型请求
@@ -469,7 +469,7 @@ API 请求地址池 = 数据面
 
 ## 🔍 站点自动检测
 
-Metapi 支持自动识别站点类型，当前检测优先级如下：
+r-api 支持自动识别站点类型，当前检测优先级如下：
 
 ### 1. 官方预设检测
 
@@ -529,7 +529,7 @@ Metapi 支持自动识别站点类型，当前检测优先级如下：
 
 ## 📊 账号健康状态
 
-Metapi 自动追踪每个账号的健康状态：
+r-api 自动追踪每个账号的健康状态：
 
 | 状态 | 说明 | 触发条件 |
 |------|------|----------|
@@ -544,7 +544,7 @@ Metapi 自动追踪每个账号的健康状态：
 
 ## 📰 站点公告
 
-Metapi 会定期抓取已接入站点的公告，并在首次发现时写入站内通知与「站点公告」页面。
+r-api 会定期抓取已接入站点的公告，并在首次发现时写入站内通知与「站点公告」页面。
 
 当前支持的公告来源：
 
@@ -554,10 +554,10 @@ Metapi 会定期抓取已接入站点的公告，并在首次发现时写入站�
 
 行为约定：
 
-1. 首次发现的公告会触发一次 Metapi 通知
+1. 首次发现的公告会触发一次 r-api 通知
 2. 已经保存过的公告再次同步时只更新本地记录
 3. `sub2api` 这类需要登录态的公告接口，会优先使用站点下已启用账号的会话令牌
-4. 「站点公告」页面的清空操作只影响 Metapi 本地数据库
+4. 「站点公告」页面的清空操作只影响 r-api 本地数据库
 
 ---
 
@@ -586,7 +586,7 @@ Metapi 会定期抓取已接入站点的公告，并在首次发现时写入站�
 
 **解决方法：**
 
-1. Metapi 会自动探测 User ID，通常无需手动配置
+1. r-api 会自动探测 User ID，通常无需手动配置
 2. 如果自动探测失败，可在账号编辑页面的「额外配置」中手动填写：
 
    ```json
@@ -597,7 +597,7 @@ Metapi 会定期抓取已接入站点的公告，并在首次发现时写入站�
 
 ### 问题：CPA 为什么没有账号登录、签到、余额刷新
 
-**原因：** `cliproxyapi` / CPA 在 Metapi 里按标准 API provider 处理，重点支持模型发现与代理调用，不按传统面板站处理。
+**原因：** `cliproxyapi` / CPA 在 r-api 里按标准 API provider 处理，重点支持模型发现与代理调用，不按传统面板站处理。
 
 **解决方法：**
 

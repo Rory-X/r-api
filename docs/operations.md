@@ -56,8 +56,8 @@ pg_dump -h <HOST> -U <USER> -d metapi -F c -f metapi-backup-$(date +%Y%m%d).dump
 
 建议：
 - 升级、迁移、执行「重新初始化系统」前先做一次库级备份
-- 备份对象是当前 metapi 正在使用的运行库，而不只是本地 `data/`
-- 恢复后重启 Metapi 一次，确认它重新连接到了正确的运行库
+- 备份对象是当前 r-api 正在使用的运行库，而不只是本地 `data/`
+- 恢复后重启 r-api 一次，确认它重新连接到了正确的运行库
 - 建议保留最近 7~30 天的备份，定期清理过期文件
 
 ### 方式三：应用内导出
@@ -94,7 +94,7 @@ docker compose up -d
 
 ### 数据库恢复（MySQL / PostgreSQL）
 
-如果当前运行库是 MySQL / Postgres，请先用数据库自己的恢复流程把备份恢复到目标库，再重启 Metapi。若实例保存过运行库配置，重启后仍会优先连接该外部库，而不是自动回退到本地 SQLite。
+如果当前运行库是 MySQL / Postgres，请先用数据库自己的恢复流程把备份恢复到目标库，再重启 r-api。若实例保存过运行库配置，重启后仍会优先连接该外部库，而不是自动回退到本地 SQLite。
 
 ## 日志排查
 
@@ -192,7 +192,7 @@ curl -sS http://localhost:4000/v1/chat/completions \
 
 - 单个站点可在站点页直接开关
 - 站点页支持批量开启 / 关闭系统代理
-- 修改系统代理地址后，Metapi 会自动失效站点代理缓存，通常无需手工重启
+- 修改系统代理地址后，r-api 会自动失效站点代理缓存，通常无需手工重启
 
 ### 清理缓存并重建路由
 
@@ -219,8 +219,8 @@ curl -sS http://localhost:4000/v1/chat/completions \
 
 这是高风险操作，位于「设置 → 危险操作」。
 
-- 会清空当前 metapi 正在使用的全部业务数据
-- 如果当前运行在外部 MySQL / Postgres，会先清空该外部库中的 metapi 数据，再切回默认 SQLite
+- 会清空当前 r-api 正在使用的全部业务数据
+- 如果当前运行在外部 MySQL / Postgres，会先清空该外部库中的 r-api 数据，再切回默认 SQLite
 - 管理员 Token 会重置为 `change-me-admin-token`
 - 当前登录会话会立即退出，页面刷新后回到首装状态
 

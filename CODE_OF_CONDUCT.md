@@ -2,9 +2,9 @@
 
 ## Our Pledge / 我们的承诺
 
-We as members, contributors, and maintainers pledge to make participation in the Metapi community a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, gender identity and expression, level of experience, nationality, personal appearance, race, religion, or sexual identity and orientation.
+We as members, contributors, and maintainers pledge to make participation in the r-api community a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, gender identity and expression, level of experience, nationality, personal appearance, race, religion, or sexual identity and orientation.
 
-作为 Metapi 社区的成员、贡献者和维护者，我们承诺让每个人都能在无骚扰的环境中参与，无论年龄、体型、残疾、种族、性别认同和表达、经验水平、国籍、个人外貌、种族、宗教或性取向如何。
+作为 r-api 社区的成员、贡献者和维护者，我们承诺让每个人都能在无骚扰的环境中参与，无论年龄、体型、残疾、种族、性别认同和表达、经验水平、国籍、个人外貌、种族、宗教或性取向如何。
 
 ## Our Standards / 我们的标准
 
@@ -38,7 +38,7 @@ If you experience or witness unacceptable behavior, or have any other concerns, 
 
 如果您遇到或目睹不可接受的行为，或有任何其他疑虑，请通过以下方式举报：
 
-1. **Email** / **邮件**: `cita-777@users.noreply.github.com` with subject prefix `[Metapi Conduct]` / 主题前缀为 `[Metapi Conduct]`
+1. **Email** / **邮件**: `cita-777@users.noreply.github.com` with subject prefix `[r-api Conduct]` / 主题前缀为 `[r-api Conduct]`
 2. **GitHub**: Use [GitHub's built-in reporting tools](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam) for urgent platform-level issues / 对于紧急的平台级问题，使用 [GitHub 的内置举报工具](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam)
 
 ### What to Include / 应包含的内容
@@ -91,7 +91,7 @@ This Code of Conduct applies to all project spaces, including / 本行为准则�
 - Community forums and chat channels / 社区论坛和聊天频道
 - Official social media accounts / 官方社交媒体账号
 - Project events (online or offline) / 项目活动（线上或线下）
-- Any other spaces where an individual is representing the Metapi project / 个人代表 Metapi 项目的任何其他空间
+- Any other spaces where an individual is representing the r-api project / 个人代表 r-api 项目的任何其他空间
 
 ## Attribution / 归属
 

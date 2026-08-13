@@ -26,7 +26,7 @@
 3. 兼容接口、CPA、官方预设优先 **API Key**
 4. Provider 原生授权优先 **OAuth**
 
-### Q: 在 Metapi 里怎么切换认证方式？
+### Q: 在 r-api 里怎么切换认证方式？
 
 **A:** 入口已经分成两条：
 
@@ -53,7 +53,7 @@
 
 ### Q: AnyRouter 这类魔改站点为什么更容易报错？
 
-**A:** AnyRouter 在 Metapi 中按 NewAPI 兼容站点处理，但不少实例会隐藏 Access Token 入口，或额外加登录盾。建议：
+**A:** AnyRouter 在 r-api 中按 NewAPI 兼容站点处理，但不少实例会隐藏 Access Token 入口，或额外加登录盾。建议：
 
 1. 如果站点后台能生成系统访问令牌，优先用 Session 模式 + Access Token
 2. 如果没有 Access Token 入口，或验证时被盾/认证页拦截，再改用 Cookie 导入
@@ -68,9 +68,9 @@
 **A:** Sub2API 常见 JWT 短期会话机制，和传统 NewAPI 站点差异较大。当前建议：
 
 1. 在「凭证模式」里选择 Session 模式，分别粘贴 F12 界面中的 `auth_token`、`refresh_token`、`token_expires_at` 字段进行验证，无需配置用户 ID
-2. 不要使用账号密码登录，Metapi 不支持代替 Sub2API 做登录
+2. 不要使用账号密码登录，r-api 不支持代替 Sub2API 做登录
 3. Sub2API 通常为订阅制使用，不支持签到；如果你只关心代理调用，也可以直接改用 API Key 模式
-4. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi 会再尝试用它发现模型
+4. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，r-api 会再尝试用它发现模型
 
 详细操作说明见 [上游接入](/upstream-integration)。
 
@@ -113,13 +113,13 @@ docker compose up -d
 **A:** WebUI 不提供绕过第二因素的入口。请在服务器本地停止主服务，用当前管理员登录凭据执行恢复命令；命令会停用 TOTP 并撤销全部管理会话：
 
 ```bash
-docker compose stop metapi
+docker compose stop r-api
 export METAPI_ADMIN_RECOVERY_CREDENTIAL='your-current-admin-credential'
 export METAPI_ADMIN_TOTP_RESET_CONFIRM='disable-totp'
 docker compose run --rm \
   -e METAPI_ADMIN_RECOVERY_CREDENTIAL \
   -e METAPI_ADMIN_TOTP_RESET_CONFIRM \
-  metapi npm run admin:reset-totp
+  r-api npm run admin:reset-totp
 unset METAPI_ADMIN_RECOVERY_CREDENTIAL METAPI_ADMIN_TOTP_RESET_CONFIRM
 docker compose up -d
 ```
@@ -210,11 +210,11 @@ docker compose up -d
 
 - 上游站点不支持签到功能
 - 账号凭证已过期（系统会尝试自动重登录）
-- 站点接口变更 — 检查 Metapi 是否为最新版本
+- 站点接口变更 — 检查 r-api 是否为最新版本
 
 ### Q: 签到成功但奖励显示为 0
 
-**A:** 部分站点的签到接口不返回奖励金额。Metapi 会尝试从收入日志推算奖励，但可能存在延迟。
+**A:** 部分站点的签到接口不返回奖励金额。r-api 会尝试从收入日志推算奖励，但可能存在延迟。
 
 ---
 
@@ -247,7 +247,7 @@ docker compose up -d
 
 如果以上内容未能解决你的问题：
 
-- [搜索已有 Issue](https://github.com/cita-777/metapi/issues?q=is%3Aissue) — 看看是否有人遇到过相同问题
-- [提交新 Issue](https://github.com/cita-777/metapi/issues/new) — 报告 Bug 或提出功能建议
-- [参与讨论](https://github.com/cita-777/metapi/discussions) — 使用疑问、经验分享
+- [搜索已有 Issue](https://github.com/Rory-X/r-api/issues?q=is%3Aissue) — 看看是否有人遇到过相同问题
+- [提交新 Issue](https://github.com/Rory-X/r-api/issues/new) — 报告 Bug 或提出功能建议
+- [参与讨论](https://github.com/Rory-X/r-api/discussions) — 使用疑问、经验分享
 - [文档中心](./README.md) — 查看所有文档

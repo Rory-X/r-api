@@ -1,6 +1,6 @@
 # ⚙️ 配置说明
 
-本文档按实际使用场景说明 Metapi 的配置入口。
+本文档按实际使用场景说明 r-api 的配置入口。
 
 对大多数用户来说，日常配置优先通过管理后台完成；环境变量主要用于首次启动、部署级参数和当前没有 UI 的高级项。
 
@@ -10,7 +10,7 @@
 
 ## 概述
 
-Metapi 当前有三类主要配置入口：
+r-api 当前有三类主要配置入口：
 
 1. **管理后台「设置」** — 适合日常系统设置与运行时调整
 2. **管理后台「通知设置」与「下游密钥」** — 适合通知渠道和项目级下游 Key 管理
@@ -129,7 +129,7 @@ Metapi 当前有三类主要配置入口：
 - WebUI 可在「系统设置 → 管理员安全」启用 TOTP；Challenge 只保留在当前页面内存，TOTP Secret 和恢复码不会写入浏览器持久化存储。
 - 脚本仍可显式使用 `Authorization: Bearer <当前管理员登录凭据>` 调用管理 API；脚本 Bearer 不要求 TOTP，避免破坏无人值守自动化。
 - `ACCOUNT_CREDENTIAL_SECRET` 必须与管理员登录凭据分离，修改后既有 Vault/账号密文将无法解密。
-- 直接暴露 Metapi 时保持 `TRUST_PROXY=false`；只有在请求必经可信反向代理时才配置代理 IP/CIDR，并由代理覆盖传入的转发头。
+- 直接暴露 r-api 时保持 `TRUST_PROXY=false`；只有在请求必经可信反向代理时才配置代理 IP/CIDR，并由代理覆盖传入的转发头。
 - `PROXY_TOKEN` 也只是建议先给一个初始值；后续可在「控制台 → 下游密钥 → 全局主密钥」中轮换。
 - `PORT`、`DATA_DIR`、`TZ` 这类属于部署级参数，更适合留在环境变量。
 
@@ -148,13 +148,13 @@ TOTP 默认关闭。启用后，WebUI 密码登录会进入第二阶段，可输
 如果验证器和恢复码同时丢失，只能在服务器或容器本地恢复。恢复命令要求当前管理员登录凭据和固定确认值，且会撤销全部管理会话：
 
 ```bash
-docker compose stop metapi
+docker compose stop r-api
 export METAPI_ADMIN_RECOVERY_CREDENTIAL='your-current-admin-credential'
 export METAPI_ADMIN_TOTP_RESET_CONFIRM='disable-totp'
 docker compose run --rm \
   -e METAPI_ADMIN_RECOVERY_CREDENTIAL \
   -e METAPI_ADMIN_TOTP_RESET_CONFIRM \
-  metapi npm run admin:reset-totp
+  r-api npm run admin:reset-totp
 unset METAPI_ADMIN_RECOVERY_CREDENTIAL METAPI_ADMIN_TOTP_RESET_CONFIRM
 docker compose up -d
 ```
@@ -218,7 +218,7 @@ docker compose up -d
 
 ### 3. 上游连接与首字速度（高级）
 
-Metapi 会为上游请求复用长连接，并在兼容时优先使用 HTTP/2。默认值适合单实例部署，修改后需要重启后端进程。
+r-api 会为上游请求复用长连接，并在兼容时优先使用 HTTP/2。默认值适合单实例部署，修改后需要重启后端进程。
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
@@ -233,10 +233,10 @@ Metapi 会为上游请求复用长连接，并在兼容时优先使用 HTTP/2。
 
 | 指标 | 含义 |
 |------|------|
-| `metapi_route` | 请求进入 Metapi 后，到真正发起上游请求前的路由耗时 |
+| `metapi_route` | 请求进入 r-api 后，到真正发起上游请求前的路由耗时 |
 | `upstream_headers` | 上游从请求发出到返回响应头的耗时 |
 | `upstream_first_byte` | 上游从请求发出到返回首个响应字节的耗时 |
-| `metapi_stream_start` | Metapi 收到上游首字后，到开始向客户端写流的耗时 |
+| `metapi_stream_start` | r-api 收到上游首字后，到开始向客户端写流的耗时 |
 
 如果 `upstream_first_byte` 占绝大多数，瓶颈通常在上游模型处理、超长上下文、上游排队或跨地域网络；继续增加连接数不会明显改善。Coding Agent 会话应优先使用自身的压缩/新会话能力，不建议网关静默截断或改写历史消息。
 
@@ -257,10 +257,10 @@ Metapi 会为上游请求复用长连接，并在兼容时优先使用 HTTP/2。
 
 这里要分清楚两层：
 
-- **主 Metapi 后台里的日常更新中心配置**：优先在 UI 里填
+- **主 r-api 后台里的日常更新中心配置**：优先在 UI 里填
 - **主服务访问 helper 的 token / helper 自己的监听参数**：仍然是环境变量
 
-#### 主 Metapi 服务
+#### 主 r-api 服务
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
@@ -362,7 +362,7 @@ Metapi 会为上游请求复用长连接，并在兼容时优先使用 HTTP/2。
 
 ## UI 与环境变量的关系
 
-Metapi 当前的配置关系可以概括为：
+r-api 当前的配置关系可以概括为：
 
 1. **环境变量负责启动默认值和部署参数**
 2. **UI 负责用户日常操作和运行时调整**
@@ -449,12 +449,12 @@ Metapi 当前的配置关系可以概括为：
 
 ## 站点公告
 
-管理后台新增了「站点公告」页面，用于保存和浏览 Metapi 已同步到本地的上游公告记录。
+管理后台新增了「站点公告」页面，用于保存和浏览 r-api 已同步到本地的上游公告记录。
 
 - 首次发现的上游公告会写入站内通知，并按现有通知渠道外发一次
 - 后续重复同步只更新本地公告记录，不会重复外发同一条公告
 - 当前支持的上游公告来源包括 `new-api`、`done-hub` 与 `sub2api`
-- 「清空公告」只删除 Metapi 本地保存的公告记录，不会修改上游站点数据
+- 「清空公告」只删除 r-api 本地保存的公告记录，不会修改上游站点数据
 
 ## 更新提醒
 

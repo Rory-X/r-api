@@ -3,7 +3,7 @@
 ## 目录结构
 
 ```
-D:\Code\Projects\Metapi\
+D:\Code\Projects\r-api\
 ├── metapi                          # 主仓库（upstream）
 ├── metapi-routing-ux-optimization  # 开发 worktree (模型白名单功能)
 ├── metapi-upstream-latest          # 其他 worktree
@@ -15,7 +15,7 @@ D:\Code\Projects\Metapi\
 ### 1. 进入开发 worktree
 
 ```bash
-cd D:/Code/Projects/Metapi/metapi-routing-ux-optimization
+cd D:/Code/Projects/r-api/metapi-routing-ux-optimization
 ```
 
 ### 2. 安装依赖（首次运行）

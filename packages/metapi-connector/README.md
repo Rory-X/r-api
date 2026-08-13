@@ -1,6 +1,6 @@
 # metapi-connector
 
-Local-first Connector for Metapi. It observes and controls the official Codex managed App Server, reports privacy-safe session metadata, delivers durable completion notifications, and bridges Feishu prompts and approvals back to the original Codex session.
+Local-first Connector for r-api. It observes and controls the official Codex managed App Server, reports privacy-safe session metadata, delivers durable completion notifications, and bridges Feishu prompts and approvals back to the original Codex session.
 
 ## Install
 
@@ -38,7 +38,7 @@ metapi-connector doctor
 metapi-connector dashboard --open
 ```
 
-`doctor` exits with status `0` only when the local Connector process, CLI/runtime versions, dashboard, App Server control connection, session snapshot upload, and Metapi heartbeat are all ready. `status` prints the same evidence as JSON without converting it into pass/fail checks. A status query never overwrites the version or capabilities reported by the running Connector.
+`doctor` exits with status `0` only when the local Connector process, CLI/runtime versions, dashboard, App Server control connection, session snapshot upload, and r-api heartbeat are all ready. `status` prints the same evidence as JSON without converting it into pass/fail checks. A status query never overwrites the version or capabilities reported by the running Connector.
 
 The dashboard prefers `http://127.0.0.1:4765/`, but automatically falls forward when that port is occupied. `dashboard` reads the private runtime discovery file and prints the actual URL. Do not hard-code port 4765 in local shortcuts.
 
@@ -58,4 +58,4 @@ After upgrading the npm package, rerun the same `install-service` command. It re
 
 For foreground development only, use `metapi-connector run --direct`. `--control-app-server` remains a compatibility alias for older scripts.
 
-See the Metapi repository documentation for pairing permissions, launchd setup, configuration reload, durable queues, Bridge continuation and Feishu interaction behavior.
+See the r-api repository documentation for pairing permissions, launchd setup, configuration reload, durable queues, Bridge continuation and Feishu interaction behavior.

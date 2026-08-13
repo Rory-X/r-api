@@ -1,6 +1,6 @@
 # 🔌 客户端接入
 
-本文档说明如何将下游客户端连接到 Metapi 代理网关。
+本文档说明如何将下游客户端连接到 r-api 代理网关。
 
 [返回文档中心](./README.md)
 
@@ -8,7 +8,7 @@
 
 ## 通用配置
 
-Metapi 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需配置两项：
+r-api 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需配置两项：
 
 | 配置项 | 值 |
 |--------|-----|
@@ -58,8 +58,8 @@ Metapi 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需�
 | 模型提供商 → OpenAI → API 地址 | `https://your-domain.com/v1` |
 | API Key | `PROXY_TOKEN` |
 
-> 说明：Metapi 现在支持标准 OpenAI `/v1/files` 文件链路。  
-> Cherry Studio、Open WebUI 等客户端如果通过标准 OpenAI Files + `Responses` / Chat 文件块发送 PDF、Markdown、JSON、图片、音频附件，即可经由 Metapi 转发。  
+> 说明：r-api 现在支持标准 OpenAI `/v1/files` 文件链路。
+> Cherry Studio、Open WebUI 等客户端如果通过标准 OpenAI Files + `Responses` / Chat 文件块发送 PDF、Markdown、JSON、图片、音频附件，即可经由 r-api 转发。
 > 如果某个客户端版本仍使用私有附件协议而不是标准 `/v1/files`，则仍需单独适配。
 
 ### Cursor
@@ -89,7 +89,7 @@ Metapi 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需�
 
 | 变量 | 作用 |
 |------|------|
-| `ANTHROPIC_BASE_URL` | 指向 Metapi 的根域名，Claude Code 会自动拼接 `/v1/messages` |
+| `ANTHROPIC_BASE_URL` | 指向 r-api 的根域名，Claude Code 会自动拼接 `/v1/messages` |
 | `ANTHROPIC_API_KEY` | 认证令牌，填 `PROXY_TOKEN` 值 |
 | `ANTHROPIC_AUTH_TOKEN` | 部分版本读取此变量而非 `ANTHROPIC_API_KEY`，建议两个都设 |
 | `CLAUDE_CODE_ATTRIBUTION_HEADER` | 设为 `0` 禁用 Attribution 头，避免部分上游不支持该头导致报错 |
@@ -97,7 +97,7 @@ Metapi 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需�
 
 > [!IMPORTANT]
 > `ANTHROPIC_BASE_URL` 填根域名即可，**不要**手动拼接 `/v1`。
-> 上述变量由 Claude Code 客户端读取，属于客户端行为开关；Metapi 服务端只能处理已经发来的请求。
+> 上述变量由 Claude Code 客户端读取，属于客户端行为开关；r-api 服务端只能处理已经发来的请求。
 
 ### Codex CLI
 
@@ -105,10 +105,10 @@ Metapi 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需�
 
 ```toml
 model = "gpt-5"
-model_provider = "metapi"
+model_provider = "r-api"
 
-[model_providers.metapi]
-name = "metapi"
+[model_providers.r-api]
+name = "r-api"
 base_url = "https://your-domain.com/v1"
 ```
 
@@ -120,7 +120,7 @@ base_url = "https://your-domain.com/v1"
 }
 ```
 
-> 提示：`model` 需要是你在 Metapi `GET /v1/models` 可见的模型名。
+> 提示：`model` 需要是你在 r-api `GET /v1/models` 可见的模型名。
 
 ### Roo Code / Kilo Code
 
@@ -134,7 +134,7 @@ base_url = "https://your-domain.com/v1"
 |--------------|------|
 | 有 "Base URL" 字段，会自动补 `/v1` | 填 `https://your-domain.com` |
 | 有 "OpenAI API URL" 字段，要求完整路径 | 填 `https://your-domain.com/v1` |
-| 有 "Anthropic" 选项 | 填 `https://your-domain.com`，Metapi 自动处理 `/v1/messages` |
+| 有 "Anthropic" 选项 | 填 `https://your-domain.com`，r-api 自动处理 `/v1/messages` |
 | 只能填 API Key | 填 `PROXY_TOKEN` 值即可 |
 
 > [!TIP]
@@ -142,7 +142,7 @@ base_url = "https://your-domain.com/v1"
 
 ## 下游 API Key 策略
 
-除了全局 `PROXY_TOKEN`，你还可以创建多个项目级下游 Key，每个 Key 可独立配置过期时间、费用/请求上限、模型白名单、路由白名单和站点倍率，适用于多团队/多项目共用一个 Metapi 实例的场景。
+除了全局 `PROXY_TOKEN`，你还可以创建多个项目级下游 Key，每个 Key 可独立配置过期时间、费用/请求上限、模型白名单、路由白名单和站点倍率，适用于多团队/多项目共用一个 r-api 实例的场景。
 
 详细字段说明见 [配置说明 → 下游 API Key 策略](./configuration.md#下游-api-key-策略)。
 

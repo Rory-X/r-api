@@ -1,6 +1,6 @@
 # 浏览器凭证扩展
 
-Metapi 提供一个独立的 Chromium/Firefox MV3 扩展参考实现，用于完成 `assisted` 模式的浏览器凭证采集。扩展是浏览器凭证任务协议的客户端，不是第二套凭证中心，也不接管 Coding Agent 登录。
+r-api 提供一个独立的 Chromium/Firefox MV3 扩展参考实现，用于完成 `assisted` 模式的浏览器凭证采集。扩展是浏览器凭证任务协议的客户端，不是第二套凭证中心，也不接管 Coding Agent 登录。
 
 ## 构建与加载
 
@@ -12,9 +12,9 @@ npm run build:browser-extension
 
 ## 使用流程
 
-1. 在 Metapi WebUI 的“浏览器凭证”页面创建任务并复制一次性凭证采集链接。
+1. 在 r-api WebUI 的“浏览器凭证”页面创建任务并复制一次性凭证采集链接。
 2. 在浏览器打开凭证采集链接。页面不会自动领取任务，以便扩展从当前标签页安全接管；没有扩展时可以明确选择手动填写。
-3. 打开扩展弹窗并领取当前任务。扩展向 Metapi 公共凭证任务路由提交一次性任务令牌，换取短期 claim token。
+3. 打开扩展弹窗并领取当前任务。扩展向 r-api 公共凭证任务路由提交一次性任务令牌，换取短期 claim token。
 4. 打开目标站点，完成用户主动登录或站点要求的交互，再点击“采集声明字段”。
 5. 扩展只按任务快照中的 `capture` 描述读取目标 Origin 的 Cookie、`localStorage` 或 `sessionStorage` 字段；确认后提交到完成路由，服务端在同一事务中写入加密 Vault。
 6. Vault 条目默认只是“已保存的候选凭证”，不会未经验证直接进入代理路由。管理员选择目标账号后调用启用动作，服务端按站点适配器声明的 `browser.runtime` 提取运行时会话，验证成功后更新账号、同步模型并重建路由。
@@ -36,7 +36,7 @@ npm run build:browser-extension
 ## 权限与秘密处理
 
 - 只声明 `activeTab`、`scripting`、`storage`、`tabs`；Cookie 权限和目标 Origin 权限在用户点击操作时按精确 Origin 请求。
-- 远端 Metapi 服务必须使用 HTTPS；仅 `localhost`、`127.0.0.1` 和 `::1` 允许 HTTP。
+- 远端 r-api 服务必须使用 HTTPS；仅 `localhost`、`127.0.0.1` 和 `::1` 允许 HTTP。
 - 扩展临时保存任务 claim token 以支持 Service Worker 重启；不保存采集字段、Cookie 或长期凭证。
 - 采集结果只在弹窗内存中保留，提交后立即清除任务状态；服务端只保存加密 Vault ciphertext 和非敏感元数据。
 - 不读取完整浏览器 Profile、密码管理器、通配 Storage，也不发送推理请求做测活。

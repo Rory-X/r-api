@@ -1,14 +1,14 @@
 # Contributing / 贡献指南
 
-Thank you for your interest in contributing to Metapi! / 感谢您对 Metapi 项目的贡献！
+Thank you for your interest in contributing to r-api! / 感谢您对 r-api 项目的贡献！
 
-Metapi is a meta-aggregation layer for AI API platforms (New API, One API, OneHub, etc.), providing unified proxy, intelligent routing, and centralized management.
+r-api is a meta-aggregation layer for AI API platforms (New API, One API, OneHub, etc.), providing unified proxy, intelligent routing, and centralized management.
 
-Metapi 是 AI API 聚合平台（New API、One API、OneHub 等）的元聚合层，提供统一代理、智能路由和集中管理。
+r-api 是 AI API 聚合平台（New API、One API、OneHub 等）的元聚合层，提供统一代理、智能路由和集中管理。
 
 ## Before You Start / 开始之前
 
-- Check existing [Issues](https://github.com/cita-777/metapi/issues) and [Pull Requests](https://github.com/cita-777/metapi/pulls) to avoid duplicates. / 检查现有的 [Issues](https://github.com/cita-777/metapi/issues) 和 [Pull Requests](https://github.com/cita-777/metapi/pulls) 以避免重复。
+- Check existing [Issues](https://github.com/Rory-X/r-api/issues) and [Pull Requests](https://github.com/Rory-X/r-api/pulls) to avoid duplicates. / 检查现有的 [Issues](https://github.com/Rory-X/r-api/issues) 和 [Pull Requests](https://github.com/Rory-X/r-api/pulls) 以避免重复。
 - For major changes, open an issue first to discuss your proposal. / 对于重大更改，请先开启 issue 讨论您的提案。
 - Read our [Code of Conduct](CODE_OF_CONDUCT.md). / 阅读我们的[行为准则](CODE_OF_CONDUCT.md)。
 
@@ -24,8 +24,8 @@ Metapi 是 AI API 聚合平台（New API、One API、OneHub 等）的元聚合�
 1. **Fork and clone the repository** / **Fork 并克隆仓库**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/metapi.git
-cd metapi
+git clone https://github.com/YOUR_USERNAME/r-api.git
+cd r-api
 ```
 
 2. **Install dependencies** / **安装依赖**
@@ -117,7 +117,7 @@ npm run schema:generate  # Generate schema artifacts / 生成 schema 构件
 ## Project Structure / 项目结构
 
 ```
-metapi/
+r-api/
 ├── src/
 │   ├── server/          # Backend (Fastify) / 后端（Fastify）
 │   │   ├── routes/      # API routes / API 路由
@@ -214,8 +214,8 @@ If you're adding support for a new AI API platform / 如果您要添加对新 AI
 ## Getting Help / 获取帮助
 
 - 📖 [Documentation](https://metapi.cita777.me) / [文档](https://metapi.cita777.me)
-- 💬 [GitHub Discussions](https://github.com/cita-777/metapi/discussions) / [GitHub 讨论区](https://github.com/cita-777/metapi/discussions)
-- 🐛 [Issue Tracker](https://github.com/cita-777/metapi/issues) / [Issue 跟踪](https://github.com/cita-777/metapi/issues)
+- 💬 [GitHub Discussions](https://github.com/Rory-X/r-api/discussions) / [GitHub 讨论区](https://github.com/Rory-X/r-api/discussions)
+- 🐛 [Issue Tracker](https://github.com/Rory-X/r-api/issues) / [Issue 跟踪](https://github.com/Rory-X/r-api/issues)
 
 ## License / 许可证
 
