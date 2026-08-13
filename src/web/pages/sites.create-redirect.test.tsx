@@ -76,7 +76,7 @@ async function createSiteAndClickModalChoice(
             <Routes>
               <Route path="/sites" element={<Sites />} />
               <Route path="/channels/connections" element={<LocationProbe />} />
-              <Route path="/channels/oauth" element={<LocationProbe />} />
+              <Route path="/official-credentials" element={<LocationProbe />} />
             </Routes>
           </MemoryRouter>
         </ToastProvider>,
@@ -180,18 +180,18 @@ describe('Sites create redirect', () => {
   it('shows modal after creating a codex site and allows choosing later', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 23, name: 'Demo Site', platform: 'codex' }, 'later');
 
-    // User chose "later", so should stay on sites page (no navigation to accounts or oauth)
-    expect(rendered).not.toContain('/channels/oauth?');
+    // User chose "later", so should stay on sites page.
+    expect(rendered).not.toContain('/official-credentials?');
     expect(rendered).not.toContain('/channels/connections?');
   });
 
-  it('shows modal after creating a codex site and navigates to OAuth when user chooses session', async () => {
+  it('opens the independent official credential pool without carrying site ownership', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 24, name: 'Demo Site', platform: 'codex' }, 'session');
 
-    expect(rendered).toContain('/channels/oauth?');
+    expect(rendered).toContain('/official-credentials?');
     expect(rendered).toContain('provider=codex');
     expect(rendered).toContain('create=1');
-    expect(rendered).toContain('siteId=24');
+    expect(rendered).not.toContain('siteId=24');
   });
 
   it('opens a site Key list and keeps the add entry inside the modal', async () => {

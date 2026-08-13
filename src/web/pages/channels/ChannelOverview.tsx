@@ -49,13 +49,6 @@ type ConnectionRow = {
   username?: string | null;
 };
 
-type OAuthConnectionRow = {
-  accountId: number;
-  siteId: number;
-  provider: string;
-  status: string;
-};
-
 type VaultRow = {
   id: number;
   siteId?: number | null;
@@ -65,7 +58,6 @@ type VaultRow = {
 type ChannelSummary = SiteRow & {
   connectionCount: number;
   activeConnectionCount: number;
-  oauthCount: number;
   vaultCount: number;
 };
 
@@ -132,22 +124,19 @@ export default function ChannelOverview() {
   const toast = useToast();
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
-  const [oauthConnections, setOauthConnections] = useState<OAuthConnectionRow[]>([]);
   const [vaultItems, setVaultItems] = useState<VaultRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [siteRows, accountRows, oauthResponse, vaultResponse] = await Promise.all([
+      const [siteRows, accountRows, vaultResponse] = await Promise.all([
         api.getSites(),
         api.getAccounts(),
-        api.getOAuthConnections({ limit: 200 }),
         api.getCredentialVaultItems(),
       ]);
       setSites(Array.isArray(siteRows) ? siteRows : []);
       setConnections(Array.isArray(accountRows) ? accountRows : []);
-      setOauthConnections(Array.isArray(oauthResponse?.items) ? oauthResponse.items : []);
       setVaultItems(Array.isArray(vaultResponse?.items) ? vaultResponse.items : []);
     } catch (error: any) {
       toast.error(error?.message || tr('加载渠道概览失败'));
@@ -167,25 +156,22 @@ export default function ChannelOverview() {
 
   const summaries = useMemo<ChannelSummary[]>(() => sites.map((site) => {
     const siteConnections = ordinaryConnections.filter((item) => Number(item.siteId) === site.id);
-    const siteOauth = oauthConnections.filter((item) => Number(item.siteId) === site.id);
     const siteVault = vaultItems.filter((item) => Number(item.siteId) === site.id);
     return {
       ...site,
       connectionCount: siteConnections.length,
       activeConnectionCount: siteConnections.filter((item) => normalizeStatus(item.status) === 'active').length,
-      oauthCount: siteOauth.length,
       vaultCount: siteVault.length,
     };
-  }), [oauthConnections, ordinaryConnections, sites, vaultItems]);
+  }), [ordinaryConnections, sites, vaultItems]);
 
   const totals = useMemo(() => ({
     sites: sites.length,
     connections: ordinaryConnections.length,
-    oauth: oauthConnections.length,
     credentials: vaultItems.filter((item) => (
       item.siteId != null && normalizeStatus(item.status) === 'active'
     )).length,
-  }), [oauthConnections.length, ordinaryConnections.length, sites.length, vaultItems]);
+  }), [ordinaryConnections.length, sites.length, vaultItems]);
 
   if (loading) {
     return (
@@ -206,7 +192,6 @@ export default function ChannelOverview() {
           </div>
         </div>
         <div className="page-actions">
-          <button className="btn btn-ghost" onClick={() => navigate(resolveChannelPath(location.pathname, 'oauth'))}>{tr('添加 OAuth')}</button>
           <button className="btn btn-primary" onClick={() => navigate(`${resolveChannelPath(location.pathname, 'sites')}?create=1`)}>{tr('添加上游渠道')}</button>
         </div>
       </div>
@@ -214,14 +199,13 @@ export default function ChannelOverview() {
       <div className="channel-summary-strip">
         <div className="channel-summary-metric"><strong>{totals.sites}</strong><span>{tr('个上游站点')}</span></div>
         <div className="channel-summary-metric"><strong>{totals.connections}</strong><span>{tr('个普通连接')}</span></div>
-        <div className="channel-summary-metric"><strong>{totals.oauth}</strong><span>{tr('个 OAuth 连接')}</span></div>
         <div className="channel-summary-metric"><strong>{totals.credentials}</strong><span>{tr('个渠道凭证')}</span></div>
       </div>
 
       {summaries.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-title">{tr('还没有上游渠道')}</div>
-          <div className="empty-state-description">{tr('先添加一个站点，再在渠道管理中选择账号、API Key 或 OAuth 接入方式。')}</div>
+          <div className="empty-state-description">{tr('先添加一个站点，再在渠道管理中选择账号、API Key 或浏览器凭证接入方式。')}</div>
           <button className="btn btn-primary" onClick={() => navigate(`${resolveChannelPath(location.pathname, 'sites')}?create=1`)}>{tr('添加第一个渠道')}</button>
         </div>
       ) : (
@@ -232,7 +216,6 @@ export default function ChannelOverview() {
                 <th>{tr('渠道')}</th>
                 <th>{tr('平台')}</th>
                 <th>{tr('连接')}</th>
-                <th>OAuth</th>
                 <th>{tr('凭证')}</th>
                 <th>{tr('状态')}</th>
                 <th style={{ textAlign: 'right' }}>{tr('操作')}</th>
@@ -255,7 +238,6 @@ export default function ChannelOverview() {
                     </td>
                     <td><span className="badge badge-muted">{platformLabel(channel.platform)}</span></td>
                     <td>{channel.activeConnectionCount}/{channel.connectionCount}<span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}> {tr('活跃')}</span></td>
-                    <td>{channel.oauthCount}</td>
                     <td>{channel.vaultCount}</td>
                     <td>
                       <span className={`badge ${disabled ? 'badge-warning' : runtimeHealth?.state === 'open' || coolingEndpoint ? 'badge-error' : runtimeHealth?.state === 'recovering' ? 'badge-warning' : 'badge-success'}`}>

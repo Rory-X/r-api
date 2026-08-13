@@ -42,7 +42,7 @@ const Models = lazy(() => import('./pages/Models.js'));
 const About = lazy(() => import('./pages/About.js'));
 const ModelTester = lazy(() => import('./pages/ModelTester.js'));
 const Monitors = lazy(() => import('./pages/Monitors.js'));
-const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));
+const OfficialCredentialPool = lazy(() => import('./pages/OAuthManagement.js'));
 const SiteAnnouncements = lazy(() => import('./pages/SiteAnnouncements.js'));
 const CredentialVault = lazy(() => import('./pages/CredentialVault.js'));
 const BrowserRecoveryTasks = lazy(() => import('./pages/BrowserRecoveryTasks.js'));
@@ -495,6 +495,7 @@ export const sidebarGroups = [
     label: '接入管理',
     items: [
       { to: '/channels', label: '渠道管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
+      { to: '/official-credentials', label: '官方凭证池', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 5.5h10A2.5 2.5 0 0119.5 8v8A2.5 2.5 0 0117 18.5H7A2.5 2.5 0 014.5 16V8A2.5 2.5 0 017 5.5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 10h8M8 14h5M9 5.5V4m6 1.5V4" /></svg> },
       { to: '/site-announcements', label: '站点公告', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
       { to: '/local-connector', label: '本地 Connector', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h8M8 17h8M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6" /></svg> },
     ],
@@ -513,7 +514,7 @@ export const sidebarGroups = [
     label: '系统与安全',
     items: [
       { to: '/settings', label: '设置', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-      { to: '/settings/credentials', label: '凭证中心', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 3l7 4v5c0 4.5-2.7 7.7-7 9-4.3-1.3-7-4.5-7-9V7l7-4z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9.5 12l1.7 1.7 3.5-3.7" /></svg> },
+      { to: '/settings/credentials', label: '安全凭证库', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 3l7 4v5c0 4.5-2.7 7.7-7 9-4.3-1.3-7-4.5-7-9V7l7-4z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9.5 12l1.7 1.7 3.5-3.7" /></svg> },
       { to: '/events', label: '程序日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
       { to: '/settings/import-export', label: '导入/导出', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 7h10M7 12h6m-6 5h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" /></svg> },
       { to: '/settings/notify', label: '通知设置', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg> },
@@ -547,7 +548,7 @@ function PreservingRedirect({ pathname }: { pathname: string }) {
   );
 }
 
-function LegacyChannelRedirect({ section }: { section: 'sites' | 'connections' | 'oauth' | 'recovery' }) {
+function LegacyChannelRedirect({ section }: { section: 'sites' | 'connections' | 'recovery' }) {
   return <PreservingRedirect pathname={`/channels/${section}`} />;
 }
 
@@ -1013,14 +1014,15 @@ function AppShell() {
                 <Route path="/channels" element={<ChannelManagement />}>
                   <Route path="sites" element={<Sites />} />
                   <Route path="connections" element={<Accounts />} />
-                  <Route path="oauth" element={<OAuthManagement />} />
+                  <Route path="oauth" element={<PreservingRedirect pathname="/official-credentials" />} />
                   <Route path="credentials" element={<PreservingRedirect pathname="/settings/credentials" />} />
                   <Route path="recovery" element={<BrowserRecoveryTasks />} />
                 </Route>
                 <Route path="/sites" element={<LegacyChannelRedirect section="sites" />} />
                 <Route path="/site-announcements" element={<SiteAnnouncements />} />
                 <Route path="/accounts" element={<LegacyChannelRedirect section="connections" />} />
-                <Route path="/oauth" element={<LegacyChannelRedirect section="oauth" />} />
+                <Route path="/oauth" element={<PreservingRedirect pathname="/official-credentials" />} />
+                <Route path="/official-credentials" element={<OfficialCredentialPool />} />
                 <Route path="/credential-vault" element={<PreservingRedirect pathname="/settings/credentials" />} />
                 <Route path="/browser-recovery-tasks" element={<LegacyChannelRedirect section="recovery" />} />
                 <Route path="/local-connector" element={<LocalConnector />} />

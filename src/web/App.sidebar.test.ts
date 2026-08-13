@@ -22,7 +22,7 @@ describe('App sidebar config', () => {
     expect(systemGroupIndex).toBeGreaterThan(downstreamIndex);
   });
 
-  it('places the credential center under 系统与安全 and redirects old channel URLs', () => {
+  it('keeps the official pool independent and places the safety vault under 系统与安全', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
     const accessGroupIndex = source.indexOf("label: '接入管理'");
     const runtimeGroupIndex = source.indexOf("label: '路由与运行'");
@@ -30,8 +30,9 @@ describe('App sidebar config', () => {
     const accessGroup = source.slice(accessGroupIndex, runtimeGroupIndex);
     const systemGroup = source.slice(systemGroupIndex, source.indexOf('];', systemGroupIndex));
 
-    expect(accessGroup).not.toContain("label: '凭证中心'");
-    expect(systemGroup).toContain("{ to: '/settings/credentials', label: '凭证中心'");
+    expect(accessGroup).toContain("{ to: '/official-credentials', label: '官方凭证池'");
+    expect(accessGroup).not.toContain("label: '安全凭证库'");
+    expect(systemGroup).toContain("{ to: '/settings/credentials', label: '安全凭证库'");
     expect(source).toContain('<Route path="/settings/credentials" element={<CredentialVault />} />');
     expect(source).toContain('<Route path="credentials" element={<PreservingRedirect pathname="/settings/credentials" />} />');
     expect(source).toContain('<Route path="/credential-vault" element={<PreservingRedirect pathname="/settings/credentials" />} />');
@@ -67,7 +68,8 @@ describe('App sidebar config', () => {
     expect(source).toContain('function LegacyChannelRedirect');
     expect(source).toContain('<Route path="/sites" element={<LegacyChannelRedirect section="sites" />} />');
     expect(source).toContain('<Route path="/accounts" element={<LegacyChannelRedirect section="connections" />} />');
-    expect(source).toContain('<Route path="/oauth" element={<LegacyChannelRedirect section="oauth" />} />');
+    expect(source).toContain('<Route path="/oauth" element={<PreservingRedirect pathname="/official-credentials" />} />');
+    expect(source).toContain('<Route path="/official-credentials" element={<OfficialCredentialPool />} />');
     expect(runtimeGroupIndex).toBeGreaterThan(accessGroupIndex);
   });
 
@@ -78,7 +80,8 @@ describe('App sidebar config', () => {
     expect(source).toContain('<Route path="/channels" element={<ChannelManagement />}>');
     expect(source).toContain('<Route path="sites" element={<Sites />} />');
     expect(source).toContain('<Route path="connections" element={<Accounts />} />');
-    expect(source).toContain('<Route path="oauth" element={<OAuthManagement />} />');
+    expect(source).toContain('<Route path="oauth" element={<PreservingRedirect pathname="/official-credentials" />} />');
+    expect(source).not.toContain('<Route path="oauth" element={<OfficialCredentialPool />} />');
     expect(source).not.toContain('<Route path="credentials" element={<CredentialVault />} />');
     expect(source).toContain('<Route path="credentials" element={<PreservingRedirect pathname="/settings/credentials" />} />');
     expect(source).toContain('<Route path="recovery" element={<BrowserRecoveryTasks />} />');

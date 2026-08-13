@@ -484,34 +484,6 @@ export default function Settings() {
     return () => globalThis.clearInterval(timer);
   }, [factoryResetOpen]);
 
-  useEffect(() => {
-    if (
-      typeof window === 'undefined'
-      || typeof document === 'undefined'
-      || typeof IntersectionObserver === 'undefined'
-    ) return undefined;
-    const sections = SETTINGS_SECTIONS
-      .map((section) => document.getElementById(`settings-${section.key}`))
-      .filter((section): section is HTMLElement => Boolean(section));
-    const observer = new IntersectionObserver((entries) => {
-      const visibleSection = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
-      const sectionKey = visibleSection?.target.getAttribute('data-settings-section') as SettingsSectionKey | null;
-      if (sectionKey) setActiveSettingsSection(sectionKey);
-    }, {
-      rootMargin: '-96px 0px -62% 0px',
-      threshold: [0.05, 0.25, 0.5],
-    });
-    sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
-  }, [loading]);
-
-  const jumpToSettingsSection = (sectionKey: SettingsSectionKey) => {
-    setActiveSettingsSection(sectionKey);
-    document.getElementById(`settings-${sectionKey}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   const inputStyle: React.CSSProperties = {
     width: '100%',
     padding: '10px 14px',
@@ -1300,37 +1272,50 @@ export default function Settings() {
       <div className="page-header">
         <div>
           <h2 className="page-title">系统设置</h2>
-          <p className="page-subtitle">按配置类型快速定位系统能力；每项设置仍在各自区域独立保存。</p>
+          <p className="page-subtitle">从左侧选择配置分类，在右侧查看并保存对应设置。</p>
         </div>
       </div>
 
-      <nav className="settings-main-nav" aria-label="系统设置分类导航">
-        {SETTINGS_SECTIONS.map((section, index) => (
-          <button
-            key={section.key}
-            type="button"
-            className={`settings-main-nav-item${activeSettingsSection === section.key ? ' active' : ''}`}
-            aria-current={activeSettingsSection === section.key ? 'location' : undefined}
-            onClick={() => jumpToSettingsSection(section.key)}
-          >
-            <span className="settings-main-nav-index">{String(index + 1).padStart(2, '0')}</span>
-            <span className="settings-main-nav-copy">
-              <strong>{section.label}</strong>
-              <small>{section.summary}</small>
-            </span>
-            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-              <path d="m6 3.75 4.25 4.25L6 12.25" />
-            </svg>
-          </button>
-        ))}
-      </nav>
+      <div className="settings-workspace">
+        <nav
+          className="settings-main-nav"
+          aria-label="系统设置分类导航"
+          role="tablist"
+          aria-orientation="vertical"
+        >
+          <div className="settings-main-nav-heading" aria-hidden="true">
+            <strong>设置分类</strong>
+            <small>选择分类查看对应配置</small>
+          </div>
+          {SETTINGS_SECTIONS.map((section, index) => (
+            <button
+              key={section.key}
+              id={`settings-tab-${section.key}`}
+              type="button"
+              role="tab"
+              className={`settings-main-nav-item${activeSettingsSection === section.key ? ' active' : ''}`}
+              aria-selected={activeSettingsSection === section.key}
+              aria-controls={`settings-${section.key}`}
+              tabIndex={activeSettingsSection === section.key ? 0 : -1}
+              onClick={() => setActiveSettingsSection(section.key)}
+            >
+              <span className="settings-main-nav-index">{String(index + 1).padStart(2, '0')}</span>
+              <span className="settings-main-nav-copy">
+                <strong>{section.label}</strong>
+                <small>{section.summary}</small>
+              </span>
+            </button>
+          ))}
+        </nav>
 
-      <div className="management-page-stack settings-category-stack">
+        <div className="management-page-stack settings-category-stack settings-tab-content">
         <section
           id="settings-security"
           className="settings-category"
           data-settings-section="security"
-          aria-labelledby="settings-security-title"
+          role="tabpanel"
+          aria-labelledby="settings-tab-security"
+          hidden={activeSettingsSection !== 'security'}
         >
           <SettingsCategoryHeading sectionKey="security" itemCount={2} />
           <div className="settings-category-cards">
@@ -1420,7 +1405,9 @@ export default function Settings() {
           id="settings-automation"
           className="settings-category"
           data-settings-section="automation"
-          aria-labelledby="settings-automation-title"
+          role="tabpanel"
+          aria-labelledby="settings-tab-automation"
+          hidden={activeSettingsSection !== 'automation'}
         >
           <SettingsCategoryHeading sectionKey="automation" itemCount={1} />
           <div className="settings-category-cards">
@@ -1631,7 +1618,9 @@ export default function Settings() {
           id="settings-network"
           className="settings-category"
           data-settings-section="network"
-          aria-labelledby="settings-network-title"
+          role="tabpanel"
+          aria-labelledby="settings-tab-network"
+          hidden={activeSettingsSection !== 'network'}
         >
           <SettingsCategoryHeading sectionKey="network" itemCount={2} />
           <div className="settings-category-cards">
@@ -1715,7 +1704,9 @@ export default function Settings() {
           id="settings-ai-routing"
           className="settings-category"
           data-settings-section="ai-routing"
-          aria-labelledby="settings-ai-routing-title"
+          role="tabpanel"
+          aria-labelledby="settings-tab-ai-routing"
+          hidden={activeSettingsSection !== 'ai-routing'}
         >
           <SettingsCategoryHeading sectionKey="ai-routing" itemCount={6} />
           <div className="settings-category-cards">
@@ -2315,7 +2306,9 @@ export default function Settings() {
           id="settings-data-system"
           className="settings-category"
           data-settings-section="data-system"
-          aria-labelledby="settings-data-system-title"
+          role="tabpanel"
+          aria-labelledby="settings-tab-data-system"
+          hidden={activeSettingsSection !== 'data-system'}
         >
           <SettingsCategoryHeading sectionKey="data-system" itemCount={4} />
           <div className="settings-category-cards">
@@ -2518,6 +2511,7 @@ export default function Settings() {
         </div>
           </div>
         </section>
+        </div>
       </div>
       <FactoryResetModal
         presence={factoryResetPresence}

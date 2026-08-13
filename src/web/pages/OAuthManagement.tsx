@@ -9,12 +9,12 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import CenteredModal from '../components/CenteredModal.js';
 import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
-import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { BrandGlyph } from '../components/BrandIcon.js';
 import { useToast } from '../components/Toast.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -46,7 +46,14 @@ type DrawerIntent =
   | { mode: 'rebind'; account: OAuthConnectionInfo }
   | { mode: 'proxy'; account: OAuthConnectionInfo };
 
-type ColumnKey = 'identity' | 'site' | 'status' | 'quota' | 'proxy';
+type ColumnKey = 'identity' | 'subscription' | 'status' | 'quota' | 'proxy';
+type PoolViewMode = 'cards' | 'table';
+type SchedulingFilter = '' | 'ready' | 'cooldown' | 'blocked' | 'unrouted';
+type PoolAccessModalState = {
+  open: boolean;
+  accountIds: number[];
+  confirmSecrets: boolean;
+};
 
 type OAuthImportFileLike = {
   name?: string;
@@ -117,7 +124,7 @@ type SessionFeedback = {
 
 const COLUMN_OPTIONS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'identity', label: '账号 / Provider' },
-  { key: 'site', label: '站点' },
+  { key: 'subscription', label: '订阅 / 计划' },
   { key: 'status', label: '运行状态' },
   { key: 'quota', label: 'Usage / Quota' },
   { key: 'proxy', label: '代理 / 项目' },
@@ -229,7 +236,8 @@ function resolveImportPreviewExpiryLabel(value: unknown): string | undefined {
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error('expired 时间格式无效');
   }
-  return new Date(parsed).toLocaleString();
+  const millis = parsed > 1_000_000_000_000 ? parsed : parsed * 1000;
+  return new Date(millis).toLocaleString();
 }
 
 function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview {
@@ -271,18 +279,36 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
 
   const payload = parsed as Record<string, unknown>;
   const type = asTrimmedString(typeof payload.type === 'string' ? payload.type : '');
-  if (
-    type === 'sub2api-data'
-    || type === 'sub2api-bundle'
-    || 'accounts' in payload
-    || 'proxies' in payload
-    || 'version' in payload
-    || 'exported_at' in payload
-  ) {
+  if ((type === 'sub2api-data' || type === 'sub2api-bundle') && Array.isArray(payload.accounts)) {
+    const oauthAccounts = payload.accounts.filter((item) => (
+      !!item
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && asTrimmedString(typeof (item as Record<string, unknown>).type === 'string'
+        ? (item as Record<string, unknown>).type as string
+        : '').toLowerCase() === 'oauth'
+    ));
+    if (oauthAccounts.length <= 0) {
+      return {
+        sourceName: source.sourceName,
+        valid: false,
+        error: 'Sub2API 包中没有可导入的官方 OAuth 账号',
+      };
+    }
+    return {
+      sourceName: source.sourceName,
+      valid: true,
+      providerLabel: `Sub2API / Cockpit 包 · ${oauthAccounts.length} 个 OAuth`,
+      accountKey: `${oauthAccounts.length} 个官方账号`,
+      parsedData: payload,
+    };
+  }
+
+  if ('accounts' in payload || 'proxies' in payload || 'version' in payload || 'exported_at' in payload) {
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: '这是旧的 sub2api 导出格式',
+      error: '无法识别该批量凭证包格式',
     };
   }
 
@@ -336,7 +362,7 @@ function resolveConnectionPrimaryTitle(connection: OAuthConnectionInfo): string 
     || asTrimmedString(connection.email)
     || asTrimmedString(connection.accountKey)
     || asTrimmedString(connection.provider)
-    || 'OAuth 连接';
+    || '官方凭证';
 }
 
 function resolveConnectionEmailLabel(connection: OAuthConnectionInfo): string {
@@ -345,6 +371,61 @@ function resolveConnectionEmailLabel(connection: OAuthConnectionInfo): string {
 
 function resolveConnectionStatusLabel(status?: string): string {
   return status === 'abnormal' ? '异常' : '正常';
+}
+
+function resolveSchedulingState(connection: OAuthConnectionInfo): NonNullable<OAuthConnectionInfo['scheduling']>['state'] {
+  if (connection.scheduling?.state) return connection.scheduling.state;
+  if (connection.status === 'abnormal') return 'blocked';
+  return (connection.routeChannelCount || 0) > 0 ? 'ready' : 'unrouted';
+}
+
+function resolveSchedulingLabel(connection: OAuthConnectionInfo): string {
+  const state = resolveSchedulingState(connection);
+  if (state === 'cooldown') return '冷却中';
+  if (state === 'blocked') return '已阻断';
+  if (state === 'unrouted') return '未生成路由';
+  return '可调度';
+}
+
+function resolveSchedulingDetail(connection: OAuthConnectionInfo): string {
+  const scheduling = connection.scheduling;
+  const participation = resolveConnectionRouteParticipation(connection);
+  if (resolveSchedulingState(connection) === 'cooldown' && scheduling?.cooldownUntil) {
+    return `冷却剩余 ${formatResetLabel(scheduling.cooldownUntil)}`;
+  }
+  if (resolveSchedulingState(connection) === 'blocked') {
+    return resolveModelSyncDetail(connection) || '凭证或模型状态阻止调度';
+  }
+  if (resolveSchedulingState(connection) === 'unrouted') {
+    return connection.modelCount > 0 ? '等待生成 2API 路由' : '等待模型发现';
+  }
+  if (participation.kind === 'route_unit') {
+    return `${participation.name} · ${resolveRouteUnitStrategyLabel(participation.strategy)}`;
+  }
+  return '作为单体供给参与路由';
+}
+
+function resolveSubscriptionPlan(connection: OAuthConnectionInfo): string {
+  return asTrimmedString(connection.quota?.subscription?.planType)
+    || asTrimmedString(connection.planType)
+    || '未识别计划';
+}
+
+function resolveSubscriptionExpiry(connection: OAuthConnectionInfo): string {
+  const value = asTrimmedString(connection.quota?.subscription?.activeUntil);
+  if (!value) return '有效期未公开';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  if (date.getTime() <= Date.now()) return '订阅已到期';
+  return `有效至 ${date.toLocaleDateString()}`;
+}
+
+function resolveProviderModel(provider: string): string {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === 'codex' || normalized === 'openai') return 'gpt-5';
+  if (normalized === 'claude' || normalized === 'anthropic') return 'claude';
+  if (normalized === 'gemini-cli' || normalized === 'gemini') return 'gemini';
+  return provider;
 }
 
 function resolveQuotaStatusLabel(status?: OAuthQuotaInfo['status']): string {
@@ -518,6 +599,26 @@ function renderCodeBlock(value: string) {
   );
 }
 
+function downloadJson(value: unknown, filename: string) {
+  if (typeof document === 'undefined' || typeof URL.createObjectURL !== 'function') return;
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function resolveNewApiBaseUrl(): string {
+  const origin = typeof window !== 'undefined'
+    ? asTrimmedString(window.location?.origin)
+    : '';
+  return origin ? `${origin.replace(/\/$/, '')}/v1` : '/v1';
+}
+
 function renderGuideCard(title: string, description: string, children?: ReactNode) {
   return (
     <div className="oauth-guide-card">
@@ -625,6 +726,7 @@ function SideDrawer({
 
 export default function OAuthManagement() {
   const location = useLocation();
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const toast = useToast();
   const createIntentHandledRef = useRef(false);
@@ -638,11 +740,12 @@ export default function OAuthManagement() {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [siteFilter, setSiteFilter] = useState('');
+  const [planFilter, setPlanFilter] = useState('');
+  const [schedulingFilter, setSchedulingFilter] = useState<SchedulingFilter>('');
+  const [viewMode, setViewMode] = useState<PoolViewMode>('cards');
   const [visibleColumns, setVisibleColumns] = useState<Record<ColumnKey, boolean>>({
     identity: true,
-    site: true,
+    subscription: true,
     status: true,
     quota: true,
     proxy: true,
@@ -685,6 +788,11 @@ export default function OAuthManagement() {
     open: false,
     name: '',
     strategy: 'round_robin',
+  });
+  const [poolAccessModal, setPoolAccessModal] = useState<PoolAccessModalState>({
+    open: false,
+    accountIds: [],
+    confirmSecrets: false,
   });
 
   const setSessionMessage = useCallback((
@@ -781,7 +889,7 @@ export default function OAuthManagement() {
       setSelectedProviderKey((current) => current || nextProviders[0]?.provider || '');
     } catch (error: any) {
       console.error('failed to load oauth management data', error);
-      setSessionError(error?.message || 'OAuth 管理数据加载失败');
+      setSessionError(error?.message || '官方凭证池数据加载失败');
     } finally {
       setLoaded(true);
     }
@@ -802,7 +910,7 @@ export default function OAuthManagement() {
       setAutoRefreshCountdown((current) => {
         if (current <= 1) {
           void loadConnections().catch((error: any) => {
-            setSessionError(error?.message || 'OAuth 连接列表刷新失败');
+            setSessionError(error?.message || '官方凭证列表刷新失败');
           });
           return autoRefreshSeconds;
         }
@@ -824,7 +932,7 @@ export default function OAuthManagement() {
     setSelectedProviderKey(provider);
     setDrawerProjectId('');
     setDrawerOpen(true);
-    setSessionInfo('从建站流程跳转到 OAuth 管理，请在这里完成授权。');
+    setSessionInfo('已进入独立的官方凭证池，请在这里完成官方账号授权。');
   }, [loaded, location.search, providers]);
 
   useEffect(() => {
@@ -900,38 +1008,52 @@ export default function OAuthManagement() {
     [providers, selectedProviderKey],
   );
 
-  const siteOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    connections.forEach((connection) => {
-      const id = String(connection.site?.id || '');
-      const label = asTrimmedString(connection.site?.name) || asTrimmedString(connection.site?.url);
-      if (id && label && !seen.has(id)) {
-        seen.set(id, label);
-      }
-    });
-    return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+  const planOptions = useMemo(() => {
+    const plans = new Set(connections.map(resolveSubscriptionPlan).filter(Boolean));
+    return Array.from(plans).sort().map((plan) => ({ value: plan, label: plan }));
   }, [connections]);
 
   const filteredConnections = useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
     return connections.filter((connection) => {
       if (providerFilter && connection.provider !== providerFilter) return false;
-      if (statusFilter && connection.status !== statusFilter) return false;
-      if (siteFilter && String(connection.site?.id || '') !== siteFilter) return false;
+      if (planFilter && resolveSubscriptionPlan(connection) !== planFilter) return false;
+      if (schedulingFilter && resolveSchedulingState(connection) !== schedulingFilter) return false;
       if (!search) return true;
       const haystack = [
         resolveConnectionPrimaryTitle(connection),
         resolveConnectionEmailLabel(connection),
         connection.provider,
-        connection.site?.name,
-        connection.site?.url,
+        resolveSubscriptionPlan(connection),
+        resolveSchedulingLabel(connection),
         connection.accountKey,
         connection.projectId,
         connection.modelsPreview.join(' '),
       ].join(' ').toLowerCase();
       return haystack.includes(search);
     });
-  }, [connections, providerFilter, searchQuery, siteFilter, statusFilter]);
+  }, [connections, planFilter, providerFilter, schedulingFilter, searchQuery]);
+
+  const poolSummary = useMemo(() => {
+    const routeUnitIds = new Set<number>();
+    let ready = 0;
+    let cooling = 0;
+    let attention = 0;
+    let routed = 0;
+    for (const connection of connections) {
+      const state = resolveSchedulingState(connection);
+      if (state === 'ready') ready += 1;
+      if (state === 'cooldown') cooling += 1;
+      if (state === 'blocked' || state === 'unrouted') attention += 1;
+      if ((connection.scheduling?.enabledRouteCount || connection.routeChannelCount || 0) > 0) routed += 1;
+      const participation = resolveConnectionRouteParticipation(connection);
+      if (participation.kind === 'route_unit') {
+        const id = participation.routeUnitId ?? participation.id;
+        if (id) routeUnitIds.add(id);
+      }
+    }
+    return { total: connections.length, ready, cooling, attention, routed, pools: routeUnitIds.size };
+  }, [connections]);
 
   const allVisibleSelected = filteredConnections.length > 0
     && filteredConnections.every((connection) => selectedConnectionIds.includes(connection.accountId));
@@ -972,11 +1094,9 @@ export default function OAuthManagement() {
     if (selectedConnections.length < 2) return false;
     const first = selectedConnections[0];
     if (!first) return false;
-    const firstSiteId = first.siteId;
     const firstProvider = first.provider;
     return selectedConnections.every((connection) => (
-      connection.siteId === firstSiteId
-      && connection.provider === firstProvider
+      connection.provider === firstProvider
       && resolveConnectionRouteParticipation(connection).kind === 'single'
     ));
   }, [selectedConnections]);
@@ -1192,7 +1312,7 @@ export default function OAuthManagement() {
 
   const handleDelete = async (accountId: number) => {
     if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      const confirmed = window.confirm('确定要删除这个 OAuth 连接吗？');
+      const confirmed = window.confirm('确定要删除这个官方凭证吗？');
       if (!confirmed) return;
     }
     const actionKey = `delete:${accountId}`;
@@ -1203,7 +1323,7 @@ export default function OAuthManagement() {
       await loadConnections();
       setSelectedConnectionIds((current) => current.filter((id) => id !== accountId));
     } catch (error: any) {
-      setSessionError(error?.message || '删除 OAuth 连接失败');
+      setSessionError(error?.message || '删除官方凭证失败');
     } finally {
       setActionLoadingKey('');
     }
@@ -1212,7 +1332,7 @@ export default function OAuthManagement() {
   const handleDeleteSelected = async () => {
     if (selectedConnectionIds.length === 0) return;
     if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      const confirmed = window.confirm(`确定要删除选中的 ${selectedConnectionIds.length} 个 OAuth 连接吗？`);
+      const confirmed = window.confirm(`确定要删除选中的 ${selectedConnectionIds.length} 个官方凭证吗？`);
       if (!confirmed) return;
     }
     setActionLoadingKey('delete:selected');
@@ -1224,7 +1344,7 @@ export default function OAuthManagement() {
       if (failed > 0) {
         setSessionInfo(`批量删除完成，${failed} 个连接删除失败`);
       } else {
-        setSessionSuccess(`已删除 ${results.length} 个 OAuth 连接`);
+        setSessionSuccess(`已删除 ${results.length} 个官方凭证`);
       }
     } finally {
       setActionLoadingKey('');
@@ -1254,7 +1374,7 @@ export default function OAuthManagement() {
       if (result.failed > 0) {
         setSessionInfo(`批量刷新完成，成功 ${result.refreshed} 个，失败 ${result.failed} 个`);
       } else {
-        setSessionSuccess(`已批量刷新 ${result.refreshed} 个 OAuth 连接`);
+        setSessionSuccess(`已批量刷新 ${result.refreshed} 个官方凭证`);
       }
     } catch (error: any) {
       setSessionError(error?.message || '批量刷新额度失败');
@@ -1400,7 +1520,7 @@ export default function OAuthManagement() {
 
   const handleImport = async () => {
     if (importSources.length <= 0) {
-      setSessionError('请先选择 JSON 文件或粘贴 OAuth 连接 JSON 内容');
+      setSessionError('请先选择 JSON 文件或粘贴官方凭证 JSON 内容');
       return;
     }
     if (!importPreviewSummary?.canImport) {
@@ -1436,7 +1556,7 @@ export default function OAuthManagement() {
       await loadConnections();
       const importMessage = result.failed > 0
         ? `批量导入完成，成功 ${result.imported} 个，失败 ${result.failed} 个`
-        : `已添加 ${result.imported} 个 OAuth 连接`;
+        : `已添加 ${result.imported} 个官方凭证`;
       if (result.failed > 0) {
         toast.info(importMessage);
       } else {
@@ -1454,6 +1574,52 @@ export default function OAuthManagement() {
       setSessionError(message);
     } finally {
       setImporting(false);
+    }
+  };
+
+  const openPoolAccessModal = (accountIds: number[]) => {
+    const normalized = Array.from(new Set(accountIds.filter((id) => id > 0)));
+    if (normalized.length <= 0) {
+      setSessionError('请先选择要接出的官方凭证');
+      return;
+    }
+    setPoolAccessModal({ open: true, accountIds: normalized, confirmSecrets: false });
+  };
+
+  const closePoolAccessModal = () => {
+    setPoolAccessModal((current) => ({ ...current, open: false, confirmSecrets: false }));
+  };
+
+  const handleExportSub2Api = async () => {
+    if (!poolAccessModal.confirmSecrets) return;
+    setActionLoadingKey('export:sub2api');
+    try {
+      const result = await api.exportOAuthConnectionsToSub2Api(
+        poolAccessModal.accountIds,
+        'EXPORT_OFFICIAL_SECRETS',
+      );
+      downloadJson(
+        result.export,
+        `r-api-official-credentials-sub2api-${new Date().toISOString().slice(0, 10)}.json`,
+      );
+      closePoolAccessModal();
+      toast.success(`已导出 ${result.export.accounts.length} 个 Sub2API 官方账号`);
+      setSessionSuccess('Sub2API 凭证包已生成；文件包含可直接使用的明文官方凭证。');
+    } catch (error: any) {
+      const message = error?.message || '导出 Sub2API 凭证包失败';
+      toast.error(message);
+      setSessionError(message);
+    } finally {
+      setActionLoadingKey('');
+    }
+  };
+
+  const handleCopyNewApiBaseUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(resolveNewApiBaseUrl());
+      toast.success('已复制 OpenAI 兼容 Base URL');
+    } catch {
+      toast.error('复制失败，请手动复制 Base URL');
     }
   };
 
@@ -1495,7 +1661,7 @@ export default function OAuthManagement() {
       try {
         await loadConnections();
       } catch {
-        toast.error('OAuth 连接列表刷新失败');
+        toast.error('官方凭证列表刷新失败');
         setSessionError('已创建路由池，但连接列表刷新失败', {
           routeUnit,
         });
@@ -1531,7 +1697,7 @@ export default function OAuthManagement() {
       try {
         await loadConnections();
       } catch {
-        toast.error('OAuth 连接列表刷新失败');
+        toast.error('官方凭证列表刷新失败');
         setSessionError('已拆回单体，但连接列表刷新失败', {
           routeUnit: routeUnitFeedback,
         });
@@ -1577,7 +1743,7 @@ export default function OAuthManagement() {
                 type="text"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="搜索账号 / 邮箱 / 站点 / 项目"
+                placeholder="搜索账号 / 邮箱 / 计划 / 模型"
               />
             </div>
             <div className="oauth-filter-slot">
@@ -1595,26 +1761,28 @@ export default function OAuthManagement() {
             <div className="oauth-filter-slot">
               <ModernSelect
                 size="sm"
-                value={statusFilter}
-                onChange={(value) => setStatusFilter(String(value || ''))}
+                value={planFilter}
+                onChange={(value) => setPlanFilter(String(value || ''))}
                 options={[
-                  { value: '', label: '全部状态' },
-                  { value: 'healthy', label: '正常' },
-                  { value: 'abnormal', label: '异常' },
+                  { value: '', label: '全部计划' },
+                  ...planOptions,
                 ]}
-                placeholder="全部状态"
+                placeholder="全部计划"
               />
             </div>
             <div className="oauth-filter-slot-wide">
               <ModernSelect
                 size="sm"
-                value={siteFilter}
-                onChange={(value) => setSiteFilter(String(value || ''))}
+                value={schedulingFilter}
+                onChange={(value) => setSchedulingFilter(String(value || '') as SchedulingFilter)}
                 options={[
-                  { value: '', label: '全部站点' },
-                  ...siteOptions,
+                  { value: '', label: '全部调度状态' },
+                  { value: 'ready', label: '可调度' },
+                  { value: 'cooldown', label: '冷却中' },
+                  { value: 'blocked', label: '已阻断' },
+                  { value: 'unrouted', label: '未生成路由' },
                 ]}
-                placeholder="全部站点"
+                placeholder="全部调度状态"
               />
             </div>
           </div>
@@ -1635,33 +1803,53 @@ export default function OAuthManagement() {
             {autoRefreshSeconds > 0 ? (
               <div className="oauth-toolbar-meta">下次刷新 {autoRefreshCountdown}s</div>
             ) : null}
-            <div className="oauth-column-menu-anchor">
+            <div className="official-pool-view-switch" role="group" aria-label="凭证池视图">
               <button
                 type="button"
-                className="btn btn-ghost oauth-outline-button"
-                onClick={() => setShowColumnMenu((current) => !current)}
+                className={viewMode === 'cards' ? 'is-active' : ''}
+                aria-pressed={viewMode === 'cards'}
+                onClick={() => setViewMode('cards')}
               >
-                列设置
+                卡片
               </button>
-              {showColumnMenu ? (
-                <div className="oauth-column-menu">
-                  {COLUMN_OPTIONS.map((column) => (
-                    <label key={column.key} className="oauth-column-item">
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns[column.key]}
-                        onChange={() => toggleColumn(column.key)}
-                      />
-                      <span>{column.label}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : null}
+              <button
+                type="button"
+                className={viewMode === 'table' ? 'is-active' : ''}
+                aria-pressed={viewMode === 'table'}
+                onClick={() => setViewMode('table')}
+              >
+                紧凑列表
+              </button>
             </div>
+            {viewMode === 'table' ? (
+              <div className="oauth-column-menu-anchor">
+                <button
+                  type="button"
+                  className="btn btn-ghost oauth-outline-button"
+                  onClick={() => setShowColumnMenu((current) => !current)}
+                >
+                  列设置
+                </button>
+                {showColumnMenu ? (
+                  <div className="oauth-column-menu">
+                    {COLUMN_OPTIONS.map((column) => (
+                      <label key={column.key} className="oauth-column-item">
+                        <input
+                          type="checkbox"
+                          checked={visibleColumns[column.key]}
+                          onChange={() => toggleColumn(column.key)}
+                        />
+                        <span>{column.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="oauth-summary-note">
-          OAuth 账号以后只在这里维护。连接管理页默认只保留普通 Session / API Key / Token 连接。
+          官方订阅与官方 API 凭证在这里形成独立调度供给；站点和普通中转账号不参与此处归属。
         </div>
       </div>
     </div>
@@ -1674,7 +1862,7 @@ export default function OAuthManagement() {
         className="oauth-input"
         value={searchQuery}
         onChange={(event) => setSearchQuery(event.target.value)}
-        placeholder="搜索账号 / 邮箱 / 站点 / 项目"
+        placeholder="搜索账号 / 邮箱 / 计划 / 模型"
       />
       <ModernSelect
         size="sm"
@@ -1688,24 +1876,26 @@ export default function OAuthManagement() {
       />
       <ModernSelect
         size="sm"
-        value={statusFilter}
-        onChange={(value) => setStatusFilter(String(value || ''))}
+        value={planFilter}
+        onChange={(value) => setPlanFilter(String(value || ''))}
         options={[
-          { value: '', label: '全部状态' },
-          { value: 'healthy', label: '正常' },
-          { value: 'abnormal', label: '异常' },
+          { value: '', label: '全部计划' },
+          ...planOptions,
         ]}
-        placeholder="全部状态"
+        placeholder="全部计划"
       />
       <ModernSelect
         size="sm"
-        value={siteFilter}
-        onChange={(value) => setSiteFilter(String(value || ''))}
+        value={schedulingFilter}
+        onChange={(value) => setSchedulingFilter(String(value || '') as SchedulingFilter)}
         options={[
-          { value: '', label: '全部站点' },
-          ...siteOptions,
+          { value: '', label: '全部调度状态' },
+          { value: 'ready', label: '可调度' },
+          { value: 'cooldown', label: '冷却中' },
+          { value: 'blocked', label: '已阻断' },
+          { value: 'unrouted', label: '未生成路由' },
         ]}
-        placeholder="全部站点"
+        placeholder="全部调度状态"
       />
       <ModernSelect
         size="sm"
@@ -1733,7 +1923,7 @@ export default function OAuthManagement() {
             />
           </th>
           {visibleColumns.identity ? <th className="oauth-col-identity">账号</th> : null}
-          {visibleColumns.site ? <th className="oauth-col-site">站点</th> : null}
+          {visibleColumns.subscription ? <th className="oauth-col-site">订阅</th> : null}
           {visibleColumns.status ? <th className="oauth-col-status">状态</th> : null}
           {visibleColumns.quota ? <th className="oauth-col-quota">额度</th> : null}
           {visibleColumns.proxy ? <th className="oauth-col-proxy">计划 / 代理</th> : null}
@@ -1745,7 +1935,6 @@ export default function OAuthManagement() {
           const quota = connection.quota;
           const emailLabel = resolveConnectionEmailLabel(connection);
           const primaryTitle = resolveConnectionPrimaryTitle(connection);
-          const sitePlatform = asTrimmedString(connection.site?.platform);
           const modelSyncDetail = resolveModelSyncDetail(connection);
           const quotaSyncDetail = resolveQuotaSyncDetail(quota);
           return (
@@ -1792,15 +1981,11 @@ export default function OAuthManagement() {
                   </div>
                 </td>
               ) : null}
-              {visibleColumns.site ? (
+              {visibleColumns.subscription ? (
                 <td className="oauth-col-site">
                   <div className="oauth-cell-stack">
-                    <div className="oauth-cell-primary oauth-site-name" title={connection.site?.name || '--'}>
-                      {connection.site?.name || '--'}
-                    </div>
-                    {sitePlatform && sitePlatform !== connection.provider ? (
-                      <div className="oauth-cell-secondary">{sitePlatform}</div>
-                    ) : null}
+                    <div className="oauth-cell-primary oauth-site-name">{resolveSubscriptionPlan(connection)}</div>
+                    <div className="oauth-cell-secondary">{resolveSubscriptionExpiry(connection)}</div>
                   </div>
                 </td>
               ) : null}
@@ -1907,109 +2092,138 @@ export default function OAuthManagement() {
     </table>
   );
 
-  const mobileList = (
-    <div className="mobile-card-list oauth-mobile-list">
+  const credentialCards = (
+    <div className="official-credential-grid" data-testid="official-credential-grid">
       {filteredConnections.map((connection) => {
         const quota = connection.quota;
+        const participation = resolveConnectionRouteParticipation(connection);
+        const schedulingState = resolveSchedulingState(connection);
+        const selected = selectedConnectionIds.includes(connection.accountId);
         return (
-          <MobileCard
+          <article
             key={connection.accountId}
-            title={resolveConnectionPrimaryTitle(connection)}
-            subtitle={`${connection.provider} · ${resolveConnectionStatusLabel(connection.status)}`}
-            headerActions={(
-              <input
-                type="checkbox"
-                checked={selectedConnectionIds.includes(connection.accountId)}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setSelectedConnectionIds((current) => checked
-                    ? Array.from(new Set([...current, connection.accountId]))
-                    : current.filter((id) => id !== connection.accountId));
-                }}
-              />
-            )}
+            className={`official-credential-card is-${schedulingState}${selected ? ' is-selected' : ''}`}
+            data-testid={`official-credential-card-${connection.accountId}`}
           >
-            <MobileField label="站点" value={connection.site?.name || '--'} />
-            <MobileField label="邮箱" value={resolveConnectionEmailLabel(connection) || '--'} />
-            <MobileField label="计划 / 项目" value={connection.projectId ? `${connection.planType || '--'} · ${connection.projectId}` : (connection.planType || '--')} />
-            <MobileField label="路由参与" value={resolveRouteParticipationSummary(connection)} />
-            <MobileField
-              label="账号代理"
-              value={(
-                <div className="oauth-cell-stack">
-                  <div className="oauth-cell-tertiary">{resolveProxyDisplayText(connection)}</div>
-                  <button
-                    type="button"
-                    className="btn btn-link btn-link-info oauth-inline-trigger"
-                    onClick={() => openProxySettingsDrawer(connection)}
-                  >
-                    {hasOauthProxySelection(connection) ? '代理设置' : '设置代理'}
-                  </button>
+            <div className="official-credential-card-head">
+              <label className="official-credential-select" aria-label={`选择官方凭证 ${resolveConnectionPrimaryTitle(connection)}`}>
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setSelectedConnectionIds((current) => checked
+                      ? Array.from(new Set([...current, connection.accountId]))
+                      : current.filter((id) => id !== connection.accountId));
+                  }}
+                />
+              </label>
+              <div className="official-credential-provider-icon" aria-hidden="true">
+                <BrandGlyph model={resolveProviderModel(connection.provider)} size={24} fallbackText={connection.provider} />
+              </div>
+              <div className="official-credential-identity">
+                <button
+                  type="button"
+                  className="official-credential-title"
+                  title={resolveConnectionPrimaryTitle(connection)}
+                  onClick={() => void openModelsModal(connection)}
+                >
+                  {resolveConnectionPrimaryTitle(connection)}
+                </button>
+                <div className="official-credential-subtitle">
+                  <span>{connection.provider}</span>
+                  {resolveConnectionEmailLabel(connection) ? <span>{resolveConnectionEmailLabel(connection)}</span> : null}
                 </div>
-              )}
-              stacked
-            />
-            <MobileField
-              label="运行状态"
-              value={(
-                <div className="oauth-status-stack">
-                  <div className="oauth-status-item">
-                    <div className="oauth-status-line">
-                      <div className="oauth-status-label">模型</div>
-                      <div className="oauth-cell-secondary">{resolveModelSyncStatusText(connection)}</div>
-                    </div>
-                    {resolveModelSyncDetail(connection) ? (
-                      <div className="oauth-status-detail">{resolveModelSyncDetail(connection)}</div>
-                    ) : null}
-                  </div>
-                  <div className="oauth-status-item">
-                    <div className="oauth-status-line">
-                      <div className="oauth-status-label">额度</div>
-                      <div className="oauth-cell-tertiary">{resolveQuotaSyncStatusText(quota)}</div>
-                    </div>
-                    {resolveQuotaSyncDetail(quota) ? (
-                      <div className="oauth-status-detail">{resolveQuotaSyncDetail(quota)}</div>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-              stacked
-            />
-            <div className="oauth-mobile-section">
-              <div className="oauth-mobile-section-label">Usage / Quota</div>
+              </div>
+              <div className={`official-scheduling-badge is-${schedulingState}`}>
+                <span aria-hidden="true" />
+                {resolveSchedulingLabel(connection)}
+              </div>
+            </div>
+
+            <div className="official-credential-plan-row">
+              <span className="official-plan-badge">{resolveSubscriptionPlan(connection)}</span>
+              <span>{resolveSubscriptionExpiry(connection)}</span>
+              {connection.projectId ? <span>Project {connection.projectId}</span> : null}
+            </div>
+
+            <div className="official-credential-quota">
+              <div className="official-credential-section-head">
+                <span>官方额度</span>
+                <span>{quota ? `${resolveQuotaSourceLabel(quota.source)} · ${resolveQuotaSyncStatusText(quota)}` : '等待刷新'}</span>
+              </div>
               {quota ? (
-                <>
-                  <div className="oauth-quota-meta">
-                    <span className={`badge oauth-badge ${quota.status === 'error' ? 'badge-warning' : quota.status === 'unsupported' ? 'badge-muted' : 'badge-info'}`}>
-                      {resolveQuotaStatusLabel(quota.status)}
-                    </span>
-                    <span className="oauth-cell-tertiary">{resolveQuotaSourceLabel(quota.source)}</span>
-                  </div>
+                <div className="official-credential-quota-windows">
                   <QuotaWindowRow label="5h" window={quota.windows?.fiveHour} />
                   <QuotaWindowRow label="7d" window={quota.windows?.sevenDay} />
-                </>
+                </div>
               ) : (
-                <div className="oauth-cell-secondary">--</div>
+                <div className="official-credential-empty-line">当前尚无官方额度快照</div>
               )}
+              {resolveQuotaSyncDetail(quota) ? (
+                <div className="official-credential-warning" title={resolveQuotaSyncDetail(quota)}>
+                  {resolveQuotaSyncDetail(quota)}
+                </div>
+              ) : null}
             </div>
-            <div className="mobile-card-actions oauth-mobile-actions">
+
+            <div className="official-credential-scheduling">
+              <div className="official-credential-section-head">
+                <span>调度供给</span>
+                <span>{connection.scheduling?.enabledRouteCount ?? connection.routeChannelCount ?? 0} 条启用路由</span>
+              </div>
+              <div className="official-scheduling-primary">{resolveSchedulingDetail(connection)}</div>
+              <div className="official-scheduling-stats">
+                <div><span>模式</span><strong>{participation.kind === 'route_unit' ? '池化' : '单体'}</strong></div>
+                <div><span>模型</span><strong>{connection.modelCount}</strong></div>
+                <div><span>成功</span><strong>{connection.scheduling?.successCount ?? 0}</strong></div>
+                <div><span>失败</span><strong>{connection.scheduling?.failCount ?? 0}</strong></div>
+              </div>
+              <div className="official-scheduling-meta">
+                <span>{resolveRouteParticipationSummary(connection)}</span>
+                {connection.scheduling?.lastSelectedAt ? (
+                  <span>最近调度 {new Date(connection.scheduling.lastSelectedAt).toLocaleString()}</span>
+                ) : (
+                  <span>尚无调度记录</span>
+                )}
+              </div>
+            </div>
+
+            <div className="official-credential-card-footer">
               <button type="button" className="btn btn-link btn-link-info" onClick={() => void openModelsModal(connection)}>
                 {connection.modelCount} 个模型
               </button>
-              <button type="button" className="btn btn-link btn-link-primary" onClick={() => handleRefreshQuota(connection.accountId)}>
-                刷新额度
+              <button
+                type="button"
+                className="btn btn-link btn-link-primary"
+                onClick={() => handleRefreshQuota(connection.accountId)}
+                disabled={actionLoadingKey === `quota:${connection.accountId}`}
+              >
+                {actionLoadingKey === `quota:${connection.accountId}` ? '刷新中...' : '刷新额度'}
               </button>
               <button type="button" className="btn btn-link btn-link-info" onClick={() => openProxySettingsDrawer(connection)}>
-                代理设置
+                代理
               </button>
               <button type="button" className="btn btn-link btn-link-info" onClick={() => openRebindDrawer(connection)}>
                 重新授权
               </button>
-              <button type="button" className="btn btn-link btn-link-danger" onClick={() => handleDelete(connection.accountId)}>
-                删除连接
+              <button
+                type="button"
+                className="btn btn-link btn-link-info"
+                onClick={() => openPoolAccessModal([connection.accountId])}
+              >
+                接出
+              </button>
+              <button
+                type="button"
+                className="btn btn-link btn-link-danger"
+                onClick={() => handleDelete(connection.accountId)}
+                disabled={actionLoadingKey === `delete:${connection.accountId}`}
+              >
+                {actionLoadingKey === `delete:${connection.accountId}` ? '删除中...' : '删除'}
               </button>
             </div>
-          </MobileCard>
+          </article>
         );
       })}
     </div>
@@ -2019,18 +2233,29 @@ export default function OAuthManagement() {
     <div className="page-container animate-fade-in">
       <div className="page-header">
         <div>
-          <h2 className="page-title">OAuth 管理</h2>
+          <h2 className="page-title">官方凭证池</h2>
           <div className="page-subtitle">
-            统一管理需要浏览器授权的官方上游连接。OAuth 账号以后只在这里维护，不再和普通连接管理页重复显示。
+            管理官方订阅与官方 API 凭证，将其转换为可观测、可池化、可调度的 2API 供给。
           </div>
         </div>
         {!isMobile ? (
           <div className="page-actions">
+            <button
+              type="button"
+              className="btn btn-ghost oauth-outline-button"
+              onClick={() => openPoolAccessModal(
+                selectedConnectionIds.length > 0
+                  ? selectedConnectionIds
+                  : filteredConnections.map((connection) => connection.accountId),
+              )}
+            >
+              渠道接出
+            </button>
             <button type="button" className="btn btn-ghost oauth-outline-button" onClick={openImportModal}>
-              导入 JSON
+              导入官方凭证
             </button>
             <button type="button" className="btn btn-primary" onClick={() => openCreateDrawer()}>
-              新建 OAuth 连接
+              添加官方凭证
             </button>
           </div>
         ) : null}
@@ -2051,7 +2276,7 @@ export default function OAuthManagement() {
               <span className="badge badge-muted">{resolveRouteUnitStrategyLabel(sessionFeedback.routeUnit.strategy)}</span>
               <div className="oauth-page-message-detail">
                 {sessionFeedback.routeUnit.action === 'created'
-                  ? '已将选中的 OAuth 账号合并为一个路由池，后续会以单个路由单元参与路由。'
+                  ? '已将选中的官方凭证合并为一个调度池，后续会以单个路由单元参与调度。'
                   : '该路由池已拆分回单体账号，后续会分别参与路由。'}
               </div>
             </div>
@@ -2064,7 +2289,7 @@ export default function OAuthManagement() {
         mobileOpen={showMobileFilters}
         onMobileOpen={() => setShowMobileFilters(true)}
         onMobileClose={() => setShowMobileFilters(false)}
-        mobileTitle="OAuth 筛选与操作"
+        mobileTitle="官方凭证筛选与操作"
         mobileContent={mobileFilterContent}
         desktopContent={filterBar}
         mobileTrigger={
@@ -2076,21 +2301,50 @@ export default function OAuthManagement() {
             >
               筛选与操作
             </button>
+            <button
+              type="button"
+              className="btn btn-ghost oauth-outline-button"
+              onClick={() => openPoolAccessModal(
+                selectedConnectionIds.length > 0
+                  ? selectedConnectionIds
+                  : filteredConnections.map((connection) => connection.accountId),
+              )}
+            >
+              接出
+            </button>
             <button type="button" className="btn btn-primary" onClick={() => openCreateDrawer()}>
-              新建 OAuth 连接
+              添加官方凭证
             </button>
           </div>
         }
       />
 
-      <div className="card oauth-workbench-card">
+      <div className="official-pool-summary" aria-label="官方凭证池概览">
+        <div><span>官方凭证</span><strong>{poolSummary.total}</strong></div>
+        <div><span>已路由</span><strong>{poolSummary.routed}</strong></div>
+        <div className="is-ready"><span>可调度</span><strong>{poolSummary.ready}</strong></div>
+        <div className="is-cooling"><span>冷却中</span><strong>{poolSummary.cooling}</strong></div>
+        <div className="is-attention"><span>待处理</span><strong>{poolSummary.attention}</strong></div>
+        <div><span>调度池</span><strong>{poolSummary.pools}</strong></div>
+      </div>
+
+      <div className="card oauth-workbench-card official-pool-workbench">
         <div className="oauth-workbench-head">
           <div>
-            <div className="oauth-workbench-title">OAuth 连接列表</div>
+            <div className="oauth-workbench-title">凭证调度视图</div>
             <div className="oauth-workbench-meta">
-              已连接 {connections.length} 个 OAuth 账号，当前筛选后显示 {filteredConnections.length} 个。
+              共 {connections.length} 个官方凭证，当前显示 {filteredConnections.length} 个；卡片状态直接来自实际路由与冷却数据。
             </div>
           </div>
+          <label className="official-select-all">
+            <input
+              data-testid="oauth-select-all"
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={(event) => toggleSelectAllVisible(event.target.checked)}
+            />
+            选择当前结果
+          </label>
         </div>
 
         {selectedConnectionIds.length > 0 ? (
@@ -2102,6 +2356,13 @@ export default function OAuthManagement() {
               disabled={actionLoadingKey === 'quota:selected'}
             >
               {actionLoadingKey === 'quota:selected' ? '刷新中...' : '批量刷新额度'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost oauth-outline-button"
+              onClick={() => openPoolAccessModal(selectedConnectionIds)}
+            >
+              接出所选凭证
             </button>
             {canMergeSelectedIntoRouteUnit ? (
               <button
@@ -2139,20 +2400,20 @@ export default function OAuthManagement() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
             </svg>
             <div className="empty-state-title">加载中...</div>
-            <div className="empty-state-desc">正在加载 OAuth 连接与额度信息。</div>
+            <div className="empty-state-desc">正在加载官方凭证、额度与调度状态。</div>
           </div>
         ) : filteredConnections.length === 0 ? (
           <div className="empty-state oauth-empty-state">
             <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            <div className="empty-state-title">暂无 OAuth 连接</div>
+            <div className="empty-state-title">暂无官方凭证</div>
             <div className="empty-state-desc">
-              使用右上角“新建 OAuth 连接”接入 Codex、Claude、Gemini CLI 或 Antigravity。
+              使用右上角“添加官方凭证”接入 Codex、Claude、Gemini CLI 或 Antigravity。
             </div>
           </div>
         ) : (
-          isMobile ? mobileList : desktopTable
+          viewMode === 'cards' || isMobile ? credentialCards : desktopTable
         )}
       </div>
 
@@ -2160,7 +2421,7 @@ export default function OAuthManagement() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         title={drawerIntent.mode === 'create'
-          ? '新建 OAuth 连接'
+          ? '添加官方凭证'
           : drawerIntent.mode === 'proxy'
             ? `代理设置 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`
             : `重新授权 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`}
@@ -2209,8 +2470,8 @@ export default function OAuthManagement() {
 
               <div className="oauth-form-note">
                 {drawerIntent.mode === 'proxy'
-                  ? '这里修改的是账号级 OAuth 代理。点击“保存代理”会立即落库并刷新列表；只有“保存并重新授权”才会重新走授权流程。若两项都不勾选，则回退到站点代理配置。'
-                  : '这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的账号都会直接带上这份账号级代理配置；若不勾选，则回退到站点代理配置。'}
+                  ? '这里修改的是凭证级代理。点击“保存代理”会立即落库并刷新列表；只有“保存并重新授权”才会重新走授权流程。若两项都不勾选，则按系统代理或直连策略执行。'
+                  : '这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的官方凭证都会使用这份凭证级代理；若不勾选，则按系统代理或直连策略执行。'}
               </div>
 
               <div className="oauth-toggle-group">
@@ -2398,7 +2659,7 @@ export default function OAuthManagement() {
       <CenteredModal
         open={importOpen}
         onClose={closeImportModal}
-        title="导入 OAuth 连接 JSON"
+        title="导入官方凭证"
         maxWidth={760}
         bodyStyle={{ display: 'grid', gap: 16 }}
         footer={(
@@ -2413,7 +2674,7 @@ export default function OAuthManagement() {
         )}
       >
         <div className="oauth-import-copy">
-          选择 JSON 后会先识别是否有效，再决定是否添加。每个 JSON 文件只对应一个 OAuth 连接。
+          支持原生官方 OAuth JSON，以及 Cockpit/Sub2API 的 `sub2api-data` / `sub2api-bundle` 包；凭证包内只提取官方 OAuth 账号。
         </div>
         <div
           className={`oauth-import-picker ${importDragOver ? 'is-dragover' : ''}`.trim()}
@@ -2434,7 +2695,7 @@ export default function OAuthManagement() {
           {importDrafts.length > 0 ? (
             <>
               <div className="oauth-import-picker-copy">已选择 {importDrafts.length} 份 JSON，点击可重新选择</div>
-              <div className="oauth-import-picker-hint">支持多选，只会导入其中的 OAuth 账号。</div>
+              <div className="oauth-import-picker-hint">支持多选；凭证包会展开为多个官方 OAuth 账号。</div>
               <div className="oauth-import-file-list">
                 {importDrafts.map((draft) => (
                   <div key={draft.sourceName} className="oauth-import-file-item">
@@ -2449,7 +2710,7 @@ export default function OAuthManagement() {
           ) : (
             <>
               <div className="oauth-import-picker-copy" style={{ color: importDragOver ? 'var(--color-primary)' : undefined }}>
-                {importDragOver ? '松开即可导入这些 JSON 文件' : '拖拽 OAuth 连接 JSON 到此处'}
+                {importDragOver ? '松开即可导入这些 JSON 文件' : '拖拽官方凭证 JSON 或 Cockpit/Sub2API 包到此处'}
               </div>
               <div className="oauth-import-picker-hint">或点击选择文件，支持一次多选多个 `.json` 文件</div>
             </>
@@ -2506,7 +2767,7 @@ export default function OAuthManagement() {
           className="oauth-textarea oauth-mono"
           value={importJsonText}
           onChange={(event) => setImportJsonText(event.target.value)}
-          placeholder='粘贴单个 OAuth 连接 JSON，例如 {"type":"codex","access_token":"...","refresh_token":"...","email":"user@example.com"}'
+          placeholder='粘贴官方 OAuth JSON，例如 {"type":"codex","access_token":"..."}；或 Cockpit/Sub2API 的 sub2api-data 凭证包'
           rows={8}
         />
         {importPreviewSummary ? (
@@ -2594,6 +2855,83 @@ export default function OAuthManagement() {
             ]}
             placeholder="选择路由池策略"
           />
+        </div>
+      </CenteredModal>
+
+      <CenteredModal
+        open={poolAccessModal.open}
+        onClose={closePoolAccessModal}
+        title="官方凭证渠道接出"
+        maxWidth={720}
+        bodyStyle={{ display: 'grid', gap: 16 }}
+      >
+        <div className="official-access-options">
+          <section className="official-access-option">
+            <div className="official-access-option-head">
+              <div>
+                <div className="official-access-option-title">Sub2API / Cockpit 凭证包</div>
+                <div className="official-access-option-copy">
+                  按 Cockpit 的 `sub2api-data` v1 格式导出 Codex/OpenAI OAuth 账号，可直接导入 Sub2API。
+                </div>
+              </div>
+              <span className="badge badge-info">{poolAccessModal.accountIds.length} 个凭证</span>
+            </div>
+            <div className="official-access-warning">
+              导出文件包含 access token、refresh token 和 ID token 等明文秘密。请只交给受信任的 Sub2API 实例。
+            </div>
+            <label className="oauth-toggle official-access-confirm">
+              <input
+                type="checkbox"
+                aria-label="我确认导出文件包含明文官方凭证"
+                checked={poolAccessModal.confirmSecrets}
+                onChange={(event) => setPoolAccessModal((current) => ({
+                  ...current,
+                  confirmSecrets: event.target.checked,
+                }))}
+              />
+              <span>我确认导出文件包含明文官方凭证</span>
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!poolAccessModal.confirmSecrets || actionLoadingKey === 'export:sub2api'}
+              onClick={handleExportSub2Api}
+            >
+              {actionLoadingKey === 'export:sub2api' ? '生成中...' : '下载 Sub2API JSON'}
+            </button>
+          </section>
+
+          <section className="official-access-option">
+            <div className="official-access-option-head">
+              <div>
+                <div className="official-access-option-title">NewAPI / OneAPI 接入</div>
+                <div className="official-access-option-copy">
+                  NewAPI 将 r-api 作为一个 OpenAI 兼容上游接入，不需要导出官方 OAuth 凭证。
+                </div>
+              </div>
+              <span className="badge badge-success">推荐</span>
+            </div>
+            <div className="official-access-endpoint">
+              <span>Base URL</span>
+              <code>{resolveNewApiBaseUrl()}</code>
+              <button type="button" className="btn btn-ghost oauth-outline-button" onClick={handleCopyNewApiBaseUrl}>
+                复制
+              </button>
+            </div>
+            <div className="official-access-option-copy">
+              API Key 使用 r-api 的下游密钥；模型与调度策略继续由本页凭证池和路由配置统一控制。
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost oauth-outline-button"
+              onClick={() => {
+                closePoolAccessModal();
+                navigate('/downstream-keys');
+              }}
+            >
+              打开下游密钥
+            </button>
+          </section>
         </div>
       </CenteredModal>
     </div>

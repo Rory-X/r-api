@@ -17,6 +17,7 @@ const { apiMock, openMock, focusMock, confirmMock, promptMock } = vi.hoisted(() 
     updateOAuthConnectionProxy: vi.fn(),
     deleteOAuthConnection: vi.fn(),
     importOAuthConnections: vi.fn(),
+    exportOAuthConnectionsToSub2Api: vi.fn(),
     createOAuthRouteUnit: vi.fn(),
     deleteOAuthRouteUnit: vi.fn(),
     getAccountModels: vi.fn(),
@@ -48,11 +49,17 @@ async function flushMicrotasks() {
 }
 
 function findButton(root: WebTestRenderer, label: string) {
-  return root.root.find((node) => (
+  const exact = root.root.findAll((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node) === label
+  ));
+  if (exact.length > 0) return exact[0]!;
+  return root.root.findAll((node) => (
     node.type === 'button'
     && typeof node.props.onClick === 'function'
     && collectText(node).includes(label)
-  ));
+  ))[0]!;
 }
 
 function findOauthSettingInput(root: WebTestRenderer, key: string) {
@@ -171,13 +178,13 @@ describe('OAuthManagement page', () => {
       await vi.waitFor(async () => {
         await flushMicrotasks();
         const text = collectText(root!.root);
-        expect(text).toContain('OAuth 管理');
+        expect(text).toContain('官方凭证池');
         expect(text).toContain('Codex');
         expect(text).toContain('Gemini CLI');
         expect(text).toContain('codex-user@example.com');
         expect(text).toContain('plus');
         expect(text).toContain('3 个模型');
-        expect(text).toContain('chatgpt-account-123');
+        expect(text).toContain('未生成路由');
       });
     } finally {
       root?.unmount();
@@ -285,8 +292,9 @@ describe('OAuthManagement page', () => {
       await flushMicrotasks();
 
       const text = collectText(root.root);
-      expect(text).toContain('新建 OAuth 连接');
-      expect(text).toContain('导入 JSON');
+      expect(text).toContain('添加官方凭证');
+      expect(text).toContain('导入官方凭证');
+      expect(root.root.findByProps({ 'data-testid': 'official-credential-grid' })).toBeTruthy();
       expect(text).toContain('自动刷新');
       expect(findAllByClassName(root, 'oauth-toolbar-meta')).toHaveLength(0);
 
@@ -575,7 +583,7 @@ describe('OAuthManagement page', () => {
       expect(collectText(root.root)).toContain('Codex Pool');
       expect(collectText(root.root)).toContain('2 个成员');
       expect(collectText(root.root)).toContain('轮询');
-      expect(collectText(root.root)).toContain('已将选中的 OAuth 账号合并为一个路由池，后续会以单个路由单元参与路由。');
+      expect(collectText(root.root)).toContain('已将选中的官方凭证合并为一个调度池，后续会以单个路由单元参与调度。');
       expect(collectText(root.root)).toContain('路由池：Codex Pool · 2 个成员 · 轮询');
     } finally {
       root?.unmount();
@@ -1241,7 +1249,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root, '导入 JSON');
+      await clickButton(root, '导入官方凭证');
 
       const textarea = root.root.find((node) => (
         node.type === 'textarea'
@@ -1249,7 +1257,7 @@ describe('OAuthManagement page', () => {
         && node.props.placeholder.includes('"access_token"')
       ));
 
-      expect(collectText(root.root)).not.toContain('sub2api');
+      expect(collectText(root.root)).toContain('Cockpit/Sub2API');
 
       await act(async () => {
         textarea.props.onChange({
@@ -1278,8 +1286,12 @@ describe('OAuthManagement page', () => {
         vi.advanceTimersByTime(300);
       });
       await flushMicrotasks();
-      expect(collectText(root.root)).toContain('已添加 1 个 OAuth 连接');
-      expect(collectText(root.root)).not.toContain('导入 OAuth 连接 JSON');
+      expect(collectText(root.root)).toContain('已添加 1 个官方凭证');
+      expect(root.root.findAll((node) => (
+        node.type === 'textarea'
+        && typeof node.props.placeholder === 'string'
+        && node.props.placeholder.includes('access_token')
+      ))).toHaveLength(0);
       expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
     } finally {
       root?.unmount();
@@ -1381,7 +1393,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root, '导入 JSON');
+      await clickButton(root, '导入官方凭证');
 
       const fileInput = root.root.find((node) => (
         node.type === 'input'
@@ -1429,9 +1441,78 @@ describe('OAuthManagement page', () => {
         vi.advanceTimersByTime(300);
       });
       await flushMicrotasks();
-      expect(collectText(root.root)).toContain('已添加 2 个 OAuth 连接');
-      expect(collectText(root.root)).not.toContain('导入 OAuth 连接 JSON');
+      expect(collectText(root.root)).toContain('已添加 2 个官方凭证');
+      expect(root.root.findAll((node) => (
+        node.type === 'input'
+        && node.props['data-testid'] === 'oauth-import-file-input'
+      ))).toHaveLength(0);
       expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('previews and submits a Cockpit Sub2API credential package unchanged', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({ providers: [] });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 });
+    apiMock.importOAuthConnections.mockResolvedValue({
+      success: true,
+      imported: 2,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    });
+    const bundle = {
+      type: 'sub2api-data',
+      version: 1,
+      exported_at: '2026-08-13T12:00:00Z',
+      proxies: [],
+      accounts: [{
+        name: 'Codex Plus',
+        platform: 'openai',
+        type: 'oauth',
+        credentials: { access_token: 'access-a', refresh_token: 'refresh-a' },
+        concurrency: 3,
+        priority: 50,
+      }, {
+        name: 'Codex Team',
+        platform: 'openai',
+        type: 'oauth',
+        credentials: { access_token: 'access-b', refresh_token: 'refresh-b' },
+        concurrency: 3,
+        priority: 50,
+      }],
+    };
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+      await clickButton(root, '导入官方凭证');
+
+      const textarea = root.root.find((node) => (
+        node.type === 'textarea'
+        && typeof node.props.placeholder === 'string'
+        && node.props.placeholder.includes('sub2api-data')
+      ));
+      await act(async () => {
+        textarea.props.onChange({ target: { value: JSON.stringify(bundle) } });
+      });
+
+      expect(collectText(root.root)).toContain('Sub2API / Cockpit 包 · 2 个 OAuth');
+      expect(collectText(root.root)).toContain('2 个官方账号');
+      await clickButton(root, '添加');
+      expect(apiMock.importOAuthConnections).toHaveBeenCalledWith(bundle);
     } finally {
       root?.unmount();
     }
@@ -1468,10 +1549,10 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root, '导入 JSON');
+      await clickButton(root, '导入官方凭证');
       await clickButton(root, '添加');
 
-      expect(collectText(root.root)).toContain('请先选择 JSON 文件或粘贴 OAuth 连接 JSON 内容');
+      expect(collectText(root.root)).toContain('请先选择 JSON 文件或粘贴官方凭证 JSON 内容');
     } finally {
       root?.unmount();
     }
@@ -1508,7 +1589,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root, '导入 JSON');
+      await clickButton(root, '导入官方凭证');
 
       const textarea = root.root.find((node) => (
         node.type === 'textarea'
@@ -1619,7 +1700,7 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
-      await clickButton(root!, '新建 OAuth 连接');
+      await clickButton(root!, '添加官方凭证');
 
       const proxyToggle = findOauthSettingInput(root!, 'use-custom-proxy');
 
@@ -1727,7 +1808,7 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
-      await clickButton(root!, '新建 OAuth 连接');
+      await clickButton(root!, '添加官方凭证');
       await clickButton(root!, '连接 Claude');
       await vi.waitFor(async () => {
         await flushMicrotasks();
@@ -1813,12 +1894,12 @@ describe('OAuthManagement page', () => {
       await vi.waitFor(async () => {
         await flushMicrotasks();
         const text = collectText(root!.root);
-        expect(text).toContain('官方上游连接');
-        expect(text).toContain('CLI');
-        expect(text).toContain('API Key');
+        expect(text).toContain('管理官方订阅与官方 API 凭证');
+        expect(text).toContain('可池化');
+        expect(text).toContain('可调度');
       });
 
-      await clickButton(root!, '新建 OAuth 连接');
+      await clickButton(root!, '添加官方凭证');
       const startButton = findButton(root!, '连接 Codex');
       expect(startButton.props.disabled).toBe(true);
       expect(collectText(root!.root)).toContain('当前环境未启用');
@@ -1940,7 +2021,7 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
-      await clickButton(root!, '新建 OAuth 连接');
+      await clickButton(root!, '添加官方凭证');
       await clickButton(root!, '连接 Gemini CLI');
       await vi.waitFor(async () => {
         await flushMicrotasks();
@@ -2165,7 +2246,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root!, '代理设置');
+      await clickButton(root!, '代理');
 
       expect(collectText(root!.root)).toContain('已打开 OAuth 代理设置');
       expect(collectText(root!.root)).toContain('代理设置 · gemini@example.com');
@@ -2233,7 +2314,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root!, '代理设置');
+      await clickButton(root!, '代理');
       const customProxyToggle = findOauthSettingInput(root!, 'use-custom-proxy');
 
       await act(async () => {
@@ -2317,7 +2398,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root!, '代理设置');
+      await clickButton(root!, '代理');
       expect(collectText(root!.root)).toContain('保存代理');
       expect(collectText(root!.root)).toContain('保存并重新授权');
 
@@ -2385,7 +2466,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root!, '新建 OAuth 连接');
+      await clickButton(root!, '添加官方凭证');
       const systemProxyToggle = findOauthSettingInput(root!, 'use-system-proxy');
 
       await act(async () => {
@@ -2480,7 +2561,7 @@ describe('OAuthManagement page', () => {
       });
       await flushMicrotasks();
 
-      await clickButton(root, '新建 OAuth 连接');
+      await clickButton(root, '添加官方凭证');
 
       const proxyToggle = findOauthSettingInput(root, 'use-custom-proxy');
       const proxyInput = findOauthSettingInput(root, 'proxy-url');
@@ -2587,7 +2668,7 @@ describe('OAuthManagement page', () => {
       await vi.waitFor(async () => {
         await flushMicrotasks();
         const text = collectText(root!.root);
-        expect(text).toContain('异常');
+        expect(text).toContain('已阻断');
         expect(text).toContain('Codex 模型获取失败');
         expect(text).toContain('HTTP 403: forbidden');
         expect(text).toContain('team');
@@ -2595,14 +2676,13 @@ describe('OAuthManagement page', () => {
         expect(text).toContain('deactivated_workspace');
         expect(text).not.toContain('当前 Codex OAuth 未暴露官方 5h 窗口');
         expect(text).not.toContain('当前 Codex OAuth 未暴露官方 7d 窗口');
-        expect(text).toContain('http://***@127.0.0.1:7890');
         expect(text).not.toContain('oauth-user:secret');
       });
 
       const deleteButton = root!.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && collectText(node).includes('删除连接')
+        && collectText(node).includes('删除')
       ));
 
       await act(async () => {
@@ -2615,6 +2695,84 @@ describe('OAuthManagement page', () => {
       expect(confirmMock).toHaveBeenCalled();
       expect(apiMock.deleteOAuthConnection).toHaveBeenCalledWith(7);
       expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('requires secret confirmation before Sub2API export and explains NewAPI access', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({ providers: [] });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [{
+        accountId: 77,
+        provider: 'codex',
+        email: 'pool@example.com',
+        planType: 'plus',
+        modelCount: 3,
+        modelsPreview: ['gpt-5'],
+        status: 'healthy',
+        routeChannelCount: 3,
+        scheduling: {
+          state: 'ready',
+          enabledRouteCount: 3,
+          successCount: 18,
+          failCount: 2,
+          consecutiveFailCount: 0,
+          cooldownLevel: 0,
+          lastSelectedAt: '2026-08-13T12:00:00.000Z',
+        },
+      }],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.exportOAuthConnectionsToSub2Api.mockResolvedValue({
+      success: true,
+      export: {
+        type: 'sub2api-data',
+        version: 1,
+        exported_at: '2026-08-13T12:00:00Z',
+        proxies: [],
+        accounts: [{ name: 'pool@example.com', type: 'oauth' }],
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('可调度');
+      expect(collectText(root.root)).toContain('成功18');
+      expect(collectText(root.root)).toContain('失败2');
+      await clickButton(root, '接出');
+
+      const exportButton = findButton(root, '下载 Sub2API JSON');
+      expect(exportButton.props.disabled).toBe(true);
+      expect(collectText(root.root)).toContain('NewAPI / OneAPI 接入');
+      expect(collectText(root.root)).toContain('/v1');
+      expect(collectText(root.root)).toContain('打开下游密钥');
+
+      const confirmation = root.root.findByProps({
+        'aria-label': '我确认导出文件包含明文官方凭证',
+      });
+      await act(async () => {
+        confirmation.props.onChange({ target: { checked: true } });
+      });
+      await clickButton(root, '下载 Sub2API JSON');
+
+      expect(apiMock.exportOAuthConnectionsToSub2Api).toHaveBeenCalledWith(
+        [77],
+        'EXPORT_OFFICIAL_SECRETS',
+      );
     } finally {
       root?.unmount();
     }

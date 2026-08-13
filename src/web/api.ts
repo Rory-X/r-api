@@ -937,6 +937,20 @@ export type OAuthConnectionInfo = {
   status: "healthy" | "abnormal";
   quota?: OAuthQuotaInfo | null;
   routeChannelCount?: number;
+  scheduling?: {
+    state: "ready" | "cooldown" | "blocked" | "unrouted";
+    eligible: boolean;
+    mode: "single" | "route_unit";
+    routeCount: number;
+    enabledRouteCount: number;
+    cooldownUntil?: string | null;
+    lastSelectedAt?: string | null;
+    lastFailAt?: string | null;
+    successCount: number;
+    failCount: number;
+    consecutiveFailCount: number;
+    cooldownLevel: number;
+  };
   lastModelSyncAt?: string | null;
   lastModelSyncError?: string | null;
   proxyUrl?: string | null;
@@ -976,6 +990,23 @@ export type OAuthImportResponse = {
     accountId?: number;
     provider?: string;
     message?: string;
+  }>;
+};
+
+export type OAuthSub2ApiExport = {
+  type: "sub2api-data";
+  version: 1;
+  exported_at: string;
+  proxies: unknown[];
+  accounts: Array<{
+    name: string;
+    platform: "openai";
+    type: "oauth";
+    credentials: Record<string, unknown>;
+    concurrency: number;
+    priority: number;
+    expires_at?: number;
+    auto_pause_on_expired?: boolean;
   }>;
 };
 
@@ -2592,6 +2623,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(Array.isArray(data.items) ? data : { data }),
     }) as Promise<OAuthImportResponse>,
+  exportOAuthConnectionsToSub2Api: (accountIds: number[], confirmation: string) =>
+    request("/api/oauth/export/sub2api", {
+      method: "POST",
+      body: JSON.stringify({ accountIds, confirmation }),
+    }) as Promise<{ success: true; export: OAuthSub2ApiExport }>,
   createOAuthRouteUnit: (data: {
     accountIds: number[];
     name: string;

@@ -200,10 +200,8 @@ describe('Settings log cleanup schedule', () => {
     }
   });
 
-  it('groups settings under a five-category navigation and jumps to the selected section', async () => {
+  it('switches the visible settings category from the left tab navigation', async () => {
     let root!: WebTestRenderer;
-    const originalDocument = globalThis.document;
-    const scrollIntoView = vi.fn();
     try {
       await act(async () => {
         root = create(
@@ -219,27 +217,31 @@ describe('Settings log cleanup schedule', () => {
       const navigation = root.root.find((node) => (
         node.type === 'nav' && node.props['aria-label'] === '系统设置分类导航'
       ));
+      expect(navigation.props.role).toBe('tablist');
+      expect(navigation.props['aria-orientation']).toBe('vertical');
       expect(collectText(navigation)).toContain('安全与访问');
       expect(collectText(navigation)).toContain('自动化任务');
       expect(collectText(navigation)).toContain('网络与代理');
       expect(collectText(navigation)).toContain('AI 请求与路由');
       expect(collectText(navigation)).toContain('数据与维护');
 
-      globalThis.document = {
-        getElementById: vi.fn((id: string) => (
-          id === 'settings-data-system' ? { scrollIntoView } : null
-        )),
-      } as unknown as Document;
       const dataNavigation = navigation.find((node) => (
         node.type === 'button' && collectText(node).includes('数据与维护')
       ));
+      const securityPanel = root.root.findByProps({ id: 'settings-security' });
+      const dataPanel = root.root.findByProps({ id: 'settings-data-system' });
+
+      expect(dataNavigation.props.role).toBe('tab');
+      expect(dataNavigation.props['aria-selected']).toBe(false);
+      expect(securityPanel.props.hidden).toBe(false);
+      expect(dataPanel.props.hidden).toBe(true);
+
       await act(async () => { dataNavigation.props.onClick(); });
 
-      expect(globalThis.document.getElementById).toHaveBeenCalledWith('settings-data-system');
-      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-      expect(dataNavigation.props['aria-current']).toBe('location');
+      expect(dataNavigation.props['aria-selected']).toBe(true);
+      expect(securityPanel.props.hidden).toBe(true);
+      expect(dataPanel.props.hidden).toBe(false);
     } finally {
-      globalThis.document = originalDocument;
       root?.unmount();
     }
   });

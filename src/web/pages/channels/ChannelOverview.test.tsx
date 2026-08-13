@@ -8,7 +8,6 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getSites: vi.fn(),
     getAccounts: vi.fn(),
-    getOAuthConnections: vi.fn(),
     getCredentialVaultItems: vi.fn(),
   },
 }));
@@ -53,10 +52,6 @@ describe('ChannelOverview', () => {
       { id: 11, siteId: 1, status: 'disabled', oauthProvider: null },
       { id: 12, siteId: 2, status: 'active', oauthProvider: 'codex' },
     ]);
-    apiMock.getOAuthConnections.mockResolvedValue({
-      items: [{ accountId: 12, siteId: 2, provider: 'codex', status: 'active' }],
-      total: 1,
-    });
     apiMock.getCredentialVaultItems.mockResolvedValue({
       items: [
         { id: 20, siteId: 1, status: 'active' },
@@ -88,7 +83,6 @@ describe('ChannelOverview', () => {
     expect(apiMock.getAccounts).toHaveBeenCalledWith();
     expect(text).toContain('2个上游站点');
     expect(text).toContain('2个普通连接');
-    expect(text).toContain('1个 OAuth 连接');
     expect(text).toContain('1个渠道凭证');
     expect(text).toContain('Panel Site');
     expect(text).toContain('OAuth Site');
@@ -117,7 +111,6 @@ describe('ChannelOverview', () => {
       }],
     }]);
     apiMock.getAccounts.mockResolvedValue([]);
-    apiMock.getOAuthConnections.mockResolvedValue({ items: [], total: 0 });
     apiMock.getCredentialVaultItems.mockResolvedValue({ items: [], total: 0 });
 
     await act(async () => {
@@ -155,7 +148,6 @@ describe('ChannelOverview', () => {
       }],
     }]);
     apiMock.getAccounts.mockResolvedValue([]);
-    apiMock.getOAuthConnections.mockResolvedValue({ items: [], total: 0 });
     apiMock.getCredentialVaultItems.mockResolvedValue({ items: [], total: 0 });
 
     await act(async () => {
@@ -197,7 +189,6 @@ describe('ChannelOverview', () => {
       }],
     }]);
     apiMock.getAccounts.mockResolvedValue([]);
-    apiMock.getOAuthConnections.mockResolvedValue({ items: [], total: 0 });
     apiMock.getCredentialVaultItems.mockResolvedValue({ items: [], total: 0 });
 
     await act(async () => {

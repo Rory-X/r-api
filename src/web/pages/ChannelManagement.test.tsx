@@ -26,7 +26,6 @@ describe('ChannelManagement', () => {
       '/channels',
       '/channels/sites',
       '/channels/connections',
-      '/channels/oauth',
       '/channels/recovery',
     ]));
     expect(links.map((link) => link.props.href)).not.toContain('/channels/credentials');
@@ -49,7 +48,7 @@ describe('ChannelManagement', () => {
     expect(root.root.findByProps({ 'data-testid': 'channel-management' })).toBeTruthy();
     expect(root.root.findByProps({ 'data-testid': 'channel-section-loading' })).toBeTruthy();
     expect(root.root.findByType('h2').children.join('')).toBe('渠道管理');
-    expect(root.root.findAllByType('a')).toHaveLength(5);
+    expect(root.root.findAllByType('a')).toHaveLength(4);
 
     root.unmount();
   });

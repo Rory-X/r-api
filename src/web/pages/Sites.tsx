@@ -930,8 +930,8 @@ export default function Sites() {
 
     if (input.choice === 'session') {
       if (platform === 'codex') {
-        params.set('provider', 'codex');
-        navigate(`${resolveChannelPath(location.pathname, 'oauth')}?${params.toString()}`);
+        const officialParams = new URLSearchParams({ create: '1', provider: 'codex' });
+        navigate(`/official-credentials?${officialParams.toString()}`);
         return;
       }
         navigate(`${resolveChannelPath(location.pathname, 'connections')}?${params.toString()}`);
