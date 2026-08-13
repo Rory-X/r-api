@@ -6,13 +6,11 @@ import { eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type ServiceModule = typeof import('./downstreamApiKeyService.js');
-type ConfigModule = typeof import('../config.js');
 
 describe('downstreamApiKeyService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let service: ServiceModule;
-  let config: ConfigModule['config'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -21,12 +19,10 @@ describe('downstreamApiKeyService', () => {
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
-    const configModule = await import('../config.js');
     const serviceModule = await import('./downstreamApiKeyService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
-    config = configModule.config;
     service = serviceModule;
   });
 
@@ -34,21 +30,15 @@ describe('downstreamApiKeyService', () => {
     await db.delete(schema.downstreamApiKeyLeases).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.tokenRoutes).run();
-    config.proxyToken = 'sk-global-proxy-token';
   });
 
   afterAll(() => {
     delete process.env.DATA_DIR;
   });
 
-  it('authorizes global proxy token when no managed key matches', async () => {
-    const result = await service.authorizeDownstreamToken('sk-global-proxy-token');
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.key).toBeNull();
-      expect(result.policy.allowedRouteIds).toEqual([]);
-      expect(result.policy.supportedModels).toEqual([]);
-    }
+  it('rejects unknown tokens instead of falling back to a global credential', async () => {
+    const result = await service.authorizeDownstreamToken('sk-legacy-proxy-token');
+    expect(result).toMatchObject({ ok: false, statusCode: 403, reason: 'invalid' });
   });
 
   it('rejects managed keys by lifecycle guards (disabled, expired, over budget, over requests)', async () => {

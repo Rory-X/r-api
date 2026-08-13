@@ -23,7 +23,6 @@ type PreservedInfrastructureState = {
   authToken: string;
   adminPasswordHash: string;
   adminTotpConfig: typeof schema.adminTotpConfigs.$inferSelect | null;
-  proxyToken: string;
   systemProxyUrl: string;
   dbType: 'sqlite' | 'mysql' | 'postgres';
   dbUrl: string;
@@ -55,6 +54,9 @@ async function clearAllBusinessData() {
     await tx.delete(schema.localConnectorActions).run();
     await tx.delete(schema.localConnectorPairings).run();
     await tx.delete(schema.localConnectorDevices).run();
+    await tx.delete(schema.credentialImportProvenance).run();
+    await tx.delete(schema.credentialImportItems).run();
+    await tx.delete(schema.credentialImportJobs).run();
     await tx.delete(schema.credentialVaultItems).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.tokenRoutes).run();
@@ -87,7 +89,6 @@ async function captureInfrastructureState(): Promise<PreservedInfrastructureStat
     authToken: config.authToken,
     adminPasswordHash,
     adminTotpConfig: await db.select().from(schema.adminTotpConfigs).get() || null,
-    proxyToken: config.proxyToken,
     systemProxyUrl: config.systemProxyUrl,
     dbType: config.dbType,
     dbUrl: config.dbUrl,
@@ -103,7 +104,6 @@ function resetRuntimeConfigToInitialState(preserved: PreservedInfrastructureStat
   const baseline = buildConfig(process.env);
   Object.assign(config, baseline);
   config.authToken = preserved.authToken || baseline.authToken || FACTORY_RESET_ADMIN_TOKEN;
-  config.proxyToken = preserved.proxyToken || baseline.proxyToken;
   config.systemProxyUrl = preserved.systemProxyUrl || baseline.systemProxyUrl;
   if (shouldPreserveExternalRuntime(preserved)) {
     config.dbType = preserved.dbType;
@@ -133,7 +133,6 @@ async function restoreInfrastructureSettings(preserved: PreservedInfrastructureS
   if (preserved.adminTotpConfig) {
     await db.insert(schema.adminTotpConfigs).values(preserved.adminTotpConfig).run();
   }
-  await upsertSetting('proxy_token', preserved.proxyToken);
   await upsertSetting('system_proxy_url', preserved.systemProxyUrl);
 
   if (shouldPreserveExternalRuntime(preserved)) {

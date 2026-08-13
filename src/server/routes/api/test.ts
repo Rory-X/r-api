@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { fetch, File as UndiciFile, FormData as UndiciFormData } from 'undici';
 import { config } from '../../config.js';
+import { createInternalProxyAuthHandoffHeaders } from '../../middleware/auth.js';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import {
   normalizeForcedChannelId,
@@ -461,20 +462,10 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
 function createDefaultHeadersForPath(path: string): Record<string, string> {
   if (/^\/v1\/messages$/i.test(path)) {
     return {
-      'x-api-key': config.proxyToken,
       'anthropic-version': '2023-06-01',
     };
   }
-
-  if (/^\/(?:gemini\/[^/]+\/models\/.+|v1beta\/models\/.+)$/i.test(path)) {
-    return {
-      'x-goog-api-key': config.proxyToken,
-    };
-  }
-
-  return {
-    Authorization: `Bearer ${config.proxyToken}`,
-  };
+  return {};
 }
 
 function applyStreamOverride(value: unknown, forceStream: boolean): unknown {
@@ -509,7 +500,10 @@ async function buildUpstreamRequestInit(
   envelope: ValidatedProxyTestEnvelope,
   forceStream: boolean,
 ): Promise<UndiciRequestInit> {
-  const headers: Record<string, string> = createDefaultHeadersForPath(envelope.path);
+  const headers: Record<string, string> = {
+    ...createDefaultHeadersForPath(envelope.path),
+    ...createInternalProxyAuthHandoffHeaders(),
+  };
   headers[TESTER_REQUEST_HEADER] = '1';
   if (typeof envelope.forcedChannelId === 'number' && envelope.forcedChannelId > 0) {
     headers[TESTER_FORCED_CHANNEL_HEADER] = String(envelope.forcedChannelId);

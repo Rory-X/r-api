@@ -195,7 +195,7 @@ export async function handleChatSurfaceRequest(
     downstreamFormat,
     body: downstreamFormat === 'claude' ? claudeOriginalBody : request.body,
     requestedModel,
-    proxyToken: getProxyAuthContext(request)?.token || null,
+    downstreamToken: getProxyAuthContext(request)?.token || null,
   });
   const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
   const maxRetries = getProxyMaxChannelRetries();
@@ -1153,7 +1153,7 @@ function deriveCodexSessionCacheKey(input: {
   downstreamFormat: DownstreamFormat | 'responses';
   body: unknown;
   requestedModel: string;
-  proxyToken: string | null;
+  downstreamToken: string | null;
 }): string | null {
   if (isRecord(input.body)) {
     if (input.downstreamFormat === 'claude' && isRecord(input.body.metadata)) {
@@ -1164,9 +1164,9 @@ function deriveCodexSessionCacheKey(input: {
     if (promptCacheKey) return `${input.requestedModel}:responses:${promptCacheKey}`;
   }
 
-  const proxyToken = asTrimmedString(input.proxyToken);
-  if (proxyToken) {
-    return `${input.requestedModel}:proxy:${proxyToken}`;
+  const downstreamToken = asTrimmedString(input.downstreamToken);
+  if (downstreamToken) {
+    return `${input.requestedModel}:proxy:${downstreamToken}`;
   }
 
   return null;

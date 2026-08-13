@@ -89,7 +89,7 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
     source: auth.source,
     tokenFingerprint: `fingerprint:${auth.token}`,
     keyId: auth.key?.id ?? null,
-    keyName: auth.key?.name || 'global',
+    keyName: auth.key?.name || 'internal-tester',
     policyVersion: auth.key?.policyVersion ?? 1,
     expiresAt: auth.key?.expiresAt ?? null,
     maxConcurrency: auth.key?.maxConcurrency ?? null,
@@ -234,8 +234,9 @@ describe('gemini native proxy routes', () => {
 
     authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
-      source: 'global',
+      source: 'managed',
       token: 'sk-managed-gemini',
+      key: { id: 91, name: 'gemini-project' },
       policy: {},
     });
     fetchModelPricingCatalogMock.mockResolvedValue(null);

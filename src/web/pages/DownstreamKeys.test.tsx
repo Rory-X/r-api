@@ -11,8 +11,6 @@ const { apiMock } = vi.hoisted(() => ({
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
     getRoutesLite: vi.fn(),
-    getRuntimeSettings: vi.fn(),
-    updateRuntimeSettings: vi.fn(),
     getAccounts: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getAccountTokens: vi.fn(),
@@ -139,8 +137,6 @@ beforeEach(() => {
   };
   apiMock.getDownstreamApiKeysSummary.mockResolvedValue({ success: true, items: [buildSummaryItem()] });
   apiMock.getDownstreamApiKeys.mockResolvedValue({ success: true, items: [buildRawItem()] });
-  apiMock.getRuntimeSettings.mockResolvedValue({ proxyTokenMasked: 'sk-g****obal' });
-  apiMock.updateRuntimeSettings.mockResolvedValue({ success: true, proxyTokenMasked: 'sk-n****oken' });
   apiMock.getRoutesLite.mockResolvedValue([
     { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
     { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
@@ -238,9 +234,7 @@ describe('DownstreamKeys page', () => {
 
       const text = collectText(root!.root);
       expect(text).toContain('下游密钥');
-      expect(text).toContain('全局主密钥');
-      expect(text).toContain('完整权限');
-      expect(text).toContain('sk-g****obal');
+      expect(text).not.toContain('全局主密钥');
       expect(text).toContain('范围概览');
       expect(text).toContain('筛选与列表');
       expect(text).toContain('smoke-key');
@@ -249,51 +243,6 @@ describe('DownstreamKeys page', () => {
       expect(text).toContain('4.2K');
       expect(text).toContain('主分组');
       expect(text).toContain('移动端');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('rotates the compatibility global token from the downstream key workspace', async () => {
-    let root!: WebTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/downstream-keys']}>
-            <ToastProvider>
-              <DownstreamKeys />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const rotateButton = root.root.find((node) => (
-        node.type === 'button' && collectText(node) === '更换主密钥'
-      ));
-      await act(async () => {
-        rotateButton.props.onClick();
-      });
-
-      const tokenInput = root.root.find((node) => (
-        node.type === 'input' && node.props.placeholder === '输入 sk- 后的密钥内容'
-      ));
-      await act(async () => {
-        tokenInput.props.onChange({ target: { value: 'sk-new-global-token' } });
-      });
-
-      const confirmButton = root.root.find((node) => (
-        node.type === 'button' && collectText(node) === '确认更换'
-      ));
-      await act(async () => {
-        confirmButton.props.onClick();
-        await Promise.resolve();
-      });
-
-      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
-        proxyToken: 'sk-new-global-token',
-      });
-      expect(collectText(root.root)).toContain('sk-n****oken');
     } finally {
       root?.unmount();
     }

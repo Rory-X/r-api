@@ -250,6 +250,8 @@ const EXCLUDED_SETTING_KEYS = new Set<string>([
   // Keep current admin login credential unchanged to avoid accidental lock-out.
   'auth_token',
   'admin_password_hash',
+  // Removed legacy global downstream credential must never be exported or restored.
+  'proxy_token',
   // Runtime database selection is environment-bound and must not be propagated by backups.
   'db_type',
   'db_url',
@@ -1304,12 +1306,6 @@ function isSettingValueAcceptable(key: string, value: unknown): boolean {
 
   if (key === 'log_cleanup_retention_days') {
     return isFiniteNumber(value) && value >= 1;
-  }
-
-  if (key === 'proxy_token') {
-    return typeof value === 'string'
-      && value.trim().length >= 6
-      && value.trim().startsWith('sk-');
   }
 
   if (key === 'smtp_port') {

@@ -6,6 +6,7 @@ import {
   acquireDownstreamConcurrencyLease,
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
+  createInternalDownstreamPolicySnapshot,
   resolveDownstreamPolicySnapshot,
   verifyDownstreamPolicySnapshotActive,
   type DownstreamPolicyActiveResult,
@@ -26,7 +27,7 @@ export type AdminAuthContext =
 
 export interface ProxyAuthContext {
   token: string;
-  source: 'managed' | 'global';
+  source: 'managed' | 'internal';
   keyId: number | null;
   keyName: string;
   policy: DownstreamRoutingPolicy;
@@ -34,7 +35,7 @@ export interface ProxyAuthContext {
 }
 
 export interface ProxyResourceOwner {
-  ownerType: 'managed_key' | 'global_proxy_token';
+  ownerType: 'managed_key' | 'internal_tester';
   ownerId: string;
 }
 
@@ -75,6 +76,19 @@ export function createProxyAuthHandoffHeaders(context: ProxyAuthContext): Record
     expiresAtMs: Date.now() + PROXY_AUTH_HANDOFF_TTL_MS,
   });
   return { [PROXY_AUTH_HANDOFF_HEADER]: handoffId };
+}
+
+export function createInternalProxyAuthHandoffHeaders(): Record<string, string> {
+  const token = `internal-tester:${randomUUID()}`;
+  const snapshot = createInternalDownstreamPolicySnapshot(token);
+  return createProxyAuthHandoffHeaders({
+    token,
+    source: 'internal',
+    keyId: null,
+    keyName: 'internal-tester',
+    policy: snapshot.policy,
+    snapshot,
+  });
 }
 
 type ParsedAllowlistEntry =
@@ -320,9 +334,7 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
   });
 
   try {
-    if (authResult.source === 'managed' && authResult.key) {
-      await consumeManagedKeyRequest(authResult.key.id);
-    }
+    await consumeManagedKeyRequest(authResult.key.id);
   } catch (error) {
     await releaseConcurrencyLease();
     throw error;
@@ -331,8 +343,8 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
   proxyAuthContextByRequest.set(request, {
     token: authResult.token,
     source: authResult.source,
-    keyId: authResult.key?.id ?? null,
-    keyName: authResult.key?.name || 'global',
+    keyId: authResult.key.id,
+    keyName: authResult.key.name,
     policy: snapshot.policy || EMPTY_DOWNSTREAM_ROUTING_POLICY,
     snapshot,
   });
@@ -356,15 +368,7 @@ export function getProxyResourceOwner(request: FastifyRequest): ProxyResourceOwn
   const auth = getProxyAuthContext(request);
   if (!auth) return null;
 
-  if (auth.source === 'managed') {
-    return {
-      ownerType: 'managed_key',
-      ownerId: auth.keyId === null ? auth.token : String(auth.keyId),
-    };
-  }
-
-  return {
-    ownerType: 'global_proxy_token',
-    ownerId: 'global',
-  };
+  return auth.source === 'managed'
+    ? { ownerType: 'managed_key', ownerId: String(auth.keyId) }
+    : { ownerType: 'internal_tester', ownerId: 'admin' };
 }

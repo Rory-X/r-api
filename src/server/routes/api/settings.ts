@@ -61,7 +61,6 @@ import { normalizeFirstByteRoutingPolicy } from '../../../shared/firstByteRoutin
 type RoutingWeights = typeof config.routingWeights;
 
 interface RuntimeSettingsBody {
-  proxyToken?: string;
   systemProxyUrl?: string;
   payloadRules?: unknown;
   modelAvailabilityProbeEnabled?: boolean;
@@ -167,16 +166,11 @@ type RuntimeDatabaseConfig = {
   ssl: boolean;
 };
 
-const PROXY_TOKEN_PREFIX = 'sk-';
 const DB_TYPE_SETTING_KEY = 'db_type';
 const DB_URL_SETTING_KEY = 'db_url';
 const DB_SSL_SETTING_KEY = 'db_ssl';
 const SYSTEM_PROXY_TEST_PROBE_URL = 'https://www.gstatic.com/generate_204';
 const SYSTEM_PROXY_TEST_TIMEOUT_MS = 15_000;
-
-function isValidProxyToken(value: string): boolean {
-  return value.startsWith(PROXY_TOKEN_PREFIX) && value.length >= 6;
-}
 
 function maskSecret(value: string): string {
   if (!value) return '';
@@ -456,13 +450,6 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.logCleanupConfigured = true;
       updateLogCleanupSettings({ retentionDays: Math.trunc(retentionDays) });
       stopProxyLogRetentionService();
-      return;
-    }
-    case 'proxy_token': {
-      if (typeof value !== 'string') return;
-      const nextToken = value.trim();
-      if (!isValidProxyToken(nextToken)) return;
-      config.proxyToken = nextToken;
       return;
     }
     case 'system_proxy_url': {
@@ -841,7 +828,6 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     payloadRules: config.payloadRules,
     proxyErrorKeywords: config.proxyErrorKeywords,
     proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
-    proxyTokenMasked: maskSecret(config.proxyToken),
     globalBlockedBrands: config.globalBlockedBrands,
     globalAllowedModels: config.globalAllowedModels,
   };
@@ -1202,21 +1188,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('log_cleanup_usage_logs_enabled', nextUsageLogsEnabled);
       upsertSetting('log_cleanup_program_logs_enabled', nextProgramLogsEnabled);
       upsertSetting('log_cleanup_retention_days', nextLogCleanupRetentionDays);
-    }
-
-    if (body.proxyToken !== undefined) {
-      const proxyToken = String(body.proxyToken).trim();
-      if (!proxyToken.startsWith(PROXY_TOKEN_PREFIX)) {
-        return reply.code(400).send({ success: false, message: '下游访问令牌必须以 sk- 开头' });
-      }
-      if (proxyToken.length < 6) {
-        return reply.code(400).send({ success: false, message: '下游访问令牌至少 6 位（含 sk-）' });
-      }
-      if (proxyToken !== config.proxyToken) {
-        changedLabels.push('代理访问 Token');
-      }
-      config.proxyToken = proxyToken;
-      upsertSetting('proxy_token', proxyToken);
     }
 
     if (body.systemProxyUrl !== undefined) {
@@ -1860,7 +1831,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (changedLabels.length === 1) {
         if (changedLabels[0].startsWith('签到 Cron')) eventType = 'checkin';
         else if (changedLabels[0].startsWith('余额刷新 Cron')) eventType = 'balance';
-        else if (changedLabels[0] === '代理访问 Token') eventType = 'proxy';
       }
       appendSettingsEvent({
         type: eventType,

@@ -2,7 +2,6 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
-import { config } from '../config.js';
 import {
   EMPTY_DOWNSTREAM_ROUTING_POLICY,
   type DownstreamExcludedCredentialRef,
@@ -39,7 +38,7 @@ export type DownstreamApiKeyPolicyView = {
 
 export type DownstreamPolicySnapshot = Readonly<{
   capturedAt: string;
-  source: 'managed' | 'global';
+  source: 'managed' | 'internal';
   tokenFingerprint: string;
   keyId: number | null;
   keyName: string;
@@ -51,9 +50,9 @@ export type DownstreamPolicySnapshot = Readonly<{
 
 export type DownstreamTokenAuthSuccess = {
   ok: true;
-  source: 'managed' | 'global';
+  source: 'managed';
   token: string;
-  key: DownstreamApiKeyPolicyView | null;
+  key: DownstreamApiKeyPolicyView;
   policy: DownstreamRoutingPolicy;
   snapshot: DownstreamPolicySnapshot;
 };
@@ -192,7 +191,7 @@ function freezeRoutingPolicy(policy: DownstreamRoutingPolicy): DownstreamRouting
 }
 
 function createPolicySnapshot(input: {
-  source: 'managed' | 'global';
+  source: 'managed' | 'internal';
   token: string;
   key: ({
     id: number;
@@ -208,7 +207,7 @@ function createPolicySnapshot(input: {
     source: input.source,
     tokenFingerprint: fingerprintToken(input.token),
     keyId: input.key?.id ?? null,
-    keyName: input.key?.name || 'global',
+    keyName: input.key?.name || 'internal-tester',
     policyVersion: normalizePolicyVersion(input.key?.policyVersion),
     expiresAt: input.key?.expiresAt ?? null,
     maxConcurrency: input.key?.maxConcurrency ?? null,
@@ -217,15 +216,15 @@ function createPolicySnapshot(input: {
 }
 
 export function resolveDownstreamPolicySnapshot(auth: {
-  source: 'managed' | 'global';
+  source: 'managed';
   token: string;
-  key: ({
+  key: {
     id: number;
     name: string;
     policyVersion?: number;
     expiresAt?: string | null;
     maxConcurrency?: number | null;
-  }) | null;
+  };
   policy: DownstreamRoutingPolicy;
   snapshot?: DownstreamPolicySnapshot;
 }): DownstreamPolicySnapshot {
@@ -234,6 +233,15 @@ export function resolveDownstreamPolicySnapshot(auth: {
     token: auth.token,
     key: auth.key,
     policy: auth.policy,
+  });
+}
+
+export function createInternalDownstreamPolicySnapshot(token: string): DownstreamPolicySnapshot {
+  return createPolicySnapshot({
+    source: 'internal',
+    token,
+    key: null,
+    policy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
   });
 }
 
@@ -554,10 +562,6 @@ export async function getManagedDownstreamApiKeyByToken(token: string): Promise<
   return toDownstreamApiKeyPolicyView(row);
 }
 
-export function getDefaultGlobalPolicy(): DownstreamRoutingPolicy {
-  return EMPTY_DOWNSTREAM_ROUTING_POLICY;
-}
-
 export async function authorizeDownstreamToken(token: string): Promise<DownstreamTokenAuthResult> {
   const normalizedToken = normalizeToken(token);
   if (!normalizedToken) {
@@ -626,23 +630,6 @@ export async function authorizeDownstreamToken(token: string): Promise<Downstrea
     };
   }
 
-  if (normalizedToken === config.proxyToken) {
-    const policy = freezeRoutingPolicy(getDefaultGlobalPolicy());
-    return {
-      ok: true,
-      source: 'global',
-      token: normalizedToken,
-      key: null,
-      policy,
-      snapshot: createPolicySnapshot({
-        source: 'global',
-        token: normalizedToken,
-        key: null,
-        policy,
-      }),
-    };
-  }
-
   return {
     ok: false,
     statusCode: 403,
@@ -654,17 +641,7 @@ export async function authorizeDownstreamToken(token: string): Promise<Downstrea
 export async function verifyDownstreamPolicySnapshotActive(
   snapshot: DownstreamPolicySnapshot,
 ): Promise<DownstreamPolicyActiveResult> {
-  if (snapshot.source === 'global') {
-    if (tokenFingerprintMatches(config.proxyToken, snapshot.tokenFingerprint)) {
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      statusCode: 403,
-      error: 'Proxy API key was rotated',
-      reason: 'rotated',
-    };
-  }
+  if (snapshot.source === 'internal') return { ok: true };
 
   if (snapshot.keyId === null) {
     return {

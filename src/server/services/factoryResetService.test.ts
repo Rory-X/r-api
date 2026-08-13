@@ -157,7 +157,6 @@ describe('factoryResetService', () => {
     expect(await argon2.verify(adminPasswordHash, 'external-reset-token')).toBe(true);
     expect(settings.some((row) => row.key === 'auth_token')).toBe(false);
     expect(settings.filter((row) => row.key !== 'admin_password_hash')).toEqual([
-      { key: 'proxy_token', value: JSON.stringify('change-me-proxy-sk-token') },
       { key: 'system_proxy_url', value: JSON.stringify('') },
       { key: 'db_type', value: JSON.stringify('postgres') },
       { key: 'db_url', value: JSON.stringify('postgres://user:pass@127.0.0.1:5432/metapi') },

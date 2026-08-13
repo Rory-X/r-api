@@ -12,7 +12,7 @@ describe('startupInfo', () => {
     expect(endpoints.adminDashboardUrl).toBe('http://127.0.0.1:4000');
     expect(endpoints.adminApiExample).toBe('http://127.0.0.1:4000/api/stats/dashboard');
     expect(endpoints.proxyApiExample).toBe('http://127.0.0.1:4000/v1/chat/completions');
-    expect(endpoints.proxyApiCurl).toContain('Authorization: Bearer <PROXY_TOKEN>');
+    expect(endpoints.proxyApiCurl).toContain('Authorization: Bearer <DOWNSTREAM_API_KEY>');
   });
 
   it('renders copy-ready startup summary lines', () => {

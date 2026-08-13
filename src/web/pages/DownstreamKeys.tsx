@@ -17,7 +17,6 @@ import DownstreamKeyEditorModal, {
   type DownstreamSiteOption,
 } from './downstream-keys/DownstreamKeyEditorModal.js';
 import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
-import GlobalProxyTokenCard from './downstream-keys/GlobalProxyTokenCard.js';
 import {
   formatCompactTokens,
   formatIso,
@@ -1057,8 +1056,6 @@ export default function DownstreamKeys() {
           <button className="btn btn-primary" onClick={openCreate}>+ 新增下游密钥</button>
         </div>
       </div>
-
-      <GlobalProxyTokenCard />
 
       <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>

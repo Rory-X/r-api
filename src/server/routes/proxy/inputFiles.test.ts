@@ -40,7 +40,7 @@ describe('inlineLocalInputFileReferences', () => {
           },
         ],
       },
-      { ownerType: 'global_proxy_token', ownerId: 'global' },
+      { ownerType: 'managed_key', ownerId: '42' },
     );
 
     expect(result).toEqual({
@@ -140,7 +140,7 @@ describe('inlineLocalInputFileReferences', () => {
           },
         ],
       },
-      { ownerType: 'global_proxy_token', ownerId: 'global' },
+      { ownerType: 'managed_key', ownerId: '42' },
     )).rejects.toBeInstanceOf(ProxyInputFileResolutionError);
   });
 });

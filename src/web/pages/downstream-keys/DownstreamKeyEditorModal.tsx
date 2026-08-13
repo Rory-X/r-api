@@ -11,7 +11,7 @@ import {
 } from '../../components/ui/index.js';
 import { generateDownstreamSkKey } from '../helpers/generateDownstreamSkKey.js';
 
-const PROXY_TOKEN_PREFIX = 'sk-';
+const DOWNSTREAM_KEY_PREFIX = 'sk-';
 
 export type DownstreamExcludedCredentialRef =
   | {
@@ -397,7 +397,7 @@ export default function DownstreamKeyEditorModal({
             <Button
               variant="ghost"
               style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
-              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
+              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(DOWNSTREAM_KEY_PREFIX) }))}
             >
               随机
             </Button>

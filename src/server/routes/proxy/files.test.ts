@@ -51,8 +51,7 @@ describe('/v1/files routes', () => {
     softDeleteProxyFileByPublicIdForOwnerMock.mockReset();
 
     getProxyResourceOwnerMock.mockReturnValue({
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
     });
   });
 
@@ -72,8 +71,7 @@ describe('/v1/files routes', () => {
       updatedAt: '2026-03-08 10:00:00',
       deletedAt: null,
       contentBase64: Buffer.from('%PDF-1.7').toString('base64'),
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
     });
 
     const boundary = 'metapi-file-boundary';
@@ -88,8 +86,7 @@ describe('/v1/files routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(saveProxyFileMock).toHaveBeenCalledWith(expect.objectContaining({
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
       purpose: 'assistants',
       filename: 'sample.pdf',
       mimeType: 'application/pdf',
@@ -126,7 +123,7 @@ describe('/v1/files routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(listProxyFilesByOwnerMock).toHaveBeenCalledWith({ ownerType: 'global_proxy_token', ownerId: 'global' });
+    expect(listProxyFilesByOwnerMock).toHaveBeenCalledWith({ ownerType: 'managed_key', ownerId: '42' });
     expect(response.json()).toMatchObject({
       object: 'list',
       data: [
@@ -165,8 +162,7 @@ describe('/v1/files routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(softDeleteProxyFileByPublicIdForOwnerMock).toHaveBeenCalledWith('file_pdf', {
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
     });
     expect(response.json()).toEqual({
       id: 'file_pdf',

@@ -667,14 +667,14 @@ async function handleResponsesWebsocketConnection(
           const proxyAuthContext: ProxyAuthContext = {
             token: turnAuthContext.token,
             source: turnAuthContext.source,
-            keyId: turnAuthContext.key?.id ?? null,
-            keyName: turnAuthContext.key?.name || 'global',
+            keyId: turnAuthContext.key.id,
+            keyName: turnAuthContext.key.name,
             policy: turnSnapshot.policy,
             snapshot: turnSnapshot,
           };
           const turnPolicyIdentity = [
             turnSnapshot.source,
-            turnSnapshot.keyId ?? 'global',
+            turnSnapshot.keyId ?? 'internal',
             turnSnapshot.policyVersion,
             turnSnapshot.tokenFingerprint,
           ].join(':');

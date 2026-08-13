@@ -29,7 +29,7 @@ export function buildStartupEndpoints(input: StartupSummaryInput): StartupEndpoi
     adminDashboardUrl: baseUrl,
     adminApiExample,
     proxyApiExample,
-    proxyApiCurl: `curl '${proxyApiExample}' -H 'Authorization: Bearer <PROXY_TOKEN>' -H 'Content-Type: application/json' -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'`,
+    proxyApiCurl: `curl '${proxyApiExample}' -H 'Authorization: Bearer <DOWNSTREAM_API_KEY>' -H 'Content-Type: application/json' -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'`,
   };
 }
 

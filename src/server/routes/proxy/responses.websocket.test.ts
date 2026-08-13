@@ -72,7 +72,7 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
     source: auth.source,
     tokenFingerprint: `fingerprint:${auth.token}`,
     keyId: auth.key?.id ?? null,
-    keyName: auth.key?.name || 'global',
+    keyName: auth.key?.name || 'internal-tester',
     policyVersion: auth.key?.policyVersion ?? 1,
     expiresAt: auth.key?.expiresAt ?? null,
     maxConcurrency: auth.key?.maxConcurrency ?? null,
@@ -439,9 +439,9 @@ describe('responses websocket transport', () => {
     rejectedUpgradeBody = 'Upgrade Required';
     authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
-      source: 'global',
-      token: 'sk-global-proxy-token',
-      key: null,
+      source: 'managed',
+      token: 'sk-websocket-project',
+      key: { id: 71, name: 'websocket-project' },
       policy: {
         supportedModels: [],
         allowedRouteIds: [],
@@ -1430,9 +1430,9 @@ describe('responses websocket transport', () => {
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
     authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
-      source: 'global',
+      source: 'managed',
       token: 'sk-query-auth',
-      key: null,
+      key: { id: 72, name: 'query-project' },
       policy: {
         supportedModels: [],
         allowedRouteIds: [],

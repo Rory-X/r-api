@@ -36,8 +36,7 @@ describe('proxyFileStore', () => {
 
   it('creates, lists, and reads files within one owner namespace', async () => {
     const created = await store.saveProxyFile({
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
       purpose: 'assistants',
       filename: 'sample.pdf',
       mimeType: 'application/pdf',
@@ -48,13 +47,12 @@ describe('proxyFileStore', () => {
     expect(created.byteSize).toBeGreaterThan(0);
     expect(created.mimeType).toBe('application/pdf');
 
-    const listed = await store.listProxyFilesByOwner({ ownerType: 'global_proxy_token', ownerId: 'global' });
+    const listed = await store.listProxyFilesByOwner({ ownerType: 'managed_key', ownerId: '42' });
     expect(listed).toHaveLength(1);
     expect(listed[0]?.publicId).toBe(created.publicId);
 
     const loaded = await store.getProxyFileByPublicIdForOwner(created.publicId, {
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
     });
     expect(loaded?.filename).toBe('sample.pdf');
     expect(loaded?.contentBase64).toBe(Buffer.from('%PDF-1.7 test file').toString('base64'));
@@ -71,20 +69,19 @@ describe('proxyFileStore', () => {
     });
 
     await store.saveProxyFile({
-      ownerType: 'global_proxy_token',
-      ownerId: 'global',
+      ownerType: 'managed_key', ownerId: '42',
       purpose: 'assistants',
-      filename: 'global.json',
+      filename: 'project-b.json',
       mimeType: 'application/json',
-      contentBase64: Buffer.from('{"scope":"global"}').toString('base64'),
+      contentBase64: Buffer.from('{"scope":"project-b"}').toString('base64'),
     });
 
     const managedFiles = await store.listProxyFilesByOwner({ ownerType: 'managed_key', ownerId: '12' });
-    const globalFiles = await store.listProxyFilesByOwner({ ownerType: 'global_proxy_token', ownerId: 'global' });
+    const otherOwnerFiles = await store.listProxyFilesByOwner({ ownerType: 'managed_key', ownerId: '42' });
 
     expect(managedFiles.map((item) => item.publicId)).toEqual([managed.publicId]);
-    expect(globalFiles).toHaveLength(1);
-    expect(globalFiles[0]?.publicId).not.toBe(managed.publicId);
+    expect(otherOwnerFiles).toHaveLength(1);
+    expect(otherOwnerFiles[0]?.publicId).not.toBe(managed.publicId);
   });
 
   it('soft deletes files and hides them from active lookups', async () => {
@@ -117,8 +114,7 @@ describe('proxyFileStore', () => {
     await db.insert(schema.proxyFiles).values([
       {
         publicId: 'file-metapi-old',
-        ownerType: 'global_proxy_token',
-        ownerId: 'global',
+        ownerType: 'managed_key', ownerId: '42',
         filename: 'old.txt',
         mimeType: 'text/plain',
         purpose: 'assistants',
@@ -131,8 +127,7 @@ describe('proxyFileStore', () => {
       },
       {
         publicId: 'file-metapi-new',
-        ownerType: 'global_proxy_token',
-        ownerId: 'global',
+        ownerType: 'managed_key', ownerId: '42',
         filename: 'new.txt',
         mimeType: 'text/plain',
         purpose: 'assistants',

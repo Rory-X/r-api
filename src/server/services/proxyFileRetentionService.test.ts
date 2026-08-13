@@ -69,8 +69,7 @@ describe('proxyFileRetentionService', () => {
     await db.insert(schema.proxyFiles).values([
       {
         publicId: 'file-metapi-old',
-        ownerType: 'global_proxy_token',
-        ownerId: 'global',
+        ownerType: 'managed_key', ownerId: '42',
         filename: 'old.txt',
         mimeType: 'text/plain',
         purpose: 'assistants',
@@ -83,8 +82,7 @@ describe('proxyFileRetentionService', () => {
       },
       {
         publicId: 'file-metapi-new',
-        ownerType: 'global_proxy_token',
-        ownerId: 'global',
+        ownerType: 'managed_key', ownerId: '42',
         filename: 'new.txt',
         mimeType: 'text/plain',
         purpose: 'assistants',
@@ -106,7 +104,7 @@ describe('proxyFileRetentionService', () => {
       deleted: 1,
     });
 
-    const remaining = await store.listProxyFilesByOwner({ ownerType: 'global_proxy_token', ownerId: 'global' });
+    const remaining = await store.listProxyFilesByOwner({ ownerType: 'managed_key', ownerId: '42' });
     expect(remaining.map((item) => item.publicId)).toEqual(['file-metapi-new']);
   });
 });

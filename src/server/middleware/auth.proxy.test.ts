@@ -10,12 +10,29 @@ vi.mock('../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
   acquireDownstreamConcurrencyLease: (...args: unknown[]) => acquireDownstreamConcurrencyLeaseMock(...args),
+  createInternalDownstreamPolicySnapshot: (token: string) => ({
+    capturedAt: '2026-08-13T00:00:00.000Z',
+    source: 'internal',
+    tokenFingerprint: `fingerprint:${token}`,
+    keyId: null,
+    keyName: 'internal-tester',
+    policyVersion: 1,
+    expiresAt: null,
+    maxConcurrency: null,
+    policy: {
+      supportedModels: [],
+      allowedRouteIds: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      excludedCredentialRefs: [],
+    },
+  }),
   resolveDownstreamPolicySnapshot: (auth: any) => auth.snapshot || {
     capturedAt: '2026-08-03T00:00:00.000Z',
     source: auth.source,
     tokenFingerprint: 'test-fingerprint',
     keyId: auth.key?.id ?? null,
-    keyName: auth.key?.name || 'global',
+    keyName: auth.key?.name || 'internal-tester',
     policyVersion: auth.key?.policyVersion ?? 1,
     expiresAt: auth.key?.expiresAt ?? null,
     maxConcurrency: auth.key?.maxConcurrency ?? null,
@@ -130,6 +147,36 @@ describe('proxyAuthMiddleware', () => {
     expect(res.statusCode).toBe(429);
     expect(res.headers['retry-after']).toBe('1');
     expect(consumeManagedKeyRequestMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('accepts the internal tester handoff once without managed-key accounting', async () => {
+    const {
+      createInternalProxyAuthHandoffHeaders,
+      getProxyAuthContext,
+      getProxyResourceOwner,
+      proxyAuthMiddleware,
+    } = await import('./auth.js');
+    const app = Fastify();
+    app.addHook('onRequest', proxyAuthMiddleware);
+    app.get('/v1/ping', async (request) => ({
+      auth: getProxyAuthContext(request),
+      owner: getProxyResourceOwner(request),
+    }));
+    const headers = createInternalProxyAuthHandoffHeaders();
+
+    const first = await app.inject({ method: 'GET', url: '/v1/ping', headers });
+    const replay = await app.inject({ method: 'GET', url: '/v1/ping', headers });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({
+      auth: { source: 'internal', keyId: null, keyName: 'internal-tester' },
+      owner: { ownerType: 'internal_tester', ownerId: 'admin' },
+    });
+    expect(replay.statusCode).toBe(401);
+    expect(authorizeDownstreamTokenMock).not.toHaveBeenCalled();
+    expect(consumeManagedKeyRequestMock).not.toHaveBeenCalled();
+    expect(acquireDownstreamConcurrencyLeaseMock).not.toHaveBeenCalled();
     await app.close();
   });
 });

@@ -21,7 +21,6 @@ persistence:
 
 env:
   authToken: ""
-  proxyToken: ""
   dbType: postgres
   dbUrl: ""
   dbSsl: "false"
