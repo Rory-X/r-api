@@ -174,7 +174,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 ## Architecture Overview
 
 **Downstream Clients** (Cursor · Claude Code · Codex · Open WebUI · Cherry Studio, etc.)
-&emsp;↓ &ensp;`Authorization: Bearer <PROXY_TOKEN>`
+&emsp;↓ &ensp;`Authorization: Bearer <DOWNSTREAM_API_KEY>`
 **r-api Gateway**
 &emsp;• Unified `/v1` proxy for core OpenAI / Claude-compatible endpoints (Responses, Chat Completions, Messages, Completions, Embeddings, Images, Models)
 &emsp;• Smart Routing Engine — weighted selection by cost, balance, and availability; auto-cooldown & retry on failure
@@ -318,7 +318,6 @@ services:
       - ./data:/app/data
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
-      PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
       PORT: ${PORT:-4000}
@@ -330,8 +329,6 @@ EOF
 # Set tokens and start
 # AUTH_TOKEN = Admin panel login token (enter this value when logging in)
 export AUTH_TOKEN=your-admin-token
-# PROXY_TOKEN = Token for downstream clients to call /v1/*
-export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
 
@@ -342,7 +339,6 @@ docker compose up -d
 docker run -d --name r-api \
   -p 4000:4000 \
   -e AUTH_TOKEN=your-admin-token \
-  -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
@@ -351,7 +347,7 @@ docker run -d --name r-api \
 
 </details>
 
-After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
+After starting, visit `http://localhost:4000`, log in with `AUTH_TOKEN`, then create a project-level credential from **Downstream Keys** for `/v1/*` requests.
 
 > [!NOTE]
 > Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments.
@@ -359,7 +355,7 @@ After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
 
 <!-- markdownlint-disable-next-line MD028 -->
 > [!IMPORTANT]
-> Make sure to change `AUTH_TOKEN` and `PROXY_TOKEN` — do not use default values. Data is stored in the `./data` directory and persists across upgrades.
+> Make sure to change `AUTH_TOKEN` — do not use default values. Data is stored in the `./data` directory and persists across upgrades.
 
 > [!TIP]
 > The initial admin token is the `AUTH_TOKEN` configured at startup.
@@ -410,7 +406,6 @@ For Docker Compose, desktop installers, reverse proxy, upgrades, and database op
 | Variable | Description | Default |
 | --- | --- | --- |
 | `AUTH_TOKEN` | Admin panel login token (**must change**) | `change-me-admin-token` |
-| `PROXY_TOKEN` | Proxy API Bearer Token (**must change**) | `change-me-proxy-sk-token` |
 | `PORT` | Service listening port | `4000` |
 | `DATA_DIR` | Data directory for local runtime data | `./data` |
 | `TZ` | Timezone | `Asia/Shanghai` |
@@ -451,10 +446,9 @@ r-api exposes standard OpenAI / Claude compatible endpoints:
 | `/v1/files/:fileId/content` | GET | OpenAI Files raw content |
 | `/v1/models` | GET | List all available models |
 
-Include `Authorization: Bearer <PROXY_TOKEN>` in request headers.
+Include `Authorization: Bearer <DOWNSTREAM_API_KEY>` in request headers.
 
-The global `PROXY_TOKEN` works by default.
-From `System Settings -> Downstream API Key Strategy` you can create multiple project-level downstream keys with individual configuration:
+From **Downstream Keys** you can create project-level credentials with individual configuration:
 
 - Expiration time (expiresAt)
 - Cost and request limits (MaxCost / MaxRequests)
@@ -471,7 +465,7 @@ Compatible with all OpenAI API-compatible clients:
 | Setting | Value |
 | --- | --- |
 | **Base URL** | `https://your-domain.com` (clients usually append `/v1` automatically) |
-| **API Key** | Your configured `PROXY_TOKEN` |
+| **API Key** | A project-level downstream key |
 | **Model List** | Auto-fetched from `GET /v1/models` |
 
 Standard OpenAI `/v1/files` workflows are also supported for clients that use the official file API.

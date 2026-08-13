@@ -21,7 +21,7 @@
 > [!IMPORTANT]
 > 本页介绍的是 **管理 API**，不是下游客户端调用的 `/v1/*` 代理接口。
 > - 管理 API 脚本使用当前管理员登录凭据
-> - 代理接口使用 `PROXY_TOKEN`
+> - 代理接口使用「下游密钥」页面创建的项目级密钥
 
 ## 认证方式
 
@@ -670,6 +670,298 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/connections?limit=50&offset=0" \
 |------|------|
 | `POST /api/oauth/connections/:accountId/rebind` | 为已有 OAuth 账号重新发起授权 |
 | `DELETE /api/oauth/connections/:accountId` | 删除 OAuth 连接 |
+
+## 凭证中心接口
+
+凭证中心把 NewAPI/OneAPI、Sub2API、原生 OAuth、通用 API Key 和 Vault 凭证放进同一套控制面。标准脚本流程是：
+
+1. `POST /api/credential-imports/preview` 识别格式并创建持久化预览任务
+2. 检查逐项 `validation`、兼容目标、批内重复项和安全摘要
+3. 使用原始输入、`importJobId` 和 `batchFingerprint` 调用 `POST /api/credential-imports/promote`
+4. 通过任务、生命周期和导出接口继续治理
+
+> [!IMPORTANT]
+> 预览和任务接口不保存原始输入，也不返回 token、密码、Cookie、refresh token 或备份口令。持久化内容只有格式、身份摘要、secret presence、指纹、校验结果和目标实体 ID。
+
+### 1. 导入目标和冲突策略
+
+支持的目标：
+
+| `target` | 作用 | `siteId` |
+|------|------|------|
+| `new_api` | 创建或更新 NewAPI/OneAPI 风格 Session、用户名密码或 API Key 账号 | 必填，且站点能力必须兼容 |
+| `sub2api` | 写入 Sub2API access token、refresh token 和过期时间 | 必填，站点平台必须是 `sub2api` |
+| `native_oauth` | 进入 r-api 原生 OAuth 账号与刷新流程 | 不绑定站点 |
+| `api_key` | 创建或更新支持 API Key 的站点账号 | 必填 |
+| `vault` | 加密保存为 Vault 项，不自动变成可路由账号 | 必填 |
+
+冲突策略：
+
+| `conflictPolicy` | 说明 |
+|------|------|
+| `skip` | 默认值；命中相同 provider 身份、站点账号或秘密指纹时跳过 |
+| `update` | 更新已有账号或凭证，并复用现有验证、登录、OAuth 或路由刷新流程 |
+| `create_duplicate` | 创建独立副本；原生 OAuth 不支持，同用户名密码账号也不允许重复创建 |
+
+支持识别 Cockpit `cockpit-tools.account-transfer` v1、r-api transfer/backup、原生 OAuth JSON、Sub2API bundle/data、NewAPI/OneAPI 常见字段、浏览器 Cookie/Storage 和单条或批量 API Key。无法恢复的条目会标为 `metadata_only` 或 `unsupported`，不会伪装成可导入凭证。
+
+### 2. 预览凭证导入
+
+`POST /api/credential-imports/preview`
+
+请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `input` | 任意 JSON 或字符串 | 是 | 原始凭证输入；最大 2MB |
+| `target` | `string` | 建议是 | 要执行导入时必须在预览阶段确定目标 |
+| `siteId` | `number` | 视目标 | 除 `native_oauth` 外均必填 |
+| `conflictPolicy` | `string` | 否 | `skip`、`update` 或 `create_duplicate` |
+| `idempotencyKey` | `string` | 否 | 操作者范围内的预览幂等键，也可放在 `Idempotency-Key` 请求头 |
+| `operatorId` | `string` | 否 | 审计操作者，默认 `webui:admin` |
+| `passphrase` | `string` | 否 | 输入为 `r-api.credential-backup` 加密备份时提供 |
+
+示例：
+
+```bash
+curl -sS "${METAPI_ADMIN_BASE_URL}/api/credential-imports/preview" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: migration-2026-08-13-batch-1" \
+  -d '{
+    "target": "sub2api",
+    "siteId": 8,
+    "conflictPolicy": "update",
+    "input": {
+      "type": "sub2api-bundle",
+      "accounts": [
+        {
+          "account_id": "provider-account-1",
+          "access_token": "<ACCESS_TOKEN>",
+          "refresh_token": "<REFRESH_TOKEN>",
+          "token_expires_at": 1786608000000
+        }
+      ]
+    }
+  }'
+```
+
+安全响应摘要：
+
+```json
+{
+  "success": true,
+  "importJobId": "5e665b27-46d5-42a2-9a45-5fc89e797531",
+  "deduplicated": false,
+  "status": "previewed",
+  "detection": {
+    "format": "sub2api_bundle",
+    "provider": "sub2api",
+    "isBatch": true,
+    "confidence": "high",
+    "warnings": []
+  },
+  "batchFingerprint": "<SHA256>",
+  "duplicateCount": 0,
+  "candidates": [
+    {
+      "candidate": {
+        "provider": "sub2api",
+        "kind": "oauth_token_set",
+        "identity": {
+          "externalId": "provider-account-1"
+        },
+        "secretSummary": {
+          "accessToken": true,
+          "refreshToken": true
+        },
+        "fingerprint": "<SHA256>",
+        "compatibleTargets": ["sub2api", "vault"]
+      },
+      "validation": {
+        "status": "ready",
+        "target": "sub2api",
+        "errors": [],
+        "warnings": []
+      }
+    }
+  ]
+}
+```
+
+`validation.status` 可能是 `ready`、`incomplete`、`metadata_only` 或 `unsupported`。同一批次内的重复项会带 `duplicateOfIndex`。
+
+同一个 `operatorId + idempotencyKey` 重试会返回原任务并设置 `deduplicated: true`；如果该键对应的输入、目标、站点或冲突策略发生变化，则返回 `409`。
+
+### 3. 执行预览任务
+
+`POST /api/credential-imports/promote`
+
+执行必须提交与预览完全一致的原始 `input`、`target`、`siteId`、`conflictPolicy`、`operatorId`，以及预览返回的 `importJobId` 和 `batchFingerprint`。
+
+```bash
+curl -sS "${METAPI_ADMIN_BASE_URL}/api/credential-imports/promote" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "importJobId": "5e665b27-46d5-42a2-9a45-5fc89e797531",
+    "target": "sub2api",
+    "siteId": 8,
+    "conflictPolicy": "update",
+    "batchFingerprint": "<PREVIEW_BATCH_FINGERPRINT>",
+    "input": {
+      "type": "sub2api-bundle",
+      "accounts": [
+        {
+          "account_id": "provider-account-1",
+          "access_token": "<ACCESS_TOKEN>",
+          "refresh_token": "<REFRESH_TOKEN>",
+          "token_expires_at": 1786608000000
+        }
+      ]
+    }
+  }'
+```
+
+响应按条目给出 `imported`、`updated`、`skipped` 或 `failed`，并返回新建/更新后的 `accountId` 或 `vaultItemIds`。任务执行使用原子抢占；已完成或部分成功的任务重试会重放持久化结果，不会再次调用上游。
+
+如果原始输入发生变化，即使仍提交旧指纹，也会拒绝执行并要求重新预览。
+
+### 4. 查询持久化导入任务
+
+| 接口 | 作用 |
+|------|------|
+| `GET /api/credential-imports?limit=50&siteId=8` | 按创建时间倒序查询任务，`limit` 最大 200 |
+| `GET /api/credential-imports/:id` | 查询任务和逐项安全结果 |
+
+任务状态：
+
+- `previewed`：已预览，尚未执行
+- `running`：已被执行请求抢占
+- `completed`：全部处理完成
+- `partial`：部分成功、部分失败
+- `failed`：任务级失败
+
+详情会返回来源 schema/version、provider、kind、身份摘要、secret presence、兼容目标、指纹、校验结果、目标账号/Vault ID 和结果消息，不返回秘密或原始导入包。
+
+### 5. 导出凭证
+
+`POST /api/credential-exports`
+
+请求范围可以用 `siteId`、`accountIds` 和 `vaultItemIds` 限定。三者都不提供时，会导出当前全部账号和 Vault 项，因此自动化脚本应显式指定范围。
+
+| `mode` | 输出 schema | 说明 |
+|------|------|------|
+| `metadata_only` | `r-api.credential-transfer` v1 | 不含秘密，保留身份、状态、指纹、可恢复性和 secret presence |
+| `encrypted_backup` | `r-api.credential-backup` v1 | 使用 scrypt + AES-256-GCM 加密可恢复内容 |
+| `portable_secret` | `r-api.credential-transfer` v1 | 包含明文迁移秘密，只适合受控的一次性迁移 |
+
+元数据导出：
+
+```bash
+curl -sS "${METAPI_ADMIN_BASE_URL}/api/credential-exports" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "metadata_only",
+    "accountIds": [12, 13],
+    "vaultItemIds": [7]
+  }'
+```
+
+加密备份：
+
+```bash
+curl -sS "${METAPI_ADMIN_BASE_URL}/api/credential-exports" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "encrypted_backup",
+    "siteId": 8,
+    "passphrase": "<AT_LEAST_12_CHARACTERS>",
+    "expiresInSec": 86400
+  }'
+```
+
+`passphrase` 至少 12 个字符；`expiresInSec` 可选，最大 30 天。返回的加密 envelope 可以原样作为导入 `input`，并在预览和执行时传同一 `passphrase`。
+
+明文迁移导出必须显式确认：
+
+```json
+{
+  "mode": "portable_secret",
+  "accountIds": [12],
+  "confirmation": "EXPORT_SECRETS"
+}
+```
+
+所有导出都会写入审计事件，但审计内容不包含凭证或备份口令。明文迁移文件下载后应立即转移并删除本地副本。
+
+### 6. 统一生命周期
+
+`GET /api/credential-lifecycle`
+
+可选查询参数：
+
+| 参数 | 值 |
+|------|------|
+| `siteId` | 站点 ID |
+| `entityType` | `account` 或 `vault_item` |
+| `status` | `active`、`expiring`、`expired`、`refreshing`、`refresh_failed`、`revoked`、`invalid`、`disabled`、`metadata_only` |
+
+每条记录会声明：
+
+- `statusReason`：状态解释
+- `refreshOwner`：`r_api`、`external` 或 `none`
+- `actions`：当前允许的 `validate`、`refresh`、`enable`、`disable`、`revoke`
+- `provenance`：最近一次导入任务、来源格式、操作者和冲突策略
+
+批量操作：
+
+`POST /api/credential-lifecycle/actions`
+
+```json
+{
+  "action": "refresh",
+  "items": [
+    { "entityType": "account", "entityId": 12 },
+    { "entityType": "account", "entityId": 13 }
+  ]
+}
+```
+
+`action` 支持 `validate`、`refresh`、`enable`、`disable`、`revoke`，单次最多 200 项。OAuth 刷新复用现有 lease/CAS 协调器，Sub2API 刷新复用现有 singleflight；只有 `refreshOwner: r_api` 的账号允许托管刷新。
+
+> [!WARNING]
+> 账号 `revoke` 是 **r-api 本地控制面撤销**：会退出路由并清除本地 access/API/OAuth/refresh/password 秘密，同时保留 provider 身份和 provenance。该操作不宣称已经调用上游 provider 的 revoke 接口。
+
+### 7. Vault 管理
+
+| 接口 | 作用 |
+|------|------|
+| `GET /api/credential-vault?siteId=8&status=active` | 查询 Vault 安全摘要 |
+| `POST /api/credential-vault` | 加密保存单条凭证 |
+| `POST /api/credential-vault/:id/revoke` | 撤销 Vault 凭证 |
+| `DELETE /api/credential-vault/:id` | 永久删除 Vault 凭证 |
+
+`status` 支持 `active`、`disabled`、`revoked` 和 `expired`。列表只返回名称、kind、状态、指纹、metadata、到期时间和归属，不返回 ciphertext 或解密后的 secret。
+
+创建示例：
+
+```json
+{
+  "siteId": 8,
+  "name": "主账号 Session",
+  "kind": "session_token",
+  "secret": "<SESSION_TOKEN>",
+  "metadata": {
+    "source": "manual",
+    "username": "alice",
+    "adapterPlatform": "new-api"
+  },
+  "expiresAt": "2026-09-01T00:00:00.000Z"
+}
+```
 
 ## 常见失败返回
 

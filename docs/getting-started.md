@@ -44,7 +44,6 @@ services:
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       AUTH_TOKEN_HASH: ${AUTH_TOKEN_HASH:-}
       ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED: "true"
-      PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
       PORT: ${PORT:-4000}
@@ -60,14 +59,14 @@ services:
 export AUTH_TOKEN=your-admin-token
 # ACCOUNT_CREDENTIAL_SECRET = 独立的 Vault/账号凭证加密根密钥，不要与 AUTH_TOKEN 相同
 export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
-# PROXY_TOKEN = 下游客户端调用 /v1/* 使用的令牌
-export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
 
 ### 4. 访问管理后台
 
 打开 `http://localhost:4000`，首次使用 `AUTH_TOKEN` 的值登录。
+
+登录后进入「下游密钥」，创建项目级密钥；所有 `/v1/*` 外部请求都使用该密钥认证。
 
 > [!TIP]
 > 初始管理员登录凭据就是启动时配置的 `AUTH_TOKEN`。首次验证后，数据库只保留 Argon2id 哈希。
@@ -296,11 +295,11 @@ flowchart LR
 ```bash
 # 检查模型列表
 curl -sS http://localhost:4000/v1/models \
-  -H "Authorization: Bearer your-proxy-sk-token"
+  -H "Authorization: Bearer your-downstream-sk-key"
 
 # 测试对话
 curl -sS http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer your-proxy-sk-token" \
+  -H "Authorization: Bearer your-downstream-sk-key" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
@@ -318,7 +317,7 @@ Proxy API: http://127.0.0.1:4000/v1/chat/completions
 
 ```bash
 curl -sS http://127.0.0.1:4000/v1/models \
-  -H "Authorization: Bearer your-proxy-sk-token"
+  -H "Authorization: Bearer your-downstream-sk-key"
 ```
 
 如果你显式设置了 `METAPI_DESKTOP_SERVER_PORT`，再把上面的 `4000` 替换成日志里的实际端口。返回正常响应，说明代理链路已经可用。

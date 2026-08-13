@@ -32,7 +32,7 @@ When deploying r-api, please consider / 部署 r-api 时，请考虑:
 ### Credential Storage / 凭证存储
 
 - All sensitive credentials (API keys, passwords) are encrypted at rest in the database / 所有敏感凭证（API 密钥、密码）在数据库中静态加密存储
-- Use strong `AUTH_TOKEN` and `PROXY_TOKEN` values / 使用强 `AUTH_TOKEN` 和 `PROXY_TOKEN` 值
+- Use a strong admin credential and scoped project-level downstream keys / 使用强管理员凭据和有范围限制的项目级下游密钥
 - Never commit `.env` files or expose tokens in logs / 切勿提交 `.env` 文件或在日志中暴露令牌
 
 ### Network Security / 网络安全

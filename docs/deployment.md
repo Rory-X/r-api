@@ -67,11 +67,10 @@
 | `AUTH_TOKEN` | 首次初始化管理员登录凭据（请设置强密码） |
 | `AUTH_TOKEN_HASH` | 可选 Argon2id 初始化哈希；设置后优先于 `AUTH_TOKEN` |
 | `ACCOUNT_CREDENTIAL_SECRET` | 独立 Vault/账号凭证加密根密钥，必须与管理员凭据分离 |
-| `PROXY_TOKEN` | 下游客户端调用 `/v1/*` 时使用的 Bearer Token |
 | `TZ` | 服务时区，影响定时任务和日志（如 `Asia/Shanghai`） |
 | `PORT` | 内部监听端口（默认 `4000`，一般无需修改） |
 
-部署完成后，通过 Zeabur 分配的域名访问后台管理面板即可。
+部署完成后，通过 Zeabur 分配的域名访问后台管理面板，并在「下游密钥」中创建项目级密钥。
 
 ---
 
@@ -140,7 +139,6 @@
 | `ADMIN_SESSION_TTL_MS` | HttpOnly 管理会话有效期 | `43200000` |
 | `ADMIN_COOKIE_SECURE` | 反向代理无法传递 HTTPS 协议时强制安全 Cookie | `true` |
 | `TRUST_PROXY` | 可信反向代理 IP/CIDR；不要对直连公网实例设为 `true` | Render/网关实际代理地址 |
-| `PROXY_TOKEN` | 代理接口 Bearer Token（**必填**） | 你的代理密钥 |
 | `DB_TYPE` | 数据库类型（**必填**） | `mysql` |
 | `DB_URL` | TiDB 连接串（**必填**） | `mysql://user:pass@host:4000/db?ssl=...` |
 | `DB_SSL` | 启用 SSL 连接 | `true` |
@@ -174,7 +172,6 @@ mkdir r-api && cd r-api
 # 设置环境变量
 export AUTH_TOKEN=your-admin-token
 export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
-export PROXY_TOKEN=your-proxy-sk-token
 
 # 启动
 docker compose up -d
@@ -188,7 +185,6 @@ docker compose up -d
 # .env
 AUTH_TOKEN=your-admin-token
 ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
-PROXY_TOKEN=your-proxy-sk-token
 TZ=Asia/Shanghai
 PORT=4000
 ```
@@ -206,7 +202,6 @@ docker run -d --name r-api \
   -p 4000:4000 \
   -e ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret \
   -e AUTH_TOKEN=your-admin-token \
-  -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \

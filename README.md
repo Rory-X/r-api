@@ -349,7 +349,6 @@ services:
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       AUTH_TOKEN_HASH: ${AUTH_TOKEN_HASH:-}
       ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED: "true"
-      PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
       PORT: ${PORT:-4000}
@@ -363,8 +362,6 @@ EOF
 export AUTH_TOKEN=your-admin-token
 # 独立 Vault/账号凭证加密根密钥，不要与 AUTH_TOKEN 相同
 export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
-# PROXY_TOKEN = 下游客户端调用 /v1/* 的 Token
-export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
 
@@ -376,7 +373,6 @@ docker run -d --name r-api \
   -p 4000:4000 \
   -e ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret \
   -e AUTH_TOKEN=your-admin-token \
-  -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
@@ -385,7 +381,7 @@ docker run -d --name r-api \
 
 </details>
 
-启动后访问 `http://localhost:4000`，用 `AUTH_TOKEN` 登录即可。
+启动后访问 `http://localhost:4000`，用 `AUTH_TOKEN` 登录；随后在「下游密钥」中创建项目级密钥，用于调用 `/v1/*`。
 
 > [!NOTE]
 > Docker 镜像支持 `amd64`、`arm64` 和 `armv7l`（`linux/arm/v7`）服务端部署。
@@ -393,7 +389,7 @@ docker run -d --name r-api \
 
 <!-- markdownlint-disable-next-line MD028 -->
 > [!IMPORTANT]
-> 首次部署请设置 `AUTH_TOKEN` 或 `AUTH_TOKEN_HASH`，并单独设置 `ACCOUNT_CREDENTIAL_SECRET` 与 `PROXY_TOKEN`。数据存储在 `./data` 目录，升级不会丢失。
+> 首次部署请设置 `AUTH_TOKEN` 或 `AUTH_TOKEN_HASH`，并单独设置 `ACCOUNT_CREDENTIAL_SECRET`。数据存储在 `./data` 目录，升级不会丢失。
 
 > [!TIP]
 > 初始管理员登录凭据来自 `AUTH_TOKEN`，也可以预先提供 `AUTH_TOKEN_HASH`。

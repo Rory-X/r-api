@@ -87,7 +87,7 @@
 
 ### Q: 登录失败，提示登录凭据无效
 
-**A:** 先确认你输入的是管理员登录凭据，而不是代理令牌。首次登录使用 `AUTH_TOKEN`，注意：
+**A:** 先确认你输入的是管理员登录凭据，而不是项目级下游密钥。首次登录使用 `AUTH_TOKEN`，注意：
 
 - 初始管理员登录凭据 = 启动时设置的 `AUTH_TOKEN`，或 `AUTH_TOKEN_HASH` 对应的明文
 - 如果你在非 Compose 场景未显式设置 `AUTH_TOKEN`，默认值是 `change-me-admin-token`（仅建议本地调试）
@@ -102,7 +102,6 @@
 ```bash
 export AUTH_TOKEN=your-token
 export ACCOUNT_CREDENTIAL_SECRET=your-32-byte-random-secret
-export PROXY_TOKEN=your-proxy-token
 docker compose up -d
 ```
 
@@ -143,7 +142,7 @@ docker compose up -d
 
 **A:** 排查：
 
-- 确认使用的是 `PROXY_TOKEN`（代理令牌），而非 `AUTH_TOKEN`（管理令牌）
+- 确认使用的是「下游密钥」页面创建的项目级密钥，而非 `AUTH_TOKEN`（管理凭据）
 - 确认反向代理正确透传了 `Authorization` 请求头
 - 检查是否设置了 `ADMIN_IP_ALLOWLIST` 限制了访问
 
@@ -189,16 +188,12 @@ docker compose up -d
 
 ### Q: 如何限制不同项目/团队的用量
 
-**A:** 在管理后台 **设置 → 下游 API Key** 中为每个项目创建独立的 Key，可单独配置：
+**A:** 在管理后台 **控制台 → 下游密钥** 中为每个项目创建独立的 Key，可单独配置：
 
 - 费用上限（MaxCost）和请求上限（MaxRequests）
 - 模型白名单（限制可用模型，支持通配符和正则）
 - 路由白名单（限制可走的路由规则）
 - 站点倍率（控制不同项目的上游偏好）
-
-### Q: 下游 Key 和 PROXY_TOKEN 有什么区别
-
-**A:** `PROXY_TOKEN` 是全局代理令牌，拥有完整权限。下游 Key 是项目级的细粒度控制，可设置过期时间、用量上限和模型限制，适合多团队共用的场景。
 
 ---
 
