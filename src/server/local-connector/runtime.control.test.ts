@@ -250,6 +250,93 @@ describe('local connector control runtime', () => {
     expect(JSON.stringify(emitEvent.mock.calls)).not.toContain('历史回复');
   });
 
+  it('notifies a non-retrying App Server error once even if turn/completed arrives later', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'metapi-runtime-terminal-error-'));
+    roots.push(dataDir);
+    const controller = new AbortController();
+    control.listThreads.mockResolvedValue([{
+      threadId: 'thread-rate-limited',
+      title: 'Rate limited task',
+      cwd: '/private/workspace',
+      status: 'active',
+      activeFlags: [],
+      createdAt: null,
+      updatedAt: '2026-08-13T02:00:00.000Z',
+    }]);
+    const emitEvent = vi.fn(async () => undefined);
+    const client = {
+      emitEvent,
+      completeAction: vi.fn(async () => undefined),
+      completeBridgeContinuation: vi.fn(async () => undefined),
+      emitBridgeAppServerEvent: vi.fn(async () => undefined),
+      claimNextAction: vi.fn(async () => null),
+      claimNextBridgeContinuation: vi.fn(async () => null),
+      syncThreadSnapshots: vi.fn(async () => true),
+    };
+    const runtime = new LocalConnectorRuntime(
+      config(dataDir),
+      join(dataDir, 'config.json'),
+      { executable: '/usr/bin/node', argv: ['/opt/connector.js'] },
+      client as never,
+    );
+
+    const running = runtime.run({
+      signal: controller.signal,
+      controlAppServer: true,
+      dashboard: false,
+    });
+    await vi.waitFor(() => expect(control.options?.onNotification).toBeTypeOf('function'));
+    await control.options?.onNotification?.({
+      kind: 'error',
+      threadId: 'thread-rate-limited',
+      turnId: 'turn-rate-limited',
+      failure: {
+        source: 'error_notification',
+        message: 'rate limited',
+        codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+        willRetry: true,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(emitEvent).not.toHaveBeenCalled();
+
+    await control.options?.onNotification?.({
+      kind: 'error',
+      threadId: 'thread-rate-limited',
+      turnId: 'turn-rate-limited',
+      failure: {
+        source: 'error_notification',
+        message: 'rate limited',
+        codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+        willRetry: false,
+      },
+    });
+    await control.options?.onNotification?.({
+      kind: 'turn_completed',
+      threadId: 'thread-rate-limited',
+      turnId: 'turn-rate-limited',
+      status: 'failed',
+      assistantMessage: null,
+      failure: {
+        source: 'turn_completed',
+        message: 'rate limited',
+        codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+        willRetry: false,
+      },
+    });
+    await vi.waitFor(() => expect(emitEvent).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await running;
+
+    expect(emitEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'notify',
+      title: 'Rate limited task · Codex 会话失败',
+      level: 'error',
+      idempotencyKey: 'turn:thread-rate-limited:turn-rate-limited',
+      message: expect.stringContaining('错误：rate limited'),
+    }));
+  });
+
   it('notifies an ephemeral completion from active to idle without reading turns', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'metapi-runtime-ephemeral-completion-'));
     roots.push(dataDir);

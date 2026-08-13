@@ -13,6 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
     getInteractionRequests: vi.fn(),
     getBridgeContinuationTasks: vi.fn(),
     getBridgeContinuationTask: vi.fn(),
+    getGlobalBridgeContinuation: vi.fn(),
     takeOverLocalConnectorSession: vi.fn(),
     createManualBridgePromptTask: vi.fn(),
     stopBridgeContinuationTask: vi.fn(),
@@ -119,6 +120,11 @@ describe('BridgeContinuations page', () => {
       }],
     });
     apiMock.getBridgeContinuationTasks.mockResolvedValue({ success: true, items: [task] });
+    apiMock.getGlobalBridgeContinuation.mockResolvedValue({
+      success: true,
+      config: { enabled: false, policy: task.state.policy, updatedAt: null },
+      coverage: { eligible: 0, covered: 0, created: 0, blocked: 0 },
+    });
     apiMock.getInteractionRequests.mockResolvedValue({ success: true, items: [] });
     apiMock.getLocalConnectorThreads.mockResolvedValue({
       success: true,
@@ -325,6 +331,41 @@ describe('BridgeContinuations page', () => {
     }
   });
 
+  it('keeps manual messaging available while global mode owns automatic continuation', async () => {
+    const task = createTask();
+    apiMock.getGlobalBridgeContinuation.mockResolvedValue({
+      success: true,
+      config: {
+        enabled: true,
+        policy: task.state.policy,
+        updatedAt: '2026-08-13T01:00:00.000Z',
+      },
+      coverage: { eligible: 1, covered: 1, created: 0, blocked: 0 },
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/local-connector/device-1/sessions']}>
+            <Routes>
+              <Route path="/local-connector/:deviceId/sessions" element={<ToastProvider><BridgeContinuations /></ToastProvider>} />
+            </Routes>
+          </MemoryRouter>,
+        );
+      });
+      await flush();
+
+      const text = collectText(root.root);
+      expect(text).toContain('所有会话自动续跑已开启');
+      expect(text).toContain('由所有会话自动续跑统一管理');
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).trim() === '开启自动续跑')).toHaveLength(0);
+      expect(root.root.findAll((node) => node.type === 'textarea' && node.props['aria-label'] === '会话消息')).toHaveLength(1);
+    } finally {
+      await act(async () => { root?.unmount(); });
+    }
+  });
+
   it('selects the session requested by the overview deep link', async () => {
     apiMock.getLocalConnectorThreads.mockResolvedValue({
       success: true,
@@ -468,6 +509,15 @@ describe('BridgeContinuations page', () => {
       expect(collectText(root.root)).toContain('话题已绑定');
       expect(collectText(root.root)).toContain('thread-one 完成通知');
       expect(apiMock.getLocalConnectorThreadActivity).toHaveBeenCalledWith('device-1', 'thread-one', 160);
+
+      const topicTechnicalInfo = root.root.find((node) => (
+        node.type === 'button' && collectText(node).trim() === '话题技术信息'
+      ));
+      expect(topicTechnicalInfo.props['aria-expanded']).toBe(false);
+      expect(topicTechnicalInfo.findByProps({ className: 'ui-disclosure-chevron' }).findByType('svg')).toBeTruthy();
+      await act(async () => { topicTechnicalInfo.props.onClick(); });
+      expect(topicTechnicalInfo.props['aria-expanded']).toBe(true);
+      expect(collectText(root.root)).toContain('Binding ID：topic-one');
 
       const secondSession = root.root.find((node) => (
         node.type === 'button'

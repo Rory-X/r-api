@@ -33,6 +33,7 @@ import {
   syncLocalConnectorThreadSnapshots,
 } from '../../services/localConnectorThreadService.js';
 import { takeOverLocalConnectorThread } from '../../services/localConnectorControlPlaneService.js';
+import { isGlobalBridgeContinuationConflict } from '../../services/globalBridgeContinuationConfigService.js';
 import { getLocalConnectorThreadActivity } from '../../services/localConnectorThreadActivityService.js';
 import type { BridgeContinuationPolicyInput } from '../../services/bridgeContinuationContract.js';
 import { normalizeBridgeAppServerEventWire } from '../../local-connector/protocol.js';
@@ -131,7 +132,12 @@ export async function localConnectorRoutes(app: FastifyInstance) {
       return reply.code(result.created ? 201 : 200).send({ success: true, ...result });
     } catch (error) {
       const message = errorMessage(error);
-      return reply.code(message.includes('不属于') ? 404 : 400).send({ success: false, message });
+      const statusCode = isGlobalBridgeContinuationConflict(error)
+        ? 409
+        : message.includes('不属于')
+          ? 404
+          : 400;
+      return reply.code(statusCode).send({ success: false, message });
     }
   });
 

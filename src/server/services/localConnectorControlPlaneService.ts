@@ -40,10 +40,12 @@ export async function takeOverLocalConnectorThread(input: {
   deviceId: unknown;
   threadId: unknown;
   policy?: BridgeContinuationPolicyInput;
+  creationSource?: 'single' | 'global';
 }): Promise<Readonly<{
   created: boolean;
   task: BridgeContinuationTaskRecord;
 }>> {
+  const creationSource = input.creationSource === 'global' ? 'global' : 'single';
   const deviceId = normalizeId(input.deviceId, 'Connector 设备 ID', 128);
   const threadId = normalizeId(input.threadId, 'Codex Thread ID', 256);
   await requireActiveLocalConnectorDevice(deviceId, 'app_server.control');
@@ -61,6 +63,7 @@ export async function takeOverLocalConnectorThread(input: {
     threadId,
     sessionKey: sessionKey(deviceId, threadId),
     policy: input.policy,
+    creationSource,
   });
   if (result.task.deviceId !== deviceId || result.task.state.threadId !== threadId) {
     throw new Error('现有 Bridge 会话与 Connector 上下文不匹配');

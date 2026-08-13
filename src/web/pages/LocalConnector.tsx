@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   api,
   type BridgeContinuationTask,
   type BridgeContinuationTaskStatus,
+  type GlobalBridgeContinuationConfig,
+  type GlobalBridgeContinuationCoverage,
   type LocalConnectorAction,
   type LocalConnectorDevice,
   type LocalConnectorScope,
@@ -12,7 +14,8 @@ import {
 import BoundedHistoryList from '../components/BoundedHistoryList.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
-import { Button, Checkbox, Disclosure, Input, Option, Select, useConfirmDialog } from '../components/ui/index.js';
+import { Button, Checkbox, Input, Option, Select, Switch, useConfirmDialog } from '../components/ui/index.js';
+import FeishuInteractionAdaptersPanel from './interactions/FeishuInteractionAdaptersPanel.js';
 
 const SCOPE_OPTIONS: Array<{ value: LocalConnectorScope; label: string }> = [
   { value: 'hooks.manage', label: '管理 Hook 安装' },
@@ -30,6 +33,7 @@ type ActionKind = 'hook' | 'notify';
 type ActionOperation = 'install' | 'backup' | 'rollback' | 'uninstall';
 type ActionAgent = 'codex' | 'claude_code';
 type ThreadFilter = 'all' | 'active' | 'attention' | 'idle' | 'error';
+type LocalConnectorView = 'sessions' | 'settings' | 'feishu';
 
 function formatDate(value?: string | number | null): string {
   if (value === null || value === undefined || value === '') return '-';
@@ -105,17 +109,27 @@ function matchesThreadFilter(thread: LocalConnectorThread, filter: ThreadFilter)
 }
 
 export default function LocalConnector() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { success, error, info } = useToast();
   const isMobile = useIsMobile();
   const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const [devices, setDevices] = useState<LocalConnectorDevice[]>([]);
   const [threads, setThreads] = useState<LocalConnectorThread[]>([]);
   const [tasks, setTasks] = useState<BridgeContinuationTask[]>([]);
+  const [globalContinuation, setGlobalContinuation] = useState<GlobalBridgeContinuationConfig | null>(null);
+  const [globalCoverage, setGlobalCoverage] = useState<GlobalBridgeContinuationCoverage>({
+    eligible: 0,
+    covered: 0,
+    created: 0,
+    blocked: 0,
+  });
   const [actions, setActions] = useState<LocalConnectorAction[]>([]);
   const [threadSearch, setThreadSearch] = useState('');
   const [threadFilter, setThreadFilter] = useState<ThreadFilter>('all');
   const [threadDeviceId, setThreadDeviceId] = useState('');
   const [takeoverThreadKey, setTakeoverThreadKey] = useState('');
+  const [globalContinuationSaving, setGlobalContinuationSaving] = useState(false);
   const [deviceName, setDeviceName] = useState('本机 Connector');
   const [scopes, setScopes] = useState<LocalConnectorScope[]>([
     'hooks.manage',
@@ -137,7 +151,13 @@ export default function LocalConnector() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const requestedView = searchParams.get('view');
+  const activeView: LocalConnectorView = requestedView === 'settings' || requestedView === 'feishu'
+    ? requestedView
+    : 'sessions';
+
   const activeDevices = useMemo(() => devices.filter((device) => device.status === 'active'), [devices]);
+  const feishuDeviceId = selectedDeviceId || activeDevices[0]?.id || '';
   const deviceById = useMemo(() => new Map(devices.map((device) => [device.id, device])), [devices]);
   const latestAutomaticTaskByThread = useMemo(() => {
     const result = new Map<string, BridgeContinuationTask>();
@@ -171,16 +191,19 @@ export default function LocalConnector() {
   const load = async () => {
     setLoading(true);
     try {
-      const [deviceResponse, threadResponse, taskResponse, actionResponse] = await Promise.all([
+      const [deviceResponse, threadResponse, taskResponse, globalResponse, actionResponse] = await Promise.all([
         api.getLocalConnectorDevices(),
         api.getLocalConnectorThreads({ limit: 200 }),
         api.getBridgeContinuationTasks({ limit: 200 }),
+        api.getGlobalBridgeContinuation(),
         api.getLocalConnectorActions(),
       ]);
       const deviceItems = Array.isArray(deviceResponse.items) ? deviceResponse.items : [];
       setDevices(deviceItems);
       setThreads(Array.isArray(threadResponse.items) ? threadResponse.items : []);
       setTasks(Array.isArray(taskResponse.items) ? taskResponse.items : []);
+      setGlobalContinuation(globalResponse.config);
+      setGlobalCoverage(globalResponse.coverage);
       setActions(Array.isArray(actionResponse.items) ? actionResponse.items : []);
       setSelectedDeviceId((current) => current || deviceItems.find((item) => item.status === 'active')?.id || '');
     } catch (err: any) {
@@ -206,6 +229,7 @@ export default function LocalConnector() {
       const response = await api.takeOverLocalConnectorSession({
         deviceId: thread.deviceId,
         threadId: thread.threadId,
+        policy: { enabled: true },
       });
       setTasks((current) => [response.task, ...current.filter((task) => task.state.taskId !== response.task.state.taskId)]);
       if (response.created) success('会话接管事务已创建，等待本地 Connector 执行');
@@ -215,6 +239,25 @@ export default function LocalConnector() {
       error(err?.message || '接管会话失败');
     } finally {
       setTakeoverThreadKey('');
+    }
+  };
+
+  const toggleGlobalContinuation = async (enabled: boolean) => {
+    setGlobalContinuationSaving(true);
+    try {
+      const response = await api.updateGlobalBridgeContinuation({ enabled });
+      setGlobalContinuation(response.config);
+      setGlobalCoverage(response.coverage);
+      await refreshTasks();
+      if (enabled) {
+        success(`全局自动续跑已开启，当前覆盖 ${response.coverage.covered}/${response.coverage.eligible} 个可控会话`);
+      } else {
+        success('全局自动续跑已关闭，单会话续跑可重新创建');
+      }
+    } catch (err: any) {
+      error(err?.message || '更新全局自动续跑失败');
+    } finally {
+      setGlobalContinuationSaving(false);
     }
   };
 
@@ -316,6 +359,10 @@ export default function LocalConnector() {
     }
   };
 
+  const selectView = (view: LocalConnectorView) => {
+    setSearchParams(view === 'sessions' ? {} : { view });
+  };
+
   const renderAction = (action: LocalConnectorAction) => (
     <div className="local-connector-action-row">
       <div style={{ minWidth: 0 }}>
@@ -344,8 +391,8 @@ export default function LocalConnector() {
       <div className="animate-fade-in local-connector-page">
       <div className="page-header">
         <div>
-          <h2 className="page-title">Codex 会话接管</h2>
-          <p className="page-subtitle">Local Connector 上报会话状态；线上按会话下发 Prompt、接管事务并记录回执。</p>
+          <h2 className="page-title">本地 Connector</h2>
+          <p className="page-subtitle">本地 Connector 负责上报会话、维护本地健康状态，并承载会话接管、交互审批与飞书配置。</p>
         </div>
         <Button type="button" className="btn btn-ghost local-connector-refresh" onClick={() => void load()} title="刷新会话与事务">
           <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -355,12 +402,47 @@ export default function LocalConnector() {
         </Button>
       </div>
 
-      <section className="card local-session-overview">
-        <div className="local-session-summary" aria-label="会话状态摘要">
-          <div><span>已上报会话</span><strong>{summary.total}</strong></div>
-          <div><span>正在运行</span><strong>{summary.active}</strong></div>
-          <div><span>需要关注</span><strong>{summary.attention}</strong></div>
-          <div><span>接管事务</span><strong>{summary.takeover}</strong></div>
+      <nav className="tabs local-connector-tabs" aria-label="本地 Connector 导航">
+        <button type="button" className={`tab ${activeView === 'sessions' ? 'active' : ''}`} onClick={() => selectView('sessions')}>会话接管</button>
+        <button type="button" className={`tab ${activeView === 'settings' ? 'active' : ''}`} onClick={() => selectView('settings')}>本地设置</button>
+        <button type="button" className={`tab ${activeView === 'feishu' ? 'active' : ''}`} onClick={() => selectView('feishu')}>飞书</button>
+      </nav>
+
+      {activeView === 'sessions' && <section className="card local-session-overview">
+        <div className="local-session-overview-header">
+          <div className="local-session-overview-intro">
+            <span className="local-session-overview-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" focusable="false">
+                <path d="M4.5 5.5h11M4.5 10h7M4.5 14.5h9" />
+                <circle cx="15" cy="10" r="1.75" />
+              </svg>
+            </span>
+            <div className="local-connector-section-heading">
+              <strong>会话概览</strong>
+              <span>查看本地 Connector 上报的 Codex 会话状态，并对需要继续运行的会话发起接管。</span>
+            </div>
+          </div>
+          <div className="local-session-summary" aria-label="会话状态摘要">
+            <div className="is-total"><span>已上报</span><strong>{summary.total}</strong></div>
+            <div className="is-active"><span>运行中</span><strong>{summary.active}</strong></div>
+            <div className="is-attention"><span>需关注</span><strong>{summary.attention}</strong></div>
+            <div className="is-takeover"><span>接管中</span><strong>{summary.takeover}</strong></div>
+          </div>
+        </div>
+
+        <div className="local-session-global-control">
+          <Switch
+            checked={globalContinuation?.enabled === true}
+            disabled={globalContinuationSaving}
+            onChange={(checked) => void toggleGlobalContinuation(checked)}
+            label="所有会话自动续跑"
+            description={globalContinuation?.enabled
+              ? `已覆盖 ${globalCoverage.covered}/${globalCoverage.eligible} 个当前可控会话；新会话和 Desktop 释放后的会话会自动纳入。`
+              : '开启后统一管理所有当前及后续可控会话，不再允许创建单会话自动续跑事务。'}
+          />
+          {globalContinuation?.enabled && globalCoverage.blocked > 0 ? (
+            <span className="badge badge-warning">{globalCoverage.blocked} 个会话等待新活动后重试</span>
+          ) : null}
         </div>
 
         <div className="local-session-toolbar">
@@ -390,7 +472,7 @@ export default function LocalConnector() {
             <span>Codex 状态</span>
             <span>来源 / Connector</span>
             <span>接管事务</span>
-            <span>最近上报</span>
+            <span>最近活跃</span>
             <span className="ui-visually-hidden">操作</span>
           </div>
           {threads.length === 0 && <div className="local-session-empty">尚未收到本地 Connector 上报的 Codex 会话</div>}
@@ -424,11 +506,15 @@ export default function LocalConnector() {
                   <small title={taskStatus.detail}>{taskStatus.detail}</small>
                   {task && <time>{formatDate(task.state.updatedAtMs)}</time>}
                 </div>
-                <time className="local-session-seen" role="cell">{formatDate(thread.lastSeenAt)}</time>
+                <time className="local-session-seen" role="cell" title={thread.lastActiveAt ? `最近活跃：${formatDate(thread.lastActiveAt)}` : '尚未捕获会话活动'}>{formatDate(thread.lastActiveAt)}</time>
                 <div className="local-session-row-actions" role="cell">
                   <Link className="btn btn-ghost" to={workspaceUrl}>{thread.controlState === 'external_owner' ? '打开并发消息' : '进入会话'}</Link>
                   {activeTask ? (
                     <Link className="btn btn-soft-primary" to={workspaceUrl}>查看接管</Link>
+                  ) : globalContinuation?.enabled && canControl ? (
+                    <span className="local-session-control-note">
+                      {thread.controlState === 'external_owner' ? '全局模式已开启，等待 Desktop 释放' : '由全局自动续跑管理'}
+                    </span>
                   ) : canTakeOver ? (
                     <Button
                       type="button"
@@ -449,17 +535,13 @@ export default function LocalConnector() {
             );
           })}
         </div>
-      </section>
+      </section>}
 
-      <section className="card local-connector-settings">
-        <Disclosure
-          title={(
-            <span className="local-connector-settings-title">
-              <strong>Connector 设置</strong>
-              <small>{activeDevices.length} 个在线设备 · 配对、权限和本地 Hook / Notify 运维</small>
-            </span>
-          )}
-        >
+      {activeView === 'settings' && <section className="card local-connector-settings">
+          <div className="local-connector-settings-title local-connector-settings-heading">
+            <strong>本地设置</strong>
+            <small>{activeDevices.length} 个在线设备 · 配对、权限和本地 Hook / Notify 运维</small>
+          </div>
           <div className="local-connector-settings-content">
             <section className="local-connector-settings-section">
               <div className="local-connector-section-heading">
@@ -583,8 +665,23 @@ export default function LocalConnector() {
               />
             </section>
           </div>
-        </Disclosure>
-      </section>
+      </section>}
+
+      {activeView === 'feishu' && (
+        feishuDeviceId ? (
+          <FeishuInteractionAdaptersPanel
+            deviceId={feishuDeviceId}
+            onRequestSelect={(requestId) => navigate(`/local-connector/${encodeURIComponent(feishuDeviceId)}/interactions?view=approvals&request=${encodeURIComponent(requestId)}`)}
+            onDispatchComplete={() => undefined}
+          />
+        ) : (
+          <section className="card local-connector-empty-panel">
+            <strong>还没有可用的 Connector</strong>
+            <span>请先在“本地设置”中配对一个 Connector，之后才能配置飞书连接。</span>
+            <Button type="button" className="btn btn-primary" onClick={() => selectView('settings')}>去配对 Connector</Button>
+          </section>
+        )
+      )}
         {confirmationDialog}
       </div>
     </div>

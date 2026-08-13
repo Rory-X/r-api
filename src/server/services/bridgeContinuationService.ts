@@ -17,6 +17,10 @@ import {
   type CodexThreadActiveFlag,
   type CodexThreadStatus,
 } from './bridgeContinuationContract.js';
+import {
+  assertSingleBridgeContinuationCreationAllowed,
+  GLOBAL_BRIDGE_CONTINUATION_REQUESTED_BY,
+} from './globalBridgeContinuationConfigService.js';
 import type { BridgeContinuationLease } from './bridgeContinuationLease.js';
 import { recordLocalConnectorThreadEvent } from './localConnectorThreadService.js';
 import {
@@ -568,8 +572,11 @@ export async function createBridgeContinuationTask(input: {
   threadId: unknown;
   deviceId?: unknown;
   policy?: BridgeContinuationPolicyInput;
+  creationSource?: 'single' | 'global';
   now?: Date | number;
 }): Promise<Readonly<{ created: boolean; task: BridgeContinuationTaskRecord }>> {
+  const creationSource = input.creationSource === 'global' ? 'global' : 'single';
+  if (creationSource === 'single') await assertSingleBridgeContinuationCreationAllowed();
   const sessionKey = normalizedId(input.sessionKey, 'Bridge 会话标识');
   const threadId = normalizedId(input.threadId, 'Codex Thread ID');
   const deviceId = input.deviceId == null ? null : normalizedId(input.deviceId, 'Connector 设备 ID');
@@ -589,6 +596,7 @@ export async function createBridgeContinuationTask(input: {
 
   try {
     const row = await db.transaction(async (tx: DbExecutor) => {
+      if (creationSource === 'single') await assertSingleBridgeContinuationCreationAllowed(tx);
       await tx.insert(schema.bridgeContinuationTasks).values({
         id: state.taskId,
         deviceId,
@@ -598,6 +606,7 @@ export async function createBridgeContinuationTask(input: {
         taskKind: 'automatic',
         submissionMode: null,
         pendingMethod: null,
+        requestedBy: creationSource === 'global' ? GLOBAL_BRIDGE_CONTINUATION_REQUESTED_BY : null,
         status: state.status,
         reason: state.reason,
         policySnapshot: JSON.stringify(policy),
@@ -618,7 +627,7 @@ export async function createBridgeContinuationTask(input: {
         fromStatus: null,
         toStatus: state.status,
         reason: state.reason,
-        metadata: { policyFingerprint: policy.fingerprint, deviceId },
+        metadata: { policyFingerprint: policy.fingerprint, deviceId, creationSource },
         createdAt: nowIso,
       });
       const inserted = await loadTaskRow(tx, state.taskId);

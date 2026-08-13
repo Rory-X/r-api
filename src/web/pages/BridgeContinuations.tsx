@@ -9,6 +9,7 @@ import {
   type BridgeContinuationTaskStatus,
   type BridgeFailureClass,
   type BridgeManualPromptSubmissionMode,
+  type GlobalBridgeContinuationConfig,
   type LocalConnectorDevice,
   type LocalConnectorThread,
   type LocalConnectorThreadActivity,
@@ -368,6 +369,7 @@ export default function BridgeContinuations() {
   const isMobile = useIsMobile();
   const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const [tasks, setTasks] = useState<BridgeContinuationTask[]>([]);
+  const [globalContinuation, setGlobalContinuation] = useState<GlobalBridgeContinuationConfig | null>(null);
   const [devices, setDevices] = useState<LocalConnectorDevice[]>([]);
   const [threads, setThreads] = useState<LocalConnectorThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState('');
@@ -563,11 +565,13 @@ export default function BridgeContinuations() {
   useEffect(() => {
     void (async () => {
       try {
-        const [deviceResponse, threadResponse] = await Promise.all([
+        const [deviceResponse, threadResponse, globalResponse] = await Promise.all([
           api.getLocalConnectorDevices(),
           api.getLocalConnectorThreads({ deviceId, limit: 200 }),
+          api.getGlobalBridgeContinuation(),
         ]);
         setDevices(Array.isArray(deviceResponse.items) ? deviceResponse.items : []);
+        setGlobalContinuation(globalResponse.config);
         const threadItems = Array.isArray(threadResponse.items) ? threadResponse.items : [];
         setThreads(threadItems);
         setSelectedThreadId((current) => (
@@ -839,7 +843,7 @@ export default function BridgeContinuations() {
                     >
                       <span className="connector-session-row-main">
                         <span className="connector-session-row-title">{getThreadLabel(thread.threadId)}</span>
-                        <span className="connector-session-row-meta">{threadActivityLabel(thread)} · {formatDate(thread.lastSeenAt)}</span>
+                        <span className="connector-session-row-meta">{threadActivityLabel(thread)} · 最近活跃 {formatDate(thread.lastActiveAt)}</span>
                       </span>
                       <span className={`badge ${thread.threadStatus === 'system_error' ? 'badge-error' : thread.threadStatus === 'active' ? 'badge-success' : 'badge-neutral'}`}>
                         {threadStatusLabel(thread.threadStatus)}
@@ -962,6 +966,11 @@ export default function BridgeContinuations() {
           )}
 
           <Disclosure title="自动续跑（高级）" className="bridge-takeover-policy-disclosure">
+            {globalContinuation?.enabled ? (
+              <div className="alert alert-info" style={{ marginBottom: 14 }}>
+                所有会话自动续跑已开启。当前页仍可查看任务和发送人工消息，但不能重复创建单会话自动续跑事务。
+              </div>
+            ) : null}
             <div className="bridge-policy-primary-fields">
               <label style={fieldLabelStyle}>
                 续跑 Prompt
@@ -1009,6 +1018,8 @@ export default function BridgeContinuations() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
               {selectedAutomaticTask ? (
                 <Button type="button" className="btn btn-ghost" onClick={() => openTask(selectedAutomaticTask.state.taskId)}>查看当前自动续跑</Button>
+              ) : globalContinuation?.enabled ? (
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>由所有会话自动续跑统一管理</span>
               ) : (
                 <Button
                   type="button"

@@ -16,6 +16,7 @@ export type LocalConnectorThreadEvent = Readonly<{
   activeFlags?: readonly string[];
   observationSource?: LocalConnectorThreadObservationSource;
   controlState?: LocalConnectorThreadControlState;
+  activeAt?: string | null;
 }>;
 
 export type LocalConnectorThreadPublic = Readonly<{
@@ -33,6 +34,7 @@ export type LocalConnectorThreadPublic = Readonly<{
   activeTurnId: string | null;
   lastEventKind: string;
   lastSeenAt: string;
+  lastActiveAt: string | null;
 }>;
 
 const THREAD_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,256}$/;
@@ -91,6 +93,18 @@ function parseStoredActiveFlags(value: string): ObservedCodexThreadActiveFlag[] 
   } catch {
     return [];
   }
+}
+
+function normalizeOptionalTimestamp(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+
+function latestTimestamp(current: string | null | undefined, candidate: string | null): string | null {
+  if (!candidate) return current || null;
+  if (!current || !Number.isFinite(Date.parse(current))) return candidate;
+  return Date.parse(candidate) > Date.parse(current) ? candidate : current;
 }
 
 function eventState(
@@ -155,6 +169,7 @@ function publicThread(
     activeTurnId: row.activeTurnId,
     lastEventKind: row.lastEventKind,
     lastSeenAt: row.lastSeenAt,
+    lastActiveAt: row.lastActiveAt,
   });
 }
 
@@ -184,6 +199,14 @@ async function upsertLocalConnectorThreadEvent(executor: DbExecutor, input: {
     .where(eq(schema.localConnectorThreads.id, id))
     .get();
   const next = eventState(input.event, current);
+  const explicitActiveAt = normalizeOptionalTimestamp(input.event.activeAt);
+  // Periodic snapshots may carry an upstream `updatedAt`; without it they
+  // only prove that the Connector is alive. Explicit App Server events do
+  // represent activity, so use the receive time for those event-shaped
+  // thread_status updates while keeping heartbeat-only snapshots neutral.
+  const eventActiveAt = input.event.kind === 'thread_status'
+    ? explicitActiveAt || (!input.event.observationSource ? nowIso : null)
+    : nowIso;
   const values = {
     deviceId,
     threadId,
@@ -195,6 +218,7 @@ async function upsertLocalConnectorThreadEvent(executor: DbExecutor, input: {
     activeTurnId: next.activeTurnId,
     lastEventKind: input.event.kind,
     lastSeenAt: nowIso,
+    lastActiveAt: latestTimestamp(current?.lastActiveAt, eventActiveAt),
     updatedAt: nowIso,
   };
 
@@ -257,6 +281,7 @@ export async function syncLocalConnectorThreadSnapshots(input: {
       activeFlags: normalizeActiveFlags(item.activeFlags),
       activeTurnId,
       hasActiveTurnId,
+      activeAt: normalizeOptionalTimestamp(item.updatedAt),
     });
   });
   const threadIds = new Set(normalized.map((thread) => thread.threadId));
@@ -287,6 +312,7 @@ export async function syncLocalConnectorThreadSnapshots(input: {
           activeFlags: thread.activeFlags,
           observationSource: source,
           controlState,
+          activeAt: thread.activeAt,
         },
         now,
       });
@@ -360,8 +386,8 @@ export async function listLocalConnectorThreads(input: {
   const query = db.select().from(schema.localConnectorThreads);
   const rows = deviceId
     ? await query.where(eq(schema.localConnectorThreads.deviceId, deviceId))
-      .orderBy(desc(schema.localConnectorThreads.lastSeenAt)).limit(limit).all()
-    : await query.orderBy(desc(schema.localConnectorThreads.lastSeenAt)).limit(limit).all();
+      .orderBy(desc(schema.localConnectorThreads.lastActiveAt), desc(schema.localConnectorThreads.lastSeenAt)).limit(limit).all()
+    : await query.orderBy(desc(schema.localConnectorThreads.lastActiveAt), desc(schema.localConnectorThreads.lastSeenAt)).limit(limit).all();
   const devices = await db.select().from(schema.localConnectorDevices).all() as Array<
     typeof schema.localConnectorDevices.$inferSelect
   >;

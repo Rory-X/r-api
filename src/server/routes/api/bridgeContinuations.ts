@@ -10,6 +10,14 @@ import {
 } from '../../services/bridgeContinuationService.js';
 import type { BridgeContinuationPolicyInput } from '../../services/bridgeContinuationContract.js';
 import type { BridgeContinuationTaskStatus } from '../../services/bridgeContinuationState.js';
+import {
+  getGlobalBridgeContinuationConfig,
+  isGlobalBridgeContinuationConflict,
+} from '../../services/globalBridgeContinuationConfigService.js';
+import {
+  reconcileGlobalBridgeContinuationTasks,
+  updateGlobalBridgeContinuation,
+} from '../../services/globalBridgeContinuationService.js';
 
 const STATUSES = new Set<BridgeContinuationTaskStatus>([
   'waiting',
@@ -88,6 +96,37 @@ export async function bridgeContinuationRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get('/api/bridge-continuations/global', async (_request, reply) => {
+    try {
+      const config = await getGlobalBridgeContinuationConfig();
+      return {
+        success: true,
+        config,
+        coverage: config.enabled
+          ? await reconcileGlobalBridgeContinuationTasks()
+          : { eligible: 0, covered: 0, created: 0, blocked: 0 },
+      };
+    } catch (error) {
+      return reply.code(400).send({ success: false, message: errorMessage(error) });
+    }
+  });
+
+  app.put<{
+    Body: { enabled?: boolean; policy?: BridgeContinuationPolicyInput };
+  }>('/api/bridge-continuations/global', async (request, reply) => {
+    if (typeof request.body?.enabled !== 'boolean') {
+      return reply.code(400).send({ success: false, message: '全局自动续跑开关无效' });
+    }
+    try {
+      return { success: true, ...await updateGlobalBridgeContinuation({
+        enabled: request.body.enabled,
+        policy: request.body.policy,
+      }) };
+    } catch (error) {
+      return reply.code(400).send({ success: false, message: errorMessage(error) });
+    }
+  });
+
   app.get<{
     Params: { id: string };
     Querystring: { eventLimit?: string };
@@ -125,7 +164,8 @@ export async function bridgeContinuationRoutes(app: FastifyInstance) {
       });
       return reply.code(result.created ? 201 : 200).send({ success: true, ...result });
     } catch (error) {
-      return reply.code(400).send({ success: false, message: errorMessage(error) });
+      return reply.code(isGlobalBridgeContinuationConflict(error) ? 409 : 400)
+        .send({ success: false, message: errorMessage(error) });
     }
   });
 

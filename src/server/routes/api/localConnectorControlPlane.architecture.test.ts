@@ -28,4 +28,19 @@ describe('Local Connector control plane architecture', () => {
     expect(activity).toContain('schema.interactionDispatches');
     expect(activity).toContain('schema.notificationOutbox');
   });
+
+  it('keeps global continuation reconciliation in a dedicated service and scheduler', () => {
+    const route = source('src/server/routes/api/bridgeContinuations.ts');
+    const coordinator = source('src/server/services/globalBridgeContinuationService.ts');
+    const scheduler = source('src/server/services/globalBridgeContinuationScheduler.ts');
+    const threadService = source('src/server/services/localConnectorThreadService.ts');
+
+    expect(route).toContain("from '../../services/globalBridgeContinuationService.js'");
+    expect(route).not.toMatch(/from ['"]\.\.\/\.\.\/db\//);
+    expect(coordinator).toContain('schema.localConnectorThreads');
+    expect(coordinator).toContain('takeOverLocalConnectorThread({');
+    expect(scheduler).toContain('reconcileGlobalBridgeContinuationTasks()');
+    expect(scheduler).not.toContain('schema.');
+    expect(threadService).not.toContain('globalBridgeContinuationService');
+  });
 });

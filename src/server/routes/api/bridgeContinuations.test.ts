@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -7,12 +8,14 @@ import { tmpdir } from 'node:os';
 type DbModule = typeof import('../../db/index.js');
 type ConnectorService = typeof import('../../services/localConnectorService.js');
 type BridgeService = typeof import('../../services/bridgeContinuationService.js');
+type ThreadService = typeof import('../../services/localConnectorThreadService.js');
 
 describe('bridge continuation routes', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let connector: ConnectorService;
   let bridge: BridgeService;
+  let threads: ThreadService;
   let app: ReturnType<typeof Fastify>;
   let dataDir = '';
 
@@ -25,6 +28,7 @@ describe('bridge continuation routes', () => {
     schema = dbModule.schema;
     connector = await import('../../services/localConnectorService.js');
     bridge = await import('../../services/bridgeContinuationService.js');
+    threads = await import('../../services/localConnectorThreadService.js');
     const connectorRoutes = await import('./localConnector.js');
     const bridgeRoutes = await import('./bridgeContinuations.js');
     app = Fastify();
@@ -39,6 +43,7 @@ describe('bridge continuation routes', () => {
     await db.delete(schema.localConnectorActions).run();
     await db.delete(schema.localConnectorPairings).run();
     await db.delete(schema.localConnectorDevices).run();
+    await db.delete(schema.settings).run();
   });
 
   afterAll(async () => {
@@ -339,5 +344,129 @@ describe('bridge continuation routes', () => {
       .join('\n');
     expect(auditMetadata).not.toContain('检查失败日志后继续');
     expect(auditMetadata).toContain(first.json().task.promptFingerprint);
+  });
+
+  it('enforces global automatic continuation while keeping manual prompts available', async () => {
+    const controlled = await pair(['app_server.control']);
+    await threads.recordLocalConnectorThreadEvent({
+      deviceId: controlled.device.id,
+      event: { kind: 'thread_status', threadId: 'thread-global', status: 'idle', activeFlags: [] },
+    });
+    await threads.recordLocalConnectorThreadEvent({
+      deviceId: controlled.device.id,
+      event: {
+        kind: 'thread_status',
+        threadId: 'thread-desktop',
+        status: 'active',
+        activeFlags: [],
+        observationSource: 'codex_desktop',
+        controlState: 'external_owner',
+      },
+    });
+
+    const enabled = await app.inject({
+      method: 'PUT',
+      url: '/api/bridge-continuations/global',
+      payload: { enabled: true, policy: { enabled: true, continuePrompt: '继续' } },
+    });
+    expect(enabled.statusCode).toBe(200);
+    expect(enabled.json()).toMatchObject({
+      config: { enabled: true },
+      coverage: { eligible: 1, covered: 1, created: 1 },
+    });
+
+    const globalTask = await db.select().from(schema.bridgeContinuationTasks).get();
+    expect(globalTask).toMatchObject({
+      threadId: 'thread-global',
+      requestedBy: 'global:auto-continuation',
+      activeSlot: 1,
+    });
+
+    const genericCreate = await app.inject({
+      method: 'POST',
+      url: '/api/bridge-continuations',
+      payload: {
+        sessionKey: `${controlled.device.id}:other`,
+        threadId: 'thread-other',
+        deviceId: controlled.device.id,
+        policy: { enabled: true },
+      },
+    });
+    expect(genericCreate.statusCode).toBe(409);
+
+    const singleTakeover = await app.inject({
+      method: 'POST',
+      url: `/api/local-connector/devices/${controlled.device.id}/sessions/thread-global/takeover`,
+      payload: { policy: { enabled: true } },
+    });
+    expect(singleTakeover.statusCode).toBe(409);
+
+    const manual = await app.inject({
+      method: 'POST',
+      url: '/api/bridge-continuations/manual-prompts',
+      headers: { 'idempotency-key': 'global-manual-prompt-1' },
+      payload: {
+        deviceId: controlled.device.id,
+        threadId: 'thread-global',
+        prompt: '继续并汇报当前进度',
+        submissionMode: 'start_next',
+      },
+    });
+    expect(manual.statusCode).toBe(201);
+    expect(manual.json().task.state.taskKind).toBe('manual_prompt');
+  });
+
+  it('reconciles future sessions and stops only globally owned tasks on disable', async () => {
+    const controlled = await pair(['app_server.control']);
+    await threads.recordLocalConnectorThreadEvent({
+      deviceId: controlled.device.id,
+      event: { kind: 'thread_status', threadId: 'thread-existing', status: 'idle', activeFlags: [] },
+    });
+    const existing = await app.inject({
+      method: 'POST',
+      url: `/api/local-connector/devices/${controlled.device.id}/sessions/thread-existing/takeover`,
+      payload: { policy: { enabled: true } },
+    });
+    expect(existing.statusCode).toBe(201);
+    const existingTaskId = existing.json().task.state.taskId as string;
+
+    const enabled = await app.inject({
+      method: 'PUT',
+      url: '/api/bridge-continuations/global',
+      payload: { enabled: true },
+    });
+    expect(enabled.json().coverage).toMatchObject({ eligible: 1, covered: 1, created: 0 });
+
+    await threads.recordLocalConnectorThreadEvent({
+      deviceId: controlled.device.id,
+      event: { kind: 'thread_status', threadId: 'thread-future', status: 'idle', activeFlags: [] },
+    });
+    const reconciled = await app.inject({ method: 'GET', url: '/api/bridge-continuations/global' });
+    expect(reconciled.json().coverage).toMatchObject({ eligible: 2, covered: 2, created: 1 });
+
+    const disabled = await app.inject({
+      method: 'PUT',
+      url: '/api/bridge-continuations/global',
+      payload: { enabled: false },
+    });
+    expect(disabled.json()).toMatchObject({ config: { enabled: false }, stopped: 1 });
+
+    const existingAfterDisable = await bridge.getBridgeContinuationTask(existingTaskId);
+    expect(existingAfterDisable?.state.status).toBe('waiting');
+    const globalRows = await db.select().from(schema.bridgeContinuationTasks)
+      .where(eq(schema.bridgeContinuationTasks.requestedBy, 'global:auto-continuation')).all();
+    expect(globalRows).toHaveLength(1);
+    expect(globalRows[0]).toMatchObject({ status: 'stopped', activeSlot: null });
+
+    await threads.recordLocalConnectorThreadEvent({
+      deviceId: controlled.device.id,
+      event: { kind: 'thread_status', threadId: 'thread-after-disable', status: 'idle', activeFlags: [] },
+    });
+    const afterDisable = await app.inject({
+      method: 'POST',
+      url: `/api/local-connector/devices/${controlled.device.id}/sessions/thread-after-disable/takeover`,
+      payload: { policy: { enabled: true } },
+    });
+    expect(afterDisable.statusCode).toBe(201);
   });
 });

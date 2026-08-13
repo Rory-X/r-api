@@ -9,6 +9,8 @@ const { apiMock } = vi.hoisted(() => ({
     getLocalConnectorDevices: vi.fn(),
     getLocalConnectorThreads: vi.fn(),
     getBridgeContinuationTasks: vi.fn(),
+    getGlobalBridgeContinuation: vi.fn(),
+    updateGlobalBridgeContinuation: vi.fn(),
     getLocalConnectorActions: vi.fn(),
     takeOverLocalConnectorSession: vi.fn(),
     createLocalConnectorPairing: vi.fn(),
@@ -131,6 +133,7 @@ describe('LocalConnector page', () => {
         activeTurnId: 'turn-1',
         lastEventKind: 'thread_status',
         lastSeenAt: '2026-08-12T01:05:00.000Z',
+        lastActiveAt: '2026-08-12T01:04:30.000Z',
       }, {
         id: 'observed-managed',
         deviceId: 'device-1',
@@ -146,6 +149,7 @@ describe('LocalConnector page', () => {
         activeTurnId: null,
         lastEventKind: 'turn_completed',
         lastSeenAt: '2026-08-12T01:04:00.000Z',
+        lastActiveAt: '2026-08-12T01:03:55.000Z',
       }, {
         id: 'observed-desktop',
         deviceId: 'device-1',
@@ -161,9 +165,29 @@ describe('LocalConnector page', () => {
         activeTurnId: 'turn-desktop',
         lastEventKind: 'thread_status',
         lastSeenAt: '2026-08-12T01:03:00.000Z',
+        lastActiveAt: '2026-08-12T01:02:30.000Z',
       }],
     });
     apiMock.getBridgeContinuationTasks.mockResolvedValue({ success: true, items: [createTask()] });
+    apiMock.getGlobalBridgeContinuation.mockResolvedValue({
+      success: true,
+      config: {
+        enabled: false,
+        policy: createTask().state.policy,
+        updatedAt: null,
+      },
+      coverage: { eligible: 0, covered: 0, created: 0, blocked: 0 },
+    });
+    apiMock.updateGlobalBridgeContinuation.mockResolvedValue({
+      success: true,
+      config: {
+        enabled: true,
+        policy: createTask().state.policy,
+        updatedAt: '2026-08-12T01:06:00.000Z',
+      },
+      coverage: { eligible: 2, covered: 2, created: 1, blocked: 0 },
+      stopped: 0,
+    });
     apiMock.getLocalConnectorActions.mockResolvedValue({ items: [] });
     apiMock.takeOverLocalConnectorSession.mockResolvedValue({
       success: true,
@@ -211,7 +235,11 @@ describe('LocalConnector page', () => {
       await flush();
 
       const text = collectText(root.root);
-      expect(text).toContain('Codex 会话接管');
+      expect(text).toContain('本地 Connector');
+      expect(text).toContain('会话接管');
+      expect(text).toContain('会话概览');
+      expect(text).toContain('已上报');
+      expect(text).toContain('需关注');
       expect(text).toContain('优化 Connector 会话总览');
       expect(text).toContain('thread-available');
       expect(text).toContain('Connector App Server');
@@ -253,6 +281,7 @@ describe('LocalConnector page', () => {
       expect(apiMock.takeOverLocalConnectorSession).toHaveBeenCalledWith({
         deviceId: 'device-1',
         threadId: 'thread-available',
+        policy: { enabled: true },
       });
       expect(root.root.findAll((node) => node.type === 'a' && collectText(node).trim() === '查看接管')).toHaveLength(1);
     } finally {
@@ -260,7 +289,7 @@ describe('LocalConnector page', () => {
     }
   });
 
-  it('keeps pairing and local Hook or Notify operations in collapsed Connector settings', async () => {
+  it('enables global continuation and removes single-session creation controls', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
@@ -272,12 +301,40 @@ describe('LocalConnector page', () => {
       });
       await flush();
 
-      const settingsTrigger = root.root.find((node) => (
-        node.type === 'button' && collectText(node).includes('Connector 设置')
+      const globalSwitch = root.root.find((node) => (
+        node.type === 'button'
+        && node.props.role === 'switch'
+        && node.props['aria-label'] === '所有会话自动续跑'
       ));
-      expect(settingsTrigger.props['aria-expanded']).toBe(false);
-      await act(async () => { settingsTrigger.props.onClick(); });
-      expect(settingsTrigger.props['aria-expanded']).toBe(true);
+      await act(async () => { globalSwitch.props.onClick(); });
+      await flush(8);
+
+      expect(apiMock.updateGlobalBridgeContinuation).toHaveBeenCalledWith({ enabled: true });
+      expect(collectText(root.root)).toContain('已覆盖 2/2 个当前可控会话');
+      expect(collectText(root.root)).toContain('由全局自动续跑管理');
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).trim() === '接管会话')).toHaveLength(0);
+    } finally {
+      await act(async () => { root?.unmount(); });
+    }
+  });
+
+  it('keeps pairing and local Hook or Notify operations under the local settings tab', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider><LocalConnector /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flush();
+
+      const settingsTab = root.root.find((node) => (
+        node.type === 'button' && collectText(node).trim() === '本地设置'
+      ));
+      await act(async () => { settingsTab.props.onClick(); });
+      expect(collectText(root.root)).toContain('本地设置');
 
       const pairingButton = root.root.find((node) => node.type === 'button' && collectText(node).trim() === '生成配对令牌');
       await act(async () => { pairingButton.props.onClick(); });

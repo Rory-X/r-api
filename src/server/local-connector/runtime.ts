@@ -625,6 +625,19 @@ export class LocalConnectorRuntime {
                   assistantMessage: event.assistantMessage,
                   failure: event.failure,
                 });
+              } else if (event.kind === 'error' && event.failure.willRetry === false) {
+                this.cancelEphemeralCompletion(event.threadId);
+                this.ephemeralActiveCompletions.delete(event.threadId);
+                this.controlTerminalNotificationAt.set(event.threadId, Date.now());
+                this.controlTerminalCompletionsHandled.add(event.threadId);
+                this.controlThreadStatuses.set(event.threadId, 'system_error');
+                await this.enqueueControlCompletion({
+                  threadId: event.threadId,
+                  turnId: event.turnId,
+                  status: 'failed',
+                  assistantMessage: null,
+                  failure: event.failure,
+                });
               }
             } catch (error) {
               this.dashboardState.recordAppServerThreadError(event.threadId, error);
