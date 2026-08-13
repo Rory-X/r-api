@@ -141,14 +141,16 @@ export default function BrowserRecoveryTasks() {
 
   const activate = async (task: BrowserRecoveryTask) => {
     const selected = task.accountId || Number(activationAccountIds[task.id] || 0) || null;
-    if (!selected) {
-      toast.error('请选择要绑定的账号');
-      return;
-    }
     setWorkingId(task.id);
     try {
       const result = await api.activateBrowserRecoveryTask(task.id, selected);
-      toast.success(result.activation.idempotent ? '凭证已经启用' : '凭证验证通过，已绑定账号并刷新路由');
+      toast.success(
+        result.activation.idempotent
+          ? '凭证已经启用'
+          : result.activation.created
+            ? '凭证验证通过，已创建渠道账号并刷新路由'
+            : '凭证验证通过，已绑定账号并刷新路由',
+      );
       await load();
     } catch (error: any) {
       toast.error(error?.message || '启用浏览器凭证失败');
@@ -240,14 +242,20 @@ export default function BrowserRecoveryTasks() {
                           onChange={(event) => setActivationAccountIds((current) => ({ ...current, [task.id]: event.target.value }))}
                           style={{ width: 220 }}
                         >
-                          <Option value="">选择绑定账号</Option>
+                          <Option value="">创建为新渠道账号</Option>
                           {accounts.filter((account) => account.siteId === task.siteId).map((account) => (
                             <Option key={account.id} value={account.id}>{account.username || `账号 #${account.id}`}</Option>
                           ))}
                         </Select>
                       )}
                       <Button className="btn btn-primary" disabled={workingId === task.id} onClick={() => void activate(task)}>
-                        {workingId === task.id ? '验证中…' : task.accountId ? '启用凭证' : '绑定并启用'}
+                        {workingId === task.id
+                          ? '验证中…'
+                          : task.accountId
+                            ? '启用凭证'
+                            : activationAccountIds[task.id]
+                              ? '绑定并启用'
+                              : '创建账号并启用'}
                       </Button>
                     </>
                   ) : null}

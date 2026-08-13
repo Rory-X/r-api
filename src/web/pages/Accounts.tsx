@@ -41,7 +41,7 @@ import { parseBatchApiKeys } from "../../shared/apiKeyBatch.js";
 type ConnectionsSegment = "session" | "apikey" | "tokens";
 
 const ACCOUNT_SEGMENTS: Array<{
-  value: ConnectionsSegment;
+  value: Exclude<ConnectionsSegment, "tokens">;
   label: string;
   tooltip: string;
   tooltipSide: "top" | "bottom";
@@ -49,24 +49,34 @@ const ACCOUNT_SEGMENTS: Array<{
 }> = [
   {
     value: "session",
-    label: "账号管理",
-    tooltip: "用于签到、余额、状态维护",
+    label: "面板账号",
+    tooltip: "管理面板账号、Session 状态和上游签发令牌",
     tooltipSide: "bottom",
     tooltipAlign: "start",
   },
   {
     value: "apikey",
-    label: "API Key管理",
+    label: "直连 API Key",
     tooltip: "只有 Base URL + Key 时使用，只负责代理调用",
     tooltipSide: "bottom",
     tooltipAlign: "center",
   },
+];
+
+const ACCOUNT_SUBSEGMENTS: Array<{
+  value: "session" | "tokens";
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "session",
+    label: "账号列表",
+    description: "用于登录、签到、余额和状态维护",
+  },
   {
     value: "tokens",
-    label: "上游 API Token",
-    tooltip: "从面板账号同步或创建，供模型请求路由使用",
-    tooltipSide: "bottom",
-    tooltipAlign: "end",
+    label: "签发令牌",
+    description: "属于面板账号的上游 API Token，供路由通道自动使用",
   },
 ];
 
@@ -111,6 +121,7 @@ export default function Accounts() {
     () => resolveConnectionsSegment(location.search),
     [location.search],
   );
+  const activePrimarySegment: "session" | "apikey" = activeSegment === "apikey" ? "apikey" : "session";
   const [accounts, setAccounts] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1255,7 +1266,14 @@ export default function Accounts() {
   return (
     <div className="animate-fade-in">
       <div className="page-header">
-        <h2 className="page-title">{tr("连接管理")}</h2>
+        <div>
+          <h2 className="page-title">{tr("连接管理")}</h2>
+          {activeSegment === "tokens" ? (
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+              面板账号的下游资源：签发令牌
+            </div>
+          ) : null}
+        </div>
         {activeSegment !== "tokens" && (
           <div className="page-actions accounts-page-actions">
             {isMobile ? (
@@ -1430,6 +1448,7 @@ export default function Accounts() {
       />
 
       <div
+        data-testid="accounts-primary-navigation"
         style={{
           display: "inline-flex",
           gap: 4,
@@ -1456,15 +1475,15 @@ export default function Accounts() {
               fontSize: 13,
               fontWeight: 600,
               background:
-                activeSegment === segment.value
+                activePrimarySegment === segment.value
                   ? "var(--color-bg)"
                   : "transparent",
               color:
-                activeSegment === segment.value
+                activePrimarySegment === segment.value
                   ? "var(--color-primary)"
                   : "var(--color-text-secondary)",
               boxShadow:
-                activeSegment === segment.value ? "var(--shadow-sm)" : "none",
+                activePrimarySegment === segment.value ? "var(--shadow-sm)" : "none",
               transition: "all 0.2s ease",
             }}
           >
@@ -1472,6 +1491,29 @@ export default function Accounts() {
           </button>
         ))}
       </div>
+
+      {activePrimarySegment === "session" ? (
+        <div
+          className="accounts-subnavigation"
+          data-testid="accounts-secondary-navigation"
+          role="tablist"
+          aria-label="面板账号资源"
+        >
+          {ACCOUNT_SUBSEGMENTS.map((segment) => (
+            <button
+              key={segment.value}
+              type="button"
+              role="tab"
+              aria-selected={activeSegment === segment.value}
+              onClick={() => setSegment(segment.value)}
+              className={activeSegment === segment.value ? "is-active" : ""}
+            >
+              <span>{segment.label}</span>
+              <small>{segment.description}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <DeleteConfirmModal
         open={Boolean(deleteConfirm)}

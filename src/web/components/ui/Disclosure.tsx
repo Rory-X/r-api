@@ -1,5 +1,5 @@
-import React, { useId, useState, type ReactNode } from 'react';
-import Button from './Button.js';
+import React, { useId, useState, type ReactNode } from "react";
+import Button from "./Button.js";
 
 type DisclosureProps = {
   title: ReactNode;
@@ -16,7 +16,7 @@ export default function Disclosure({
   defaultOpen = false,
   open,
   onOpenChange,
-  className = '',
+  className = "",
 }: DisclosureProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const contentId = useId();
@@ -27,7 +27,9 @@ export default function Disclosure({
   };
 
   return (
-    <div className={`ui-disclosure ${expanded ? 'is-open' : ''} ${className}`.trim()}>
+    <div
+      className={`ui-disclosure ${expanded ? "is-open" : ""} ${className}`.trim()}
+    >
       <Button
         variant="link"
         className="ui-disclosure-trigger"
@@ -36,7 +38,11 @@ export default function Disclosure({
         onClick={() => setExpanded(!expanded)}
       >
         <span>{title}</span>
-        <span className="ui-disclosure-chevron" aria-hidden="true">⌄</span>
+        <span className="ui-disclosure-chevron" aria-hidden="true">
+          <svg viewBox="0 0 16 16" focusable="false">
+            <path d="m6 3.75 4.25 4.25L6 12.25" />
+          </svg>
+        </span>
       </Button>
       <div
         id={contentId}

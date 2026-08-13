@@ -463,8 +463,8 @@ export default function UpdateCenterSection() {
 
   if (loading) {
     return (
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>更新中心</div>
+      <div className="card update-center" style={{ padding: 20 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>版本部署中心</div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
           正在加载部署来源、版本状态和 helper 健康检查...
         </div>
@@ -473,30 +473,23 @@ export default function UpdateCenterSection() {
   }
 
   return (
-    <div className="card" style={{ padding: 20 }}>
-      <div style={{ marginBottom: 14 }}>
+    <div className="card update-center">
+      <div className="update-center-header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>更新中心</div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>版本部署中心</div>
           <span className={`${updateReminder.badgeClassName} ${updateReminder.highlight ? 'stat-value-glow' : ''}`.trim()}>
             {updateReminder.label}
           </span>
         </div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.55 }}>
-          在设置页里统一查看 GitHub Releases、Docker Hub 版本和 K3s helper 状态，避免部署信息散落在多个入口。
+          集中查看可部署版本、K3s Helper 状态和部署任务，并按来源快速发起发布。
         </div>
         <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5, marginTop: 6 }}>
           {updateReminder.detail}
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
+      <div className="update-center-summary-grid">
         <div style={sectionPanelStyle}>
           <div style={summaryLabelStyle}>当前运行版本</div>
           <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)' }}>
@@ -548,14 +541,7 @@ export default function UpdateCenterSection() {
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
+      <div className="update-center-source-switches">
         <label style={{ ...sectionPanelStyle, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -594,7 +580,7 @@ export default function UpdateCenterSection() {
         </label>
       </div>
 
-      <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
+      <div className="update-center-panel" style={sectionPanelStyle}>
         <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>部署配置</div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
           和现有 Settings 区块保持同一套表单密度。这里保存的是 helper 和目标 release 的持久化配置。
@@ -682,21 +668,14 @@ export default function UpdateCenterSection() {
         </div>
       </div>
 
-      <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
+      <div className="update-center-panel update-center-releases" style={sectionPanelStyle}>
         <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>可部署版本</div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
           默认来源会用主按钮强调。Helper 未就绪时，部署入口会自动禁用，避免触发无效任务。
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-            gap: 12,
-            marginBottom: 12,
-          }}
-        >
-          <div style={sectionPanelStyle}>
+        <div className="update-center-release-grid">
+          <div className="update-center-release-card update-center-release-card-github" style={sectionPanelStyle}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>GitHub Releases</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -735,7 +714,7 @@ export default function UpdateCenterSection() {
             </button>
           </div>
 
-          <div style={sectionPanelStyle}>
+          <div className="update-center-release-card update-center-release-card-docker" style={sectionPanelStyle}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>Docker Hub</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -800,7 +779,7 @@ export default function UpdateCenterSection() {
                 自动列出最近推送的 dev / 分支 / sha 标签；点部署即可直接使用，不必手动输入 tag 和 digest。
               </div>
               {recentDockerCandidates.length ? (
-                <div style={{ display: 'grid', gap: 8 }}>
+                <div className="update-center-candidate-grid">
                   {recentDockerCandidates.map((candidate) => {
                     const candidateTag = String(candidate.tagName || '').trim();
                     const candidateDigest = String(candidate.digest || '').trim();
@@ -816,6 +795,7 @@ export default function UpdateCenterSection() {
                     const canDeployCandidate = !deploying && candidateDeployState.canDeploy;
                     return (
                       <div
+                        className="update-center-candidate"
                         key={`${candidateTag}:${candidateDigest || 'no-digest'}`}
                         style={{
                           border: '1px solid var(--color-border-light)',
@@ -929,13 +909,7 @@ export default function UpdateCenterSection() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-            gap: 12,
-          }}
-        >
+        <div className="update-center-runtime-grid">
           <div style={sectionPanelStyle}>
             <div style={fieldLabelStyle}>Helper 健康摘要</div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
@@ -975,7 +949,7 @@ export default function UpdateCenterSection() {
         </div>
       </div>
 
-      <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
+      <div className="update-center-panel" style={sectionPanelStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>回退历史</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -1023,7 +997,7 @@ export default function UpdateCenterSection() {
         )}
       </div>
 
-      <div style={sectionPanelStyle}>
+      <div className="update-center-panel" style={sectionPanelStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>部署日志</div>
           <span className={getTaskBadge(visibleTaskStatus).className}>

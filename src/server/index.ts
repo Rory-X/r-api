@@ -21,6 +21,9 @@ import { notificationOutboxRoutes } from './routes/api/notificationOutbox.js';
 import { proxyRequestLedgerRoutes } from './routes/api/proxyRequestLedgers.js';
 import { proxyFileAdminRoutes } from './routes/api/proxyFiles.js';
 import { credentialVaultRoutes } from './routes/api/credentialVault.js';
+import { credentialImportRoutes } from './routes/api/credentialImports.js';
+import { credentialExportRoutes } from './routes/api/credentialExports.js';
+import { credentialLifecycleRoutes } from './routes/api/credentialLifecycle.js';
 import { browserCredentialRecoveryRoutes } from './routes/api/browserCredentialRecovery.js';
 import { modelSyncRoutes } from './routes/api/modelSync.js';
 import { localConnectorRoutes } from './routes/api/localConnector.js';
@@ -82,6 +85,10 @@ import {
   stopBridgeContinuationRecoveryScheduler,
 } from './services/bridgeContinuationRecoveryScheduler.js';
 import {
+  startGlobalBridgeContinuationScheduler,
+  stopGlobalBridgeContinuationScheduler,
+} from './services/globalBridgeContinuationScheduler.js';
+import {
   startInteractionRequestExpiryScheduler,
   stopInteractionRequestExpiryScheduler,
 } from './services/interactionRequestExpiryScheduler.js';
@@ -93,6 +100,7 @@ import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { ensureAdminAuthReady, pruneAdminSessions } from './services/adminAuthService.js';
 import { pruneAdminAuthChallenges } from './services/adminTotpService.js';
 import { configureUpstreamHttpTransport } from './services/upstreamHttpTransport.js';
+import { cleanupLegacyGlobalProxyTokenState } from './services/legacyGlobalProxyTokenCleanupService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -179,6 +187,8 @@ await ensureRuntimeDatabaseReady({
 try {
   const initialRows = await db.select().from(schema.settings).all();
   const initialMap = toSettingsMap(initialRows);
+  await ensureProxyFileCompatibilityColumns();
+  await cleanupLegacyGlobalProxyTokenState();
   const savedDbConfig = extractSavedRuntimeDatabaseConfig(initialMap);
   const activeDbUrl = (config.dbUrl || '').trim();
   const originalRuntimeConfig = {
@@ -212,6 +222,7 @@ try {
   await ensureProxyLogStreamTimingColumns();
   await ensureProxyLogClientColumns();
   await ensureProxyLogDownstreamApiKeyIdColumn();
+  await cleanupLegacyGlobalProxyTokenState();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);
@@ -277,6 +288,9 @@ await app.register(notificationOutboxRoutes);
 await app.register(proxyRequestLedgerRoutes);
 await app.register(proxyFileAdminRoutes);
 await app.register(credentialVaultRoutes);
+await app.register(credentialImportRoutes);
+await app.register(credentialExportRoutes);
+await app.register(credentialLifecycleRoutes);
 await app.register(browserCredentialRecoveryRoutes);
 await app.register(modelSyncRoutes);
 await app.register(localConnectorRoutes);
@@ -334,6 +348,7 @@ startAdminSnapshotWarmScheduler();
 startNotificationOutboxWorker();
 await startBrowserRecoveryTaskSweeper();
 await startBridgeContinuationRecoveryScheduler();
+await startGlobalBridgeContinuationScheduler();
 await startInteractionRequestExpiryScheduler();
 await startFeishuInteractionAdapterScheduler();
 try {
@@ -355,6 +370,7 @@ app.addHook('onClose', async () => {
   await stopNotificationOutboxWorker();
   stopBrowserRecoveryTaskSweeper();
   await stopBridgeContinuationRecoveryScheduler();
+  await stopGlobalBridgeContinuationScheduler();
   await stopInteractionRequestExpiryScheduler();
   await stopFeishuInteractionAdapterScheduler();
   await stopSub2ApiManagedRefreshScheduler();

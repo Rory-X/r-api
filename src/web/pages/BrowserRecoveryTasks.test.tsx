@@ -79,4 +79,53 @@ describe('BrowserRecoveryTasks', () => {
       root?.unmount();
     }
   });
+
+  it('offers automatic account creation when a completed task has no existing site account', async () => {
+    apiMock.getBrowserRecoveryTasks.mockResolvedValue({
+      items: [{
+        id: 'task-completed',
+        siteId: 1,
+        accountId: null,
+        mode: 'assisted',
+        status: 'completed',
+        credentialName: 'jiji 浏览器凭证',
+        adapterPlatform: 'demo',
+        targetOrigin: 'https://demo.example.com',
+        expiresAt: '2026-08-12T08:00:00.000Z',
+        resultCredentialId: 17,
+      }],
+    });
+    apiMock.activateBrowserRecoveryTask.mockResolvedValue({
+      success: true,
+      activation: {
+        accountId: 42,
+        credentialId: 17,
+        tokenType: 'session',
+        username: 'jiji-user',
+        apiTokenFound: true,
+        idempotent: false,
+        created: true,
+      },
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <BrowserRecoveryTasks />
+          </ToastProvider>,
+        );
+      });
+      await flush();
+
+      expect(collectText(root.root)).toContain('创建为新渠道账号');
+      const activate = root.root.find((node) => node.type === 'button' && collectText(node) === '创建账号并启用');
+      await act(async () => { activate.props.onClick(); });
+      await flush();
+      expect(apiMock.activateBrowserRecoveryTask).toHaveBeenCalledWith('task-completed', null);
+    } finally {
+      root?.unmount();
+    }
+  });
 });

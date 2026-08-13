@@ -470,7 +470,6 @@ export type RuntimeRoutingWeightsPayload = {
 };
 
 export type RuntimeSettingsPayload = {
-  proxyToken?: string;
   systemProxyUrl?: string;
   payloadRules?: Record<string, unknown> | null;
   modelAvailabilityProbeEnabled?: boolean;
@@ -1081,6 +1080,7 @@ export type LocalConnectorThread = {
   activeTurnId: string | null;
   lastEventKind: string;
   lastSeenAt: string;
+  lastActiveAt: string | null;
 };
 
 export type LocalConnectorThreadActivityCategory =
@@ -1206,6 +1206,19 @@ export type BridgeContinuationPolicyInput = {
     limit?: BridgeContinuationLimit | "unlimited" | number;
     maxContinuations?: number;
   }>>;
+};
+
+export type GlobalBridgeContinuationConfig = {
+  enabled: boolean;
+  policy: BridgeContinuationPolicy;
+  updatedAt: string | null;
+};
+
+export type GlobalBridgeContinuationCoverage = {
+  eligible: number;
+  covered: number;
+  created: number;
+  blocked: number;
 };
 
 export type BridgeContinuationTaskStatus =
@@ -1432,7 +1445,7 @@ export type CredentialVaultItem = {
   accountId?: number | null;
   name: string;
   kind: string;
-  status: "active" | "revoked" | "expired";
+  status: "active" | "disabled" | "revoked" | "expired";
   fingerprint: string;
   metadata?: Record<string, unknown> | null;
   expiresAt?: string | null;
@@ -1442,6 +1455,172 @@ export type CredentialVaultItem = {
   createdAt?: string | null;
   updatedAt?: string | null;
 };
+
+export type CredentialLifecycleStatus =
+  | "active"
+  | "expiring"
+  | "expired"
+  | "refreshing"
+  | "refresh_failed"
+  | "revoked"
+  | "invalid"
+  | "disabled"
+  | "metadata_only";
+
+export type CredentialLifecycleEntityType = "account" | "vault_item";
+export type CredentialLifecycleAction = "validate" | "refresh" | "enable" | "disable" | "revoke";
+
+export type CredentialLifecycleItem = {
+  entityType: CredentialLifecycleEntityType;
+  entityId: number;
+  siteId?: number;
+  accountId?: number;
+  name: string;
+  site?: { id: number; name: string; platform: string; url: string };
+  provider?: string;
+  kind: string;
+  status: CredentialLifecycleStatus;
+  sourceStatus: string;
+  statusReason: string;
+  refreshOwner: "r_api" | "external" | "none";
+  expiresAt?: string;
+  fingerprint?: string;
+  lastRefreshAttemptAt?: string;
+  lastRefreshSuccessAt?: string;
+  lastRefreshError?: string;
+  actions: Record<CredentialLifecycleAction, boolean>;
+  provenance?: {
+    importJobId: string;
+    sourceFormat: string;
+    sourceVersion?: string;
+    operatorId: string;
+    conflictPolicy: string;
+    importAction: string;
+    createdAt?: string;
+  };
+};
+
+export type CredentialLifecycleActionResult = {
+  entityType: CredentialLifecycleEntityType;
+  entityId: number;
+  action: CredentialLifecycleAction;
+  success: boolean;
+  status?: CredentialLifecycleStatus;
+  message: string;
+};
+
+export type CredentialImportTarget = "new_api" | "sub2api" | "native_oauth" | "api_key" | "vault";
+export type CredentialConflictPolicy = "skip" | "update" | "create_duplicate";
+
+export type CredentialImportPreviewCandidate = {
+  candidate: {
+    source: { format: string; version?: string | number; platform?: string; sourceIndex?: number };
+    provider?: string;
+    kind: string;
+    identity: Record<string, string>;
+    secretPresence: Record<string, boolean>;
+    secretSummary: Record<string, boolean>;
+    expiresAt?: number;
+    disabled: boolean;
+    fingerprint: string;
+    warnings: string[];
+    compatibleTargets: CredentialImportTarget[];
+  };
+  validation: {
+    status: "ready" | "incomplete" | "metadata_only" | "unsupported";
+    target?: CredentialImportTarget;
+    errors: string[];
+    warnings: string[];
+  };
+  duplicateOfIndex?: number;
+};
+
+export type CredentialImportPreviewResponse = {
+  success: true;
+  importJobId: string;
+  deduplicated: boolean;
+  status: string;
+  detection: {
+    format: string;
+    version?: string | number;
+    provider?: string;
+    isBatch: boolean;
+    confidence: "high" | "medium" | "low";
+    warnings: string[];
+  };
+  warnings: string[];
+  batchFingerprint: string;
+  duplicateCount: number;
+  candidates: CredentialImportPreviewCandidate[];
+};
+
+export type CredentialImportExecutionResponse = {
+  success: boolean;
+  importJobId: string;
+  deduplicated: boolean;
+  jobStatus: string;
+  target: CredentialImportTarget;
+  batchFingerprint: string;
+  imported: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  items: Array<{
+    index: number;
+    status: "imported" | "updated" | "skipped" | "failed";
+    provider?: string;
+    kind: string;
+    fingerprint: string;
+    duplicateOfIndex?: number;
+    accountId?: number;
+    vaultItemIds?: number[];
+    message?: string;
+  }>;
+};
+
+export type CredentialImportJob = {
+  id: string;
+  status: "previewed" | "running" | "completed" | "partial" | "failed";
+  target?: CredentialImportTarget;
+  siteId?: number;
+  operatorId: string;
+  conflictPolicy: CredentialConflictPolicy;
+  detection: CredentialImportPreviewResponse["detection"];
+  warnings: string[];
+  batchFingerprint: string;
+  candidateCount: number;
+  duplicateCount: number;
+  imported: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  failureMessage?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  items?: Array<{
+    id: number;
+    index: number;
+    source: { format: string; version?: string; platform?: string };
+    provider?: string;
+    kind: string;
+    identity: Record<string, string>;
+    secretSummary: Record<string, boolean>;
+    compatibleTargets: CredentialImportTarget[];
+    expiresAt?: string;
+    disabled: boolean;
+    fingerprint: string;
+    validation: { status: string; errors: string[]; warnings: string[] };
+    duplicateOfIndex?: number;
+    status: string;
+    message?: string;
+    accountId?: number;
+    vaultItemIds?: number[];
+  }>;
+};
+
+export type CredentialExportMode = "metadata_only" | "encrypted_backup" | "portable_secret";
 
 export type BrowserRecoveryTask = {
   id: string;
@@ -1625,6 +1804,23 @@ export const api = {
     "/api/bridge-continuations",
     { method: "POST", body: JSON.stringify(data) },
   ),
+  getGlobalBridgeContinuation: () => request<{
+    success: boolean;
+    config: GlobalBridgeContinuationConfig;
+    coverage: GlobalBridgeContinuationCoverage;
+  }>("/api/bridge-continuations/global"),
+  updateGlobalBridgeContinuation: (data: {
+    enabled: boolean;
+    policy?: BridgeContinuationPolicyInput;
+  }) => request<{
+    success: boolean;
+    config: GlobalBridgeContinuationConfig;
+    coverage: GlobalBridgeContinuationCoverage;
+    stopped: number;
+  }>("/api/bridge-continuations/global", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  }),
   takeOverLocalConnectorSession: (data: {
     deviceId: string;
     threadId: string;
@@ -1801,7 +1997,7 @@ export const api = {
   getCredentialVaultItems: (params?: {
     siteId?: number;
     accountId?: number;
-    status?: "active" | "revoked" | "expired";
+    status?: "active" | "disabled" | "revoked" | "expired";
   }) =>
     request<{ items: CredentialVaultItem[] }>(
       "/api/credential-vault" + buildQueryString(params),
@@ -1823,6 +2019,76 @@ export const api = {
     request("/api/credential-vault/" + id + "/revoke", { method: 'POST' }),
   deleteCredentialVaultItem: (id: number) =>
     request("/api/credential-vault/" + id, { method: 'DELETE' }),
+  getCredentialLifecycle: (params?: {
+    siteId?: number;
+    status?: CredentialLifecycleStatus;
+    entityType?: CredentialLifecycleEntityType;
+  }) => request<{ success: true; items: CredentialLifecycleItem[] }>(
+    "/api/credential-lifecycle" + buildQueryString(params),
+  ),
+  runCredentialLifecycleAction: (data: {
+    action: CredentialLifecycleAction;
+    items: Array<{ entityType: CredentialLifecycleEntityType; entityId: number }>;
+  }) => request<{
+    success: true;
+    action: CredentialLifecycleAction;
+    succeeded: number;
+    failed: number;
+    items: CredentialLifecycleActionResult[];
+  }>("/api/credential-lifecycle/actions", {
+    method: "POST",
+    body: JSON.stringify(data),
+    timeoutMs: data.action === "refresh" || data.action === "validate" ? 120_000 : 30_000,
+  }),
+  previewCredentialImport: (data: {
+    input: unknown;
+    target?: CredentialImportTarget;
+    siteId?: number;
+    conflictPolicy?: CredentialConflictPolicy;
+    operatorId?: string;
+    idempotencyKey?: string;
+    passphrase?: string;
+  }) => request<CredentialImportPreviewResponse>("/api/credential-imports/preview", {
+    method: "POST",
+    body: JSON.stringify(data),
+    timeoutMs: 60_000,
+  }),
+  executeCredentialImport: (data: {
+    importJobId: string;
+    input: unknown;
+    target: CredentialImportTarget;
+    siteId?: number;
+    batchFingerprint: string;
+    conflictPolicy?: CredentialConflictPolicy;
+    operatorId?: string;
+    passphrase?: string;
+  }) => request<CredentialImportExecutionResponse>("/api/credential-imports/promote", {
+    method: "POST",
+    body: JSON.stringify(data),
+    timeoutMs: 120_000,
+  }),
+  getCredentialImportJobs: (params?: { limit?: number; siteId?: number }) =>
+    request<{ success: true; jobs: CredentialImportJob[] }>(
+      "/api/credential-imports" + buildQueryString(params),
+    ),
+  getCredentialImportJob: (id: string) =>
+    request<{ success: true; job: CredentialImportJob }>(
+      `/api/credential-imports/${encodeURIComponent(id)}`,
+    ),
+  exportCredentials: (data: {
+    mode: CredentialExportMode;
+    siteId?: number;
+    accountIds?: number[];
+    vaultItemIds?: number[];
+    passphrase?: string;
+    confirmation?: string;
+    expiresInSec?: number;
+    operatorId?: string;
+  }) => request<{ success: true; export: Record<string, unknown> }>("/api/credential-exports", {
+    method: "POST",
+    body: JSON.stringify(data),
+    timeoutMs: 60_000,
+  }),
   getBrowserRecoveryTasks: (params?: { siteId?: number; status?: BrowserRecoveryTask['status'] }) =>
     request<{ items: BrowserRecoveryTask[] }>(
       '/api/browser-credential-tasks' + buildQueryString(params),
@@ -1852,6 +2118,7 @@ export const api = {
       username: string | null;
       apiTokenFound: boolean;
       idempotent: boolean;
+      created: boolean;
     } }>(`/api/browser-credential-tasks/${encodeURIComponent(id)}/activate`, {
       method: 'POST',
       body: JSON.stringify({ accountId }),

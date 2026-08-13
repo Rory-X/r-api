@@ -199,4 +199,48 @@ describe('Settings log cleanup schedule', () => {
       root?.unmount();
     }
   });
+
+  it('groups settings under a five-category navigation and jumps to the selected section', async () => {
+    let root!: WebTestRenderer;
+    const originalDocument = globalThis.document;
+    const scrollIntoView = vi.fn();
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const navigation = root.root.find((node) => (
+        node.type === 'nav' && node.props['aria-label'] === '系统设置分类导航'
+      ));
+      expect(collectText(navigation)).toContain('安全与访问');
+      expect(collectText(navigation)).toContain('自动化任务');
+      expect(collectText(navigation)).toContain('网络与代理');
+      expect(collectText(navigation)).toContain('AI 请求与路由');
+      expect(collectText(navigation)).toContain('数据与维护');
+
+      globalThis.document = {
+        getElementById: vi.fn((id: string) => (
+          id === 'settings-data-system' ? { scrollIntoView } : null
+        )),
+      } as unknown as Document;
+      const dataNavigation = navigation.find((node) => (
+        node.type === 'button' && collectText(node).includes('数据与维护')
+      ));
+      await act(async () => { dataNavigation.props.onClick(); });
+
+      expect(globalThis.document.getElementById).toHaveBeenCalledWith('settings-data-system');
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+      expect(dataNavigation.props['aria-current']).toBe('location');
+    } finally {
+      globalThis.document = originalDocument;
+      root?.unmount();
+    }
+  });
 });

@@ -336,6 +336,42 @@ describe('UpdateCenterSection', () => {
     }
   });
 
+  it('uses a compact vertical source workspace with a responsive Docker candidate grid', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const deploymentCenter = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').split(/\s+/).includes('update-center')
+      ));
+      const sourceWorkspace = deploymentCenter.findByProps({ className: 'update-center-release-grid' });
+      const sourceCards = sourceWorkspace.findAll((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('update-center-release-card')
+      ));
+      const candidateGrid = deploymentCenter.findByProps({ className: 'update-center-candidate-grid' });
+
+      expect(collectText(deploymentCenter)).toContain('版本部署中心');
+      expect(sourceCards).toHaveLength(2);
+      expect(candidateGrid.findAll((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').split(/\s+/).includes('update-center-candidate')
+      ))).toHaveLength(2);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('disables deploy actions when the helper is unhealthy', async () => {
     apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
       currentVersion: '1.2.3',

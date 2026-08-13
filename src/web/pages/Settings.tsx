@@ -42,8 +42,67 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
 });
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 type SettingsPillTone = 'neutral' | 'primary' | 'danger' | 'warning';
+type SettingsSectionKey = 'security' | 'automation' | 'network' | 'ai-routing' | 'data-system';
 type PayloadRulesEditorSectionKey = PayloadRuleAction;
 type PayloadRulesEditorDrafts = Record<PayloadRulesEditorSectionKey, string>;
+
+const SETTINGS_SECTIONS: Array<{
+  key: SettingsSectionKey;
+  label: string;
+  summary: string;
+  description: string;
+}> = [
+  {
+    key: 'security',
+    label: '安全与访问',
+    summary: '凭据、TOTP、IP',
+    description: '管理管理员登录凭据、双重验证、访问白名单与登录会话。',
+  },
+  {
+    key: 'automation',
+    label: '自动化任务',
+    summary: '签到、刷新、清理',
+    description: '集中配置签到、余额刷新、执行窗口和日志清理计划。',
+  },
+  {
+    key: 'network',
+    label: '网络与代理',
+    summary: '出站代理、失败判定',
+    description: '管理全局出站代理，以及响应异常和空内容的失败判定规则。',
+  },
+  {
+    key: 'ai-routing',
+    label: 'AI 请求与路由',
+    summary: 'Payload、传输、模型',
+    description: '控制 AI 请求改写、Codex 传输、模型测活以及全局模型范围。',
+  },
+  {
+    key: 'data-system',
+    label: '数据与维护',
+    summary: '数据库、更新、重置',
+    description: '处理数据库迁移、版本更新、缓存维护和系统初始化。',
+  },
+];
+
+function SettingsCategoryHeading({
+  sectionKey,
+  itemCount,
+}: {
+  sectionKey: SettingsSectionKey;
+  itemCount: number;
+}) {
+  const section = SETTINGS_SECTIONS.find((item) => item.key === sectionKey)!;
+  return (
+    <div className="settings-category-heading">
+      <div>
+        <span className="settings-category-kicker">配置分类</span>
+        <h3 id={`settings-${sectionKey}-title`}>{section.label}</h3>
+        <p>{section.description}</p>
+      </div>
+      <span className="settings-category-count">{itemCount} 个配置区域</span>
+    </div>
+  );
+}
 
 type RuntimeSettings = {
   checkinCron: string;
@@ -376,6 +435,7 @@ export default function Settings() {
   const factoryResetPresence = useAnimatedVisibility(factoryResetOpen, 220);
   const [factoryResetting, setFactoryResetting] = useState(false);
   const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionKey>('security');
   const toast = useToast();
 
   const configuredPayloadRuleCount = useMemo(
@@ -423,6 +483,34 @@ export default function Settings() {
     }, 1000);
     return () => globalThis.clearInterval(timer);
   }, [factoryResetOpen]);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined'
+      || typeof document === 'undefined'
+      || typeof IntersectionObserver === 'undefined'
+    ) return undefined;
+    const sections = SETTINGS_SECTIONS
+      .map((section) => document.getElementById(`settings-${section.key}`))
+      .filter((section): section is HTMLElement => Boolean(section));
+    const observer = new IntersectionObserver((entries) => {
+      const visibleSection = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+      const sectionKey = visibleSection?.target.getAttribute('data-settings-section') as SettingsSectionKey | null;
+      if (sectionKey) setActiveSettingsSection(sectionKey);
+    }, {
+      rootMargin: '-96px 0px -62% 0px',
+      threshold: [0.05, 0.25, 0.5],
+    });
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [loading]);
+
+  const jumpToSettingsSection = (sectionKey: SettingsSectionKey) => {
+    setActiveSettingsSection(sectionKey);
+    document.getElementById(`settings-${sectionKey}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
@@ -1208,12 +1296,44 @@ export default function Settings() {
   }
 
   return (
-    <div className="animate-fade-in">
+    <div className="animate-fade-in settings-page">
       <div className="page-header">
-        <h2 className="page-title">系统设置</h2>
+        <div>
+          <h2 className="page-title">系统设置</h2>
+          <p className="page-subtitle">按配置类型快速定位系统能力；每项设置仍在各自区域独立保存。</p>
+        </div>
       </div>
 
-      <div className="management-page-stack" style={{ gap: 16 }}>
+      <nav className="settings-main-nav" aria-label="系统设置分类导航">
+        {SETTINGS_SECTIONS.map((section, index) => (
+          <button
+            key={section.key}
+            type="button"
+            className={`settings-main-nav-item${activeSettingsSection === section.key ? ' active' : ''}`}
+            aria-current={activeSettingsSection === section.key ? 'location' : undefined}
+            onClick={() => jumpToSettingsSection(section.key)}
+          >
+            <span className="settings-main-nav-index">{String(index + 1).padStart(2, '0')}</span>
+            <span className="settings-main-nav-copy">
+              <strong>{section.label}</strong>
+              <small>{section.summary}</small>
+            </span>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="m6 3.75 4.25 4.25L6 12.25" />
+            </svg>
+          </button>
+        ))}
+      </nav>
+
+      <div className="management-page-stack settings-category-stack">
+        <section
+          id="settings-security"
+          className="settings-category"
+          data-settings-section="security"
+          aria-labelledby="settings-security-title"
+        >
+          <SettingsCategoryHeading sectionKey="security" itemCount={2} />
+          <div className="settings-category-cards">
         <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>管理员安全</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 8 }}>登录凭据</div>
@@ -1259,6 +1379,51 @@ export default function Settings() {
           />
         </div>
 
+        <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>会话与访问范围</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+            登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单，支持每行一个 IP 或 IPv4 CIDR 网段。
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+            当前识别到的管理端 IP（由服务端判定）：
+          </div>
+          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
+            {runtime.currentAdminIp || '未知'}
+          </code>
+          <textarea
+            value={adminIpAllowlistText}
+            onChange={(e) => setAdminIpAllowlistText(e.target.value)}
+            placeholder={'例如：\n127.0.0.1\n192.168.1.10\n192.168.1.0/24'}
+            rows={4}
+            style={{ ...inputStyle, fontFamily: 'var(--font-mono)', resize: 'vertical', marginBottom: 10 }}
+          />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={saveSecuritySettings} disabled={savingSecurity} className="btn btn-primary">
+              {savingSecurity ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存安全设置'}
+            </button>
+            <button
+              onClick={() => {
+                void api.logoutAdmin().catch(() => {}).finally(() => {
+                  window.location.reload();
+                });
+              }}
+              className="btn btn-danger"
+            >
+              退出登录
+            </button>
+          </div>
+        </div>
+          </div>
+        </section>
+
+        <section
+          id="settings-automation"
+          className="settings-category"
+          data-settings-section="automation"
+          aria-labelledby="settings-automation-title"
+        >
+          <SettingsCategoryHeading sectionKey="automation" itemCount={1} />
+          <div className="settings-category-cards">
         <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>定时任务</div>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 180px auto', gap: 12, alignItems: 'end', marginBottom: 12 }}>
@@ -1459,7 +1624,17 @@ export default function Settings() {
             </button>
           </div>
         </div>
+          </div>
+        </section>
 
+        <section
+          id="settings-network"
+          className="settings-category"
+          data-settings-section="network"
+          aria-labelledby="settings-network-title"
+        >
+          <SettingsCategoryHeading sectionKey="network" itemCount={2} />
+          <div className="settings-category-cards">
         <div className="card animate-slide-up stagger-3" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>系统代理</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
@@ -1533,7 +1708,17 @@ export default function Settings() {
             </button>
           </div>
         </div>
+          </div>
+        </section>
 
+        <section
+          id="settings-ai-routing"
+          className="settings-category"
+          data-settings-section="ai-routing"
+          aria-labelledby="settings-ai-routing-title"
+        >
+          <SettingsCategoryHeading sectionKey="ai-routing" itemCount={6} />
+          <div className="settings-category-cards">
         <div className="card animate-slide-up stagger-4" style={settingsModernCardStyle} data-settings-card="payload-rules">
           <div style={settingsModernHeaderStyle}>
             <div style={settingsModernTitleBlockStyle}>
@@ -2123,7 +2308,17 @@ export default function Settings() {
             {savingAllowedModels ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存模型白名单'}
           </button>
         </div>
+          </div>
+        </section>
 
+        <section
+          id="settings-data-system"
+          className="settings-category"
+          data-settings-section="data-system"
+          aria-labelledby="settings-data-system-title"
+        >
+          <SettingsCategoryHeading sectionKey="data-system" itemCount={4} />
+          <div className="settings-category-cards">
         <div className="card animate-slide-up stagger-8" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>数据库迁移（SQLite / MySQL / PostgreSQL）</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
@@ -2321,41 +2516,8 @@ export default function Settings() {
             重新初始化系统
           </button>
         </div>
-
-        <div className="card animate-slide-up stagger-7" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>会话与安全</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单，支持每行一个 IP 或 IPv4 CIDR 网段。
           </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-            当前识别到的管理端 IP（由服务端判定）：
-          </div>
-          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
-            {runtime.currentAdminIp || '未知'}
-          </code>
-          <textarea
-            value={adminIpAllowlistText}
-            onChange={(e) => setAdminIpAllowlistText(e.target.value)}
-            placeholder={'例如：\n127.0.0.1\n192.168.1.10\n192.168.1.0/24'}
-            rows={4}
-            style={{ ...inputStyle, fontFamily: 'var(--font-mono)', resize: 'vertical', marginBottom: 10 }}
-          />
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={saveSecuritySettings} disabled={savingSecurity} className="btn btn-primary">
-              {savingSecurity ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存安全设置'}
-            </button>
-            <button
-              onClick={() => {
-                void api.logoutAdmin().catch(() => {}).finally(() => {
-                  window.location.reload();
-                });
-              }}
-              className="btn btn-danger"
-            >
-              退出登录
-            </button>
-          </div>
-        </div>
+        </section>
       </div>
       <FactoryResetModal
         presence={factoryResetPresence}

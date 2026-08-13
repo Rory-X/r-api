@@ -91,4 +91,49 @@ describe('Accounts tokens embedded header', () => {
       root?.unmount();
     }
   });
+
+  it('keeps signed tokens under the panel account hierarchy', async () => {
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 1,
+        username: 'session-user',
+        accessToken: 'session-token',
+        status: 'active',
+        credentialMode: 'session',
+        capabilities: { canCheckin: true, canRefreshBalance: true, proxyOnly: false },
+        site: { id: 10, name: 'Session Site', platform: 'new-api', status: 'active', url: 'https://session.example.com' },
+      },
+    ]);
+    apiMock.getSites.mockResolvedValue([
+      { id: 10, name: 'Session Site', platform: 'new-api', status: 'active' },
+    ]);
+    apiMock.getAccountTokens.mockResolvedValue([]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts?segment=tokens']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const primaryNavigation = root.root.find((node) => node.props?.['data-testid'] === 'accounts-primary-navigation');
+      const topLevelTabs = primaryNavigation.findAll((node) => node.type === 'button');
+      const tabList = root.root.find((node) => node.props?.['data-testid'] === 'accounts-secondary-navigation');
+      const subTabs = tabList.findAll((node) => node.type === 'button');
+
+      expect(collectText(tabList)).toContain('签发令牌');
+      expect(subTabs).toHaveLength(2);
+      expect(subTabs[1]?.props['aria-selected']).toBe(true);
+      expect(collectText(root.root)).toContain('面板账号的下游资源：签发令牌');
+      expect(topLevelTabs.some((node) => collectText(node) === '签发令牌')).toBe(false);
+    } finally {
+      root?.unmount();
+    }
+  });
 });
