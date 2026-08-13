@@ -1,6 +1,6 @@
 # 浏览器凭证扩展
 
-r-api 提供一个独立的 Chromium/Firefox MV3 扩展参考实现，用于完成 `assisted` 模式的浏览器凭证采集。扩展是浏览器凭证任务协议的客户端，不是第二套凭证中心，也不接管 Coding Agent 登录。
+r-api 提供一个独立的 Chromium/Firefox MV3 扩展参考实现，用于完成 `assisted` 模式的浏览器凭证采集。扩展是浏览器凭证任务协议的客户端，不是第二套安全凭证库，也不接管 Coding Agent 登录。
 
 ## 构建与加载
 
@@ -45,7 +45,7 @@ npm run build:browser-extension
 
 ## 凭证如何进入运行链路
 
-浏览器采集结果保留在凭证中心的 `credential_vault_items` `browser_storage` 条目中，结构是带版本号的 JSON 字段集合。它的用途分成两个阶段：
+浏览器采集结果保留在安全凭证库的 `credential_vault_items` `browser_storage` 条目中，结构是带版本号的 JSON 字段集合。它的用途分成两个阶段：
 
 - **保存阶段**：只校验任务令牌、Origin 和字段白名单，密文入 Vault；这一步不会修改账号的当前会话。
 - **启用阶段**：调用受管理员认证保护的 `POST /api/browser-credential-tasks/:id/activate`，可在请求体传 `accountId`。服务端校验任务已完成、账号属于同一站点，从适配器声明的运行字段提取会话，再调用该平台的 `verifyToken`。只有返回 `tokenType=session` 才会写入账号并触发模型同步、默认 Token 收敛和路由重建。

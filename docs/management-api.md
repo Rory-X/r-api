@@ -671,9 +671,9 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/connections?limit=50&offset=0" \
 | `POST /api/oauth/connections/:accountId/rebind` | 为已有 OAuth 账号重新发起授权 |
 | `DELETE /api/oauth/connections/:accountId` | 删除 OAuth 连接 |
 
-## 凭证中心接口
+## 安全凭证库接口
 
-凭证中心把 NewAPI/OneAPI、Sub2API、原生 OAuth、通用 API Key 和 Vault 凭证放进同一套控制面。标准脚本流程是：
+安全凭证库把 NewAPI/OneAPI、Sub2API、原生 OAuth、通用 API Key 和 Vault 凭证放进同一套加密控制面。标准脚本流程是：
 
 1. `POST /api/credential-imports/preview` 识别格式并创建持久化预览任务
 2. 检查逐项 `validation`、兼容目标、批内重复项和安全摘要
@@ -1027,6 +1027,6 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/credential-exports" \
 ## 下一步
 
 - [上游接入](./upstream-integration.md) — 查看不同站点类型应该怎么填 URL、凭证和 User ID
-- [OAuth 管理](/oauth) — 查看浏览器授权、回调和重绑逻辑
+- [官方凭证池](/oauth) — 查看官方授权、导入、回调和重绑逻辑
 - [配置说明](./configuration.md) — 查看 `AUTH_TOKEN`、`ADMIN_IP_ALLOWLIST`、系统代理等配置项
 - [客户端接入](./client-integration.md) — 如果你要接的是 `/v1/*` 代理接口而不是后台管理接口，请看这里

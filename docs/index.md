@@ -24,10 +24,10 @@ features:
     details: 从部署到第一条请求，按步骤完成最小可用环境搭建。
     link: /getting-started
   - title: 上游接入
-    details: 按平台类型、官方预设和 API 请求地址池的现状，快速判断站点该怎么接。
+    details: 从渠道管理添加站点，再按面板账号、直连 API Key 或浏览器凭证完成接入。
     link: /upstream-integration
-  - title: OAuth 管理
-    details: 直接接入 Codex、Claude、Gemini CLI、Antigravity 等 provider 授权账号。
+  - title: 官方凭证池
+    details: 接入 Codex、Claude、Gemini CLI、Antigravity 等官方订阅或 OAuth 凭证。
     link: /oauth
   - title: 问题排查
     details: 汇总高频报错、根因定位和标准修复路径，降低重复沟通成本。
@@ -62,24 +62,12 @@ features:
       <figcaption>模型广场</figcaption>
     </figure>
     <figure class="home-carousel-slide">
-      <img src="./screenshots/routes.png" alt="智能路由" />
-      <figcaption>智能路由</figcaption>
-    </figure>
-    <figure class="home-carousel-slide">
-      <img src="./screenshots/accounts.png" alt="账号管理" />
-      <figcaption>账号管理</figcaption>
-    </figure>
-    <figure class="home-carousel-slide">
-      <img src="./screenshots/sites.png" alt="站点管理" />
-      <figcaption>站点管理</figcaption>
-    </figure>
-    <figure class="home-carousel-slide">
-      <img src="./screenshots/tokens.png" alt="上游 API Token" />
-      <figcaption>上游 API Token</figcaption>
-    </figure>
-    <figure class="home-carousel-slide">
       <img src="./screenshots/playground.png" alt="模型操练场" />
       <figcaption>模型操练场</figcaption>
+    </figure>
+    <figure class="home-carousel-slide">
+      <img src="./screenshots/proxy-logs.png" alt="使用日志" />
+      <figcaption>使用日志</figcaption>
     </figure>
     <figure class="home-carousel-slide">
       <img src="./screenshots/monitor.png" alt="可用性监控" />
@@ -292,7 +280,9 @@ onBeforeUnmount(() => {
 ## 从这里开始
 
 - 初次部署或首次接入：从 [快速上手](/getting-started) 开始，先跑通最小可用链路。
-- 不确定上游平台该怎么选：先看 [上游接入](/upstream-integration)，再决定走 `账号管理` 还是 `API Key管理`。
+- 有后台面板或兼容 API：进入 [上游接入](/upstream-integration)，判断使用面板账号还是直连 API Key。
+- 使用 Codex、Claude、Gemini CLI 或 Antigravity 官方账号：直接看 [官方凭证池](/oauth)。
+- 必须从浏览器登录态采集 Cookie 或 Storage：使用 [浏览器凭证](/browser-extension)。
 - 准备上线或升级回滚：查看 [部署指南](/deployment) 与 [运维手册](/operations)。
 - 需要补齐环境变量或路由参数：直接查 [配置说明](/configuration)。
 - 正在处理客户端或第三方工具接入：优先看 [客户端接入](/client-integration)。

@@ -1,6 +1,6 @@
 # 🚢 部署指南
 
-[返回文档中心](./README.md)
+[返回文档首页](/)
 
 ---
 
@@ -245,7 +245,7 @@ Linux 安装包选择建议：
 
 ## 本地开发运行（源码调试）
 
-开发、调试或提交 PR 的完整流程见 [快速上手 → 本地开发启动](./getting-started.md#方式三-本地开发启动) 和 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+开发、调试或提交 PR 的完整流程见 [快速上手 → 本地开发启动](./getting-started.md#方式三-本地开发启动) 和 [项目贡献指南](https://github.com/Rory-X/r-api/blob/main/CONTRIBUTING.md)。
 
 > [!NOTE]
 > 这条路径是开发流程，不是下载 `Release` 包后再手动跑 Node.js 的替代说法。

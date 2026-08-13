@@ -1,6 +1,6 @@
-# 🔐 OAuth 管理
+# 🔐 官方凭证池
 
-本文档介绍 r-api 里的「OAuth 管理」页面，适合需要直接授权 provider 账号的场景。
+本文档介绍 r-api 的「官方凭证池」。它统一管理 Codex、Claude、Gemini CLI、Antigravity 等官方订阅或 OAuth 凭证，并把它们转换为可观测、可池化、可调度的上游供给。
 
 [返回文档中心](/)
 
@@ -10,7 +10,7 @@
 
 不是所有上游都适合手填 API Key、Access Token 或 Cookie。
 
-对下面这类 provider 账号，更推荐直接走 OAuth：
+对下面这类官方 provider 账号，更推荐直接进入官方凭证池：
 
 - Codex
 - Claude
@@ -20,8 +20,10 @@
 这类接法的特点是：
 
 - 使用浏览器授权，而不是手填用户名密码
-- 授权成功后，r-api 会自动创建或复用对应 provider 的站点
-- 账号会按 OAuth 连接保存，后续刷新和重绑也走同一套流程
+- 可导入已有官方 OAuth JSON，或从页面发起新的授权
+- 可查看账号计划、额度窗口、模型同步和实际调度状态
+- 可把多个官方凭证合并为路由池，也可拆回单体参与路由
+- 可将选中凭证按受支持的格式接出到其他受信任系统
 
 如果你接的是 New API、One API、Sub2API、CPA、OpenAI-compatible、Claude-compatible 这类**普通站点或网关**，请看 [上游接入](/upstream-integration)。
 
@@ -29,26 +31,26 @@
 
 ## 入口在哪里
 
-管理后台左侧菜单已经有独立入口：
+管理后台左侧菜单的入口是：
 
 ```text
-OAuth 管理
+接入管理 → 官方凭证池
 ```
 
-这不是站点编辑器里的一个隐藏选项，而是和「站点管理」「账号管理」并列的一页。
+它不在「渠道管理」Tab 内。渠道管理负责普通中转站、面板账号和直连 API Key；官方凭证池负责 provider 官方订阅与 OAuth 凭证。
 
 ---
 
 ## 当前支持的 provider
 
-| Provider | 对应平台 | 自动创建的站点名 | 典型用途 |
+| Provider | 对应平台 | 内部技术锚点 | 典型用途 |
 |------|------|------|------|
 | Codex | `codex` | `ChatGPT Codex OAuth` | 直接用 Codex 账号授权 |
 | Claude | `claude` | `Anthropic Claude OAuth` | 直接用 Claude / Anthropic 账号授权 |
 | Gemini CLI | `gemini-cli` | `Google Gemini CLI OAuth` | 复用 Gemini CLI / Google Cloud 账号授权，可选输入 Project ID |
 | Antigravity | `antigravity` | `Google Antigravity OAuth` | 复用 Antigravity 账号授权 |
 
-授权完成后，这些站点会出现在「站点管理」里，但通常**不建议你手动创建**它们。
+授权完成后，系统会自动维护对应的 provider 技术锚点，用于兼容现有存储和路由外键。它不会出现在站点管理中，也不代表官方凭证归属于某个普通站点。
 
 ---
 
@@ -84,9 +86,9 @@ OAuth 连接更适合“provider 原生账号授权”，而不是：
 
 ## 标准流程
 
-### 步骤 1：打开 OAuth 管理
+### 步骤 1：打开官方凭证池
 
-进入左侧菜单「OAuth 管理」，等待页面加载 provider 列表和已有连接。
+进入「接入管理 → 官方凭证池」，等待页面加载 provider 列表、已有凭证和调度状态。
 
 ### 步骤 2：点击要连接的 provider
 
@@ -112,15 +114,15 @@ r-api 会同时给出：
 如果弹窗里已经能看到类似 `...?code=...&state=...` 的回调地址，但 r-api 页面还没成功：
 
 1. 复制浏览器最终回调 URL
-2. 回到「OAuth 管理」
+2. 回到「官方凭证池」
 3. 粘贴到手动回填区域提交
 
-### 步骤 5：确认站点与连接都已出现
+### 步骤 5：确认凭证与调度状态
 
-成功后通常会看到两层结果：
+成功后应看到：
 
-- 「OAuth 管理」页里出现新的连接记录
-- 「站点管理」页里出现对应 provider 的站点行
+- 「官方凭证池」里出现新的凭证记录
+- 凭证的模型同步与调度状态可正常读取
 
 ---
 
@@ -128,9 +130,9 @@ r-api 会同时给出：
 
 | 方式 | 入口 | 适合什么 | 典型例子 |
 |------|------|------|------|
-| 普通站点 + Session | 站点管理 / 账号管理 | 有后台面板，需要签到、余额和上游 API Token 管理 | New API、One API、DoneHub、AnyRouter、Sub2API |
-| 普通站点 + API Key | 站点管理 / API Key 管理 | 只关心代理调用和模型列表 | OpenAI-compatible、Claude-compatible、CPA |
-| OAuth 连接 | OAuth 管理 | 需要 provider 官方授权、刷新、重绑 | Codex、Claude、Gemini CLI、Antigravity |
+| 面板账号 | 渠道管理 → 账号与 API Key → 面板账号 | 有后台面板，需要登录、签到、余额和签发令牌 | New API、One API、DoneHub、AnyRouter、Sub2API |
+| 直连 API Key | 渠道管理 → 账号与 API Key → 直连 API Key | 只有 Base URL + Key，只关心代理调用和模型列表 | OpenAI-compatible、Claude-compatible、CPA |
+| 官方凭证 | 接入管理 → 官方凭证池 | 需要 provider 官方授权、额度观测、刷新和凭证池调度 | Codex、Claude、Gemini CLI、Antigravity |
 
 简单判断：
 
@@ -139,20 +141,29 @@ r-api 会同时给出：
 
 ---
 
-## 自动生成的站点有什么用
+## 内部技术锚点有什么用
 
-OAuth 成功后，r-api 会确保对应 provider 的站点存在。这样做是为了让 OAuth 连接也能融入现有的：
+OAuth 成功后，r-api 会确保对应 provider 的内部技术锚点存在。它只用于兼容现有数据库外键和路由结构：
 
-- 站点列表
 - 路由通道
-- 账号归属
 - 代理与重绑逻辑
 
-但这类站点和普通面板站点仍然不同：
+产品层面仍按 provider 管理官方凭证：
 
-- 它们通常不是拿来手动登录的
-- 不要把它理解成“我又多了一个可签到的面板站”
-- 更准确地说，它是 OAuth 账号在 r-api 里的宿主站点
+- 技术锚点不会出现在站点管理
+- 调度池要求成员属于同一 provider，不要求属于同一技术站点
+- 普通站点、Connector 和安全凭证库不参与官方凭证池归属
+
+---
+
+## 渠道接出
+
+官方凭证池提供两种不同的接出方式：
+
+- **Sub2API / Cockpit**：选中 Codex/OpenAI 官方凭证后，按 Cockpit `sub2api-data` v1 格式下载账号包。文件包含 access token、refresh token、ID token 等明文秘密，必须显式确认后才能生成。
+- **NewAPI / OneAPI**：把 r-api 的 `/v1` 作为 OpenAI 兼容上游，并使用 r-api 下游密钥。此方式不导出、也不伪造官方 OAuth 包。
+
+当前 Sub2API 包导出只支持 Codex/OpenAI 官方凭证；其他 provider 仍可在 r-api 内参与调度。
 
 ---
 
@@ -167,6 +178,8 @@ OAuth 成功后，r-api 会确保对应 provider 的站点存在。这样做是�
 | `GET /api/oauth/sessions/:state` | 轮询会话状态 |
 | `POST /api/oauth/sessions/:state/manual-callback` | 手动回填 callback URL |
 | `GET /api/oauth/connections` | 列出现有连接 |
+| `POST /api/oauth/import` | 导入原生 OAuth JSON 或 Cockpit/Sub2API 凭证包 |
+| `POST /api/oauth/export/sub2api` | 显式确认后导出 Cockpit `sub2api-data` v1 包 |
 | `POST /api/oauth/connections/:accountId/rebind` | 重绑已有 OAuth 连接 |
 | `DELETE /api/oauth/connections/:accountId` | 删除 OAuth 连接 |
 
@@ -204,15 +217,15 @@ OAuth 成功后，r-api 会确保对应 provider 的站点存在。这样做是�
 1. 全局 `SYSTEM_PROXY_URL`
 2. OAuth 启动 / 重绑时指定单次代理
 
-### OAuth 成功后为什么还会在站点管理看到一行站点
+### OAuth 成功后为什么数据库里还有 provider 站点
 
-这是预期行为。r-api 需要一个明确的站点记录来承载：
+这是内部兼容结构。r-api 需要一个技术锚点承载：
 
 - 账号所属平台
 - 路由与通道归属
 - 后续重绑 / 刷新逻辑
 
-它不代表你又新增了一个普通面板站点。
+它不会出现在站点管理，也不代表你新增了一个普通面板站点。
 
 ### 多个请求同时遇到 401，会不会重复刷新
 

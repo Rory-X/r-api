@@ -1,59 +1,47 @@
-import { existsSync, globSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import config from './config';
 
-const getAliasEntry = (aliasConfig: unknown, specifier: string) => {
-  if (!aliasConfig) return undefined;
-
-  if (Array.isArray(aliasConfig)) {
-    return aliasConfig.find(
-      (entry) =>
-        entry &&
-        typeof entry === 'object' &&
-        'find' in entry &&
-        ((typeof entry.find === 'string' && entry.find === specifier) ||
-          (entry.find instanceof RegExp && entry.find.test(specifier))),
-    );
-  }
-
-  if (typeof aliasConfig === 'object' && aliasConfig !== null && specifier in aliasConfig) {
-    return {
-      find: specifier,
-      replacement: String((aliasConfig as Record<string, unknown>)[specifier]),
-    };
-  }
-
-  return undefined;
-};
-
-const getAlias = (aliasConfig: unknown, specifier: string): string | undefined => {
-  const aliasEntry = getAliasEntry(aliasConfig, specifier);
-  return aliasEntry && typeof aliasEntry === 'object' && 'replacement' in aliasEntry ? String(aliasEntry.replacement) : undefined;
-};
-
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
-const getExpectedEntry = (hoistedRelativePath: string, pnpmPattern: string) => {
-  let currentRoot = repoRoot;
-
-  while (true) {
-    const hoistedEntry = resolve(currentRoot, hoistedRelativePath);
-    if (existsSync(hoistedEntry)) return hoistedEntry;
-
-    const [pnpmEntry] = globSync(resolve(currentRoot, pnpmPattern));
-    if (pnpmEntry) return pnpmEntry;
-
-    const parentRoot = dirname(currentRoot);
-    if (parentRoot === currentRoot) break;
-    currentRoot = parentRoot;
-  }
-
-  return undefined;
-};
-
 describe('docs vitepress config', () => {
+  it('fails the docs build when an internal link is broken', () => {
+    expect(config.ignoreDeadLinks).not.toBe(true);
+  });
+
+  it('keeps public navigation focused on user tasks', () => {
+    const nav = config.themeConfig?.nav ?? [];
+    const serializedNav = JSON.stringify(nav);
+
+    expect(serializedNav).toContain('快速上手');
+    expect(serializedNav).toContain('上游渠道接入');
+    expect(serializedNav).toContain('官方凭证池');
+    expect(serializedNav).toContain('部署与运维');
+    expect(serializedNav).not.toContain('文档维护');
+  });
+
+  it('keeps core user guides aligned with the current product navigation', () => {
+    const coreGuides = [
+      'getting-started.md',
+      'fork-features-guide.md',
+      'upstream-integration.md',
+      'configuration.md',
+      'faq.md',
+      'operations.md',
+      'oauth.md',
+    ];
+    const content = coreGuides
+      .map((file) => readFileSync(resolve(repoRoot, 'docs', file), 'utf8'))
+      .join('\n');
+
+    expect(content).toContain('渠道管理 → 账号与 API Key');
+    expect(content).toContain('官方凭证池');
+    expect(content).toContain('系统与安全 → 设置');
+    expect(content).not.toMatch(/(?:连接管理|OAuth 管理|TokenRoutes)/);
+  });
+
   it('ships copied main-app favicon assets for docs', () => {
     expect(existsSync(resolve(repoRoot, 'docs/public/favicon.png'))).toBe(true);
     expect(existsSync(resolve(repoRoot, 'docs/public/favicon-64.png'))).toBe(true);
@@ -78,29 +66,5 @@ describe('docs vitepress config', () => {
     expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon.png')).toBe(true);
     expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon-64.png')).toBe(true);
     expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon.ico')).toBe(true);
-  });
-
-  it('aliases dayjs to the ESM entry for mermaid browser compatibility', () => {
-    const aliasConfig = config.vite?.resolve?.alias;
-    const alias = getAlias(aliasConfig, 'dayjs');
-    const aliasEntry = getAliasEntry(aliasConfig, 'dayjs');
-
-    expect(alias).toBe(getExpectedEntry('node_modules/dayjs/esm/index.js', 'node_modules/.pnpm/dayjs@*/node_modules/dayjs/esm/index.js'));
-    expect(alias && existsSync(alias)).toBe(true);
-    expect(Array.isArray(aliasConfig)).toBe(true);
-    expect(aliasEntry && typeof aliasEntry === 'object' && 'find' in aliasEntry && aliasEntry.find instanceof RegExp).toBe(true);
-    expect(aliasEntry && typeof aliasEntry === 'object' && 'find' in aliasEntry && aliasEntry.find instanceof RegExp && aliasEntry.find.test('dayjs/plugin/duration.js')).toBe(false);
-  });
-
-  it('aliases sanitize-url to a browser-loadable source entry', () => {
-    const alias = getAlias(config.vite?.resolve?.alias, '@braintree/sanitize-url');
-
-    expect(alias).toBe(
-      getExpectedEntry(
-        'node_modules/@braintree/sanitize-url/src/index.ts',
-        'node_modules/.pnpm/@braintree+sanitize-url@*/node_modules/@braintree/sanitize-url/src/index.ts',
-      ),
-    );
-    expect(alias && existsSync(alias)).toBe(true);
   });
 });

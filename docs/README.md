@@ -19,8 +19,11 @@ npm run docs:dev
 构建静态站点：
 
 ```bash
+npm run docs:test
 npm run docs:build
 ```
+
+`docs:test` 会检查公共导航、严格死链策略、核心产品术语和 favicon 资源；发布工作流会先运行它，再构建站点。
 
 ## 内容地图
 
@@ -28,9 +31,9 @@ npm run docs:build
 |------|--------|------------|
 | 对外第一印象、产品定位、核心入口 | [文档首页](/) | 需要调整公开落地页信息架构、首页 CTA 或首屏导航时 |
 | 新用户部署与首条请求 | [快速上手](./getting-started.md) | 新安装流程、默认端口、首次调用步骤变化时 |
-| 二开新增功能的关键操作路径 | [二开功能使用指南](./fork-features-guide.md) | 凭证中心、浏览器凭证、Connector、Bridge、交互审批、通知或下游密钥的用户流程变化时 |
+| 二开新增功能的关键操作路径 | [二开功能使用指南](./fork-features-guide.md) | 安全凭证库、浏览器凭证、Connector、会话接管、飞书、通知或下游密钥的用户流程变化时 |
 | 上游平台选择与接法 | [上游接入](./upstream-integration.md) | 平台支持范围、官方预设、API 请求地址池、自动识别规则变化时 |
-| Provider OAuth 授权 | [OAuth 管理](./oauth.md) | 支持的 OAuth provider、授权流程、回调方式或自动重绑能力变化时 |
+| Provider 官方凭证 | [官方凭证池](./oauth.md) | 支持的 provider、授权、导入、额度、路由池或凭证接出能力变化时 |
 | 生产部署与回滚 | [部署指南](./deployment.md) | Docker Compose、反向代理、升级回滚策略变更时 |
 | K3s / Helm 高级升级面板 | [K3s 更新中心（高级）](./k3s-update-center.md) | 需要说明谁适合使用更新中心、helper 怎么配、K3s/Helm 发布链路怎么接入时 |
 | 环境变量、参数和配置项 | [配置说明](./configuration.md) | 设置页 / 通知设置 / 下游密钥这些 UI 入口变化，或仅剩 env-only 的部署级参数变化时 |
@@ -54,7 +57,7 @@ npm run docs:build
 1. 先确认目标读者是谁，以及内容该落在哪个现有页面。
 2. 如果入口结构变了，同步更新 `docs/.vitepress/config.ts` 的 `nav` 和 `sidebar`。
 3. 检查新增或修改的内链是否还能在站内自然发现，不要把关键入口只藏在单个页面里。
-4. 运行 `npm run docs:build`，确认没有引入构建错误，并额外抽查关键入口与内链。
+4. 运行 `npm run docs:test` 和 `npm run docs:build`，确认导航、术语、静态资源与全部站内链接通过检查。
 
 ## 相关入口
 

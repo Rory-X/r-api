@@ -2,6 +2,20 @@
 
 Local Connector 是本项目的本地优先控制面协议。服务器负责配对、权限、动作队列和审计；本机 Connector 负责在用户设备上读写 Codex/Claude Code 的 Hook、Notify 和 App Server 配置。服务器不执行任意 shell，也不接管 Coding Agent 登录。
 
+[返回文档首页](/)
+
+## WebUI 从哪里进入
+
+管理后台入口是 **接入管理 → 本地 Connector**。页面用三个 Tab 划分工作流：
+
+| Tab | 用途 |
+|------|------|
+| **会话接管** | 查看 Connector 上报的 Codex 会话，以最后活跃时间判断当前状态，并进入会话工作台处理续跑、Prompt 和审批 |
+| **本地设置** | 配对或撤销设备，管理权限，创建 Hook / Notify 安装、备份、回滚和卸载动作 |
+| **飞书** | 配置飞书 Adapter、投递目标、操作者白名单和主动 Prompt |
+
+如果你的目标只是安装 Connector，请先进入「本地设置」；如果要继续某个 Codex 会话，请从「会话接管」选择真实上报的会话，不要手填无法确认归属的 Thread ID。
+
 ## 配对
 
 1. 管理员通过 `POST /api/local-connector/pairings` 创建一次性配对。

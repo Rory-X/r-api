@@ -1,138 +1,99 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
-import { withMermaid } from 'vitepress-plugin-mermaid';
-
-const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
-
-function resolveDependencyEntry(hoistedRelativePath: string, pnpmPattern: string) {
-  let currentRoot = repoRoot;
-
-  while (true) {
-    const hoistedEntry = resolve(currentRoot, hoistedRelativePath);
-    if (existsSync(hoistedEntry)) return hoistedEntry;
-
-    const wildcardIndex = pnpmPattern.indexOf('*');
-    if (wildcardIndex >= 0) {
-      const wildcardBase = resolve(currentRoot, pnpmPattern.slice(0, wildcardIndex));
-      const wildcardParent = dirname(wildcardBase);
-      const wildcardPrefix = basename(wildcardBase);
-      const wildcardSuffix = pnpmPattern.slice(wildcardIndex + 1);
-      if (existsSync(wildcardParent)) {
-        const pnpmEntry = readdirSync(wildcardParent)
-          .filter((entry) => entry.startsWith(wildcardPrefix))
-          .map((entry) => resolve(wildcardParent, `${entry}${wildcardSuffix}`))
-          .find((entry) => existsSync(entry));
-        if (pnpmEntry) return pnpmEntry;
-      }
-    }
-
-    const parentRoot = dirname(currentRoot);
-    if (parentRoot === currentRoot) break;
-    currentRoot = parentRoot;
-  }
-
-  return undefined;
-}
-
-const dayjsEsmEntry = resolveDependencyEntry(
-  'node_modules/dayjs/esm/index.js',
-  'node_modules/.pnpm/dayjs@*/node_modules/dayjs/esm/index.js',
-);
-const sanitizeUrlSourceEntry = resolveDependencyEntry(
-  'node_modules/@braintree/sanitize-url/src/index.ts',
-  'node_modules/.pnpm/@braintree+sanitize-url@*/node_modules/@braintree/sanitize-url/src/index.ts',
-);
-
-if (!dayjsEsmEntry) {
-  throw new Error('Unable to resolve the dayjs ESM entry required by vitepress-plugin-mermaid.');
-}
-
-if (!sanitizeUrlSourceEntry) {
-  throw new Error('Unable to resolve the sanitize-url source entry required by vitepress-plugin-mermaid.');
-}
-
-export default withMermaid(
-  defineConfig({
-    lang: 'zh-CN',
-    title: 'r-api 文档',
-    description: 'r-api 使用文档、FAQ 与维护协作指南',
-    head: [
-      ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon.png' }],
-      ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: '/favicon-64.png' }],
-      ['link', { rel: 'shortcut icon', href: '/favicon.ico' }],
-    ],
-    cleanUrls: true,
-    lastUpdated: true,
-    ignoreDeadLinks: true,
-    srcExclude: ['plans/**'],
-    vite: {
-      resolve: {
-        alias: [
-          { find: /^dayjs$/, replacement: dayjsEsmEntry },
-          { find: /^@braintree\/sanitize-url$/, replacement: sanitizeUrlSourceEntry },
+export default defineConfig({
+  lang: 'zh-CN',
+  title: 'r-api 文档',
+  description: 'r-api 使用文档、FAQ 与维护协作指南',
+  head: [
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon.png' }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: '/favicon-64.png' }],
+    ['link', { rel: 'shortcut icon', href: '/favicon.ico' }],
+  ],
+  cleanUrls: true,
+  lastUpdated: true,
+  srcExclude: ['plans/**'],
+  themeConfig: {
+    siteTitle: 'r-api Docs',
+    logo: '/logos/logo-icon-512.png',
+    nav: [
+      { text: '首页', link: '/' },
+      { text: '快速上手', link: '/getting-started' },
+      {
+        text: '接入指南',
+        items: [
+          { text: '上游渠道接入', link: '/upstream-integration' },
+          { text: '官方凭证池', link: '/oauth' },
+          { text: '浏览器凭证', link: '/browser-extension' },
+          { text: '客户端接入', link: '/client-integration' },
         ],
       },
+      {
+        text: '部署与运维',
+        items: [
+          { text: '部署指南', link: '/deployment' },
+          { text: '配置说明', link: '/configuration' },
+          { text: '运维手册', link: '/operations' },
+          { text: 'Local Connector', link: '/local-connector' },
+        ],
+      },
+      { text: 'FAQ', link: '/faq' },
+      { text: '项目主页', link: 'https://github.com/Rory-X/r-api' },
+    ],
+    sidebar: [
+      {
+        text: '开始',
+        items: [
+          { text: '文档首页', link: '/' },
+          { text: '快速上手', link: '/getting-started' },
+          { text: '部署指南', link: '/deployment' },
+        ],
+      },
+      {
+        text: '上游接入',
+        items: [
+          { text: '渠道管理与上游接入', link: '/upstream-integration' },
+          { text: '官方凭证池', link: '/oauth' },
+          { text: '浏览器凭证扩展', link: '/browser-extension' },
+          { text: '完整功能使用指南', link: '/fork-features-guide' },
+        ],
+      },
+      {
+        text: '路由与客户端',
+        items: [
+          { text: '客户端接入', link: '/client-integration' },
+          { text: '配置说明', link: '/configuration' },
+          { text: '管理 API', link: '/management-api' },
+        ],
+      },
+      {
+        text: '部署与运维',
+        items: [
+          { text: 'Local Connector', link: '/local-connector' },
+          { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
+          { text: '运维手册', link: '/operations' },
+          { text: '常见问题 FAQ', link: '/faq' },
+        ],
+      },
+      {
+        text: '文档维护',
+        items: [
+          { text: '文档维护与贡献', link: '/README' },
+          { text: '目录规范', link: '/project-structure' },
+          { text: 'FAQ/教程贡献规范', link: '/community/faq-tutorial-guidelines' },
+        ],
+      },
+    ],
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/Rory-X/r-api' },
+    ],
+    outline: {
+      level: [2, 3],
     },
-    themeConfig: {
-      siteTitle: 'r-api Docs',
-      logo: '/logos/logo-icon-512.png',
-      nav: [
-        { text: '首页', link: '/' },
-        { text: '快速上手', link: '/getting-started' },
-        { text: '二开功能指南', link: '/fork-features-guide' },
-        { text: '上游接入', link: '/upstream-integration' },
-        { text: 'OAuth 管理', link: '/oauth' },
-        { text: 'FAQ', link: '/faq' },
-        { text: '文档维护', link: '/README' },
-        { text: '项目主页', link: 'https://github.com/Rory-X/r-api' },
-      ],
-      sidebar: [
-        {
-          text: '开始',
-          items: [
-            { text: '文档首页', link: '/' },
-            { text: '快速上手', link: '/getting-started' },
-            { text: '部署指南', link: '/deployment' },
-          ],
-        },
-        {
-          text: '使用与运维',
-          items: [
-            { text: '二开功能使用指南', link: '/fork-features-guide' },
-            { text: '上游接入', link: '/upstream-integration' },
-            { text: 'OAuth 管理', link: '/oauth' },
-            { text: '配置说明', link: '/configuration' },
-            { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
-            { text: '客户端接入', link: '/client-integration' },
-            { text: '管理 API', link: '/management-api' },
-            { text: '运维手册', link: '/operations' },
-            { text: '常见问题 FAQ', link: '/faq' },
-          ],
-        },
-        {
-          text: '文档维护',
-          items: [
-            { text: '文档维护与贡献', link: '/README' },
-            { text: '目录规范', link: '/project-structure' },
-            { text: 'FAQ/教程贡献规范', link: '/community/faq-tutorial-guidelines' },
-          ],
-        },
-      ],
-      socialLinks: [
-        { icon: 'github', link: 'https://github.com/Rory-X/r-api' },
-      ],
-      outline: {
-        level: [2, 3],
-      },
-      footer: {
-        message: 'MIT Licensed',
-        copyright: 'Copyright (c) 2026 r-api Contributors',
-      },
-      search: {
-        provider: 'local',
-      },
+    footer: {
+      message: 'MIT Licensed',
+      copyright: 'Copyright (c) 2026 r-api Contributors',
     },
-  }),
-);
+    search: {
+      provider: 'local',
+    },
+  },
+});

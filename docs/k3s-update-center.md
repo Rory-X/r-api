@@ -1,6 +1,6 @@
 # ☸️ K3s 更新中心（高级）
 
-[返回部署指南](./deployment.md) · [返回配置说明](./configuration.md) · [返回文档中心](./README.md)
+[返回部署指南](./deployment.md) · [返回配置说明](./configuration.md) · [返回文档首页](/)
 
 ---
 
@@ -9,7 +9,7 @@
 K3s 更新中心的日常入口位于：
 
 ```text
-设置 → 更新中心
+系统与安全 → 设置 → 数据与维护 → 更新中心
 ```
 
 本文主要说明三件事：
@@ -33,10 +33,10 @@ K3s 更新中心的日常入口位于：
 
 | 你要配什么 | 去哪里配 | 说明 |
 |------|------|------|
-| 是否启用更新中心 | UI：设置 → 更新中心 | 日常使用优先在 UI 操作 |
-| Deploy Helper URL | UI：设置 → 更新中心 | 例如集群内 Service 地址 |
-| Namespace / Release Name / Chart Ref / Image Repository | UI：设置 → 更新中心 | 都是页面里直接填的部署配置 |
-| GitHub Releases / Docker Hub / 默认部署来源 | UI：设置 → 更新中心 | 属于页面里的版本来源策略 |
+| 是否启用更新中心 | UI：设置 → 数据与维护 → 更新中心 | 日常使用优先在 UI 操作 |
+| Deploy Helper URL | UI：设置 → 数据与维护 → 更新中心 | 例如集群内 Service 地址 |
+| Namespace / Release Name / Chart Ref / Image Repository | UI：设置 → 数据与维护 → 更新中心 | 都是页面里直接填的部署配置 |
+| GitHub Releases / Docker Hub / 默认部署来源 | UI：设置 → 数据与维护 → 更新中心 | 属于页面里的版本来源策略 |
 | 主 r-api 到 helper 的认证 token | 主 r-api 环境变量 | `DEPLOY_HELPER_TOKEN` 或 `UPDATE_CENTER_HELPER_TOKEN` |
 | helper 自己监听在哪个地址和端口 | helper 环境变量 / manifest | `DEPLOY_HELPER_HOST` / `DEPLOY_HELPER_PORT` |
 | helper 自己的 Bearer Token | helper 环境变量 / manifest | `DEPLOY_HELPER_TOKEN`，且必须与主服务一致 |
@@ -44,7 +44,7 @@ K3s 更新中心的日常入口位于：
 
 其中可以这样理解：
 
-- 日常使用时，更新中心的大部分配置直接在 **设置 → 更新中心** 页面填写
+- 日常使用时，更新中心的大部分配置直接在 **设置 → 数据与维护 → 更新中心** 填写
 - 环境变量主要负责主服务与 helper 之间的认证，以及 helper 自身的监听参数
 
 ## 先判断：是否适用
@@ -287,7 +287,7 @@ helper 端使用：
 
 这一步仍然是**环境变量级配置**，因为它本质上是主服务与 helper 之间的认证，而不是普通用户日常在 UI 里调的业务参数。
 
-### 3. 在后台“设置 → 更新中心”里填配置
+### 3. 在后台“设置 → 数据与维护 → 更新中心”里填配置
 
 从这一步开始，**优先按 UI 来操作**，不要再回头把下面这些字段硬塞进环境变量。
 
@@ -317,7 +317,7 @@ helper 端使用：
 对已经跑起来的 K3s / Helm 用户来说，更新中心的日常配置主要就在这一页：
 
 ```text
-设置 → 更新中心
+设置 → 数据与维护 → 更新中心
 ```
 
 ### 4. 实际操作顺序
@@ -364,7 +364,7 @@ About 页里的“更新提醒”更像一个轻量入口：
 
 真正的配置和部署入口仍然在：
 
-- “设置 → 更新中心”
+- “设置 → 数据与维护 → 更新中心”
 
 所以即使你是普通 Docker Compose 用户，也可以把 About 页里的版本提醒当成“看看最近有没有新版本”的地方，但不要把它理解成“马上就能自动更新我这台机器”。
 

@@ -1,8 +1,8 @@
 # 🔌 上游接入指南
 
-本文档详细说明如何将不同类型的 AI 中转站、官方兼容入口和 OAuth 连接接入 r-api。
+本文档说明如何通过渠道管理接入普通中转站和兼容 API，以及什么时候应该改用独立的官方凭证池。
 
-[返回文档中心](./README.md)
+[返回文档首页](/)
 
 ---
 
@@ -12,13 +12,13 @@ r-api 当前支持三类上游接入方式：
 
 1. **中转聚合平台** — New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API / CPA 等
 2. **官方 API 端点** — OpenAI / Claude (Anthropic) / Gemini (Google) 直连
-3. **官方预设与 OAuth 连接** — Coding Plan / DeepSeek / Moonshot / MiniMax / ModelScope 等官方兼容入口，以及 Codex / Claude / Gemini CLI / Antigravity 的浏览器授权登录
+3. **官方预设与官方凭证** — Coding Plan / DeepSeek / Moonshot / MiniMax / ModelScope 等兼容入口，以及 Codex / Claude / Gemini CLI / Antigravity 的官方授权登录
 
 其中：
 
 - **平台类型** 决定协议适配和管理能力
 - **官方预设** 还是落在 `openai` / `claude` 这类平台上，但会自动带出官方地址和推荐模型
-- **OAuth 连接** 不在「站点管理」里手填账号密码，而是在「OAuth 管理」里单独授权
+- **官方凭证** 不在普通渠道里手填账号密码，而是在「接入管理 → 官方凭证池」中单独授权或导入
 
 每种接入方式略有不同，本文档按类型分别说明。
 
@@ -29,20 +29,20 @@ r-api 当前支持三类上游接入方式：
 ### 通用步骤
 
 1. **登录管理后台** — 访问 `http://your-r-api-host:4000`，使用 `AUTH_TOKEN` 登录
-2. **进入站点管理** — 点击左侧菜单「站点管理」
+2. **进入上游站点** — 点击「渠道管理 → 上游站点」
 3. **添加站点** — 点击「添加站点」按钮
 4. **填写站点信息** — 根据站点类型填写对应字段；如果是官方入口，也可以直接选择预设
-5. **添加连接** — 按场景继续添加账号、API Key，或改去「OAuth 管理」授权
+5. **添加连接** — 按场景进入「账号与 API Key」添加面板账号或直连 API Key；官方账号改去官方凭证池
 6. **验证连接** — 系统自动验证账号可用性并获取模型列表
 
 ### 一句话判断该走哪条路
 
 | 你手上有什么 | 推荐入口 | 推荐方式 |
 |------|------|------|
-| 有后台面板的聚合站 | 站点管理 | 先加站点，再加账号 / Session |
-| 只有 Base URL + API Key 的兼容接口 | 站点管理 | 先加站点，再加 API Key |
-| 官方 Coding / API 兼容入口 | 站点管理 | 直接选择官方预设 |
-| Codex / Claude / Gemini CLI / Antigravity 的 provider 账号 | OAuth 管理 | 直接浏览器授权 |
+| 有后台面板的聚合站 | 渠道管理 → 上游站点 | 添加站点后进入面板账号 → 账号列表 |
+| 只有 Base URL + API Key 的兼容接口 | 渠道管理 → 上游站点 | 添加站点后进入直连 API Key |
+| 官方 Coding / API 兼容入口 | 渠道管理 → 上游站点 | 直接选择官方预设，再添加直连 API Key |
+| Codex / Claude / Gemini CLI / Antigravity 的 provider 账号 | 接入管理 → 官方凭证池 | 浏览器授权或导入 OAuth JSON |
 
 ---
 
@@ -68,11 +68,11 @@ New API 支持三种凭证类型：
 
 ##### 1. 用户名密码登录（推荐 AnyRouter 使用）
 
-- **适用场景：** 有完整账号权限，需要自动签到、余额查询和上游 API Token 管理
+- **适用场景：** 有完整账号权限，需要自动签到、余额查询和面板签发令牌管理
 - **填写方式：**
   - 用户名：`your-username`
   - 密码：`your-password`
-- **自动获取：** 系统自动登录并获取 Access Token，再同步该面板账号签发的上游 API Token
+- **自动获取：** 系统自动登录并获取 Access Token，再同步该面板账号的签发令牌
 
 ##### 2. Access Token / Session Cookie
 
@@ -83,7 +83,7 @@ New API 支持三种凭证类型：
     - 可通过浏览器 F12 获取 ![Session Cookie 获取](./screenshots/session-cookie-f12.png)
     - 一般为如下格式：`session=MTczNjQxMjM0NXxEdi1CQUFFQ180SUFBUkFCRUFBQVB2LUNBQUVHYzNSeWFXNW5EQThBRFhObGMzTnBiMjVmZEdGaWJHVUdjM1J5YVc1bkRBSUFBQT09fGRlYWRiZWVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWY=`
     - 系统访问令牌和用户 ID **（推荐非 AnyRouter 的其他 New API 站点使用）**
-    - ![](./screenshots/account-management.png)
+    - 在面板控制台的个人设置或安全设置中复制系统访问令牌，并同时确认当前用户 ID
 - **自动解析：** 系统自动识别凭证类型并提取用户信息
 
 ##### 3. API Key（仅代理）
@@ -91,7 +91,7 @@ New API 支持三种凭证类型：
 - **适用场景：** 仅用于模型调用，不需要余额管理、自动签到等功能
 - **填写方式：**
   - 在「API Token」字段填入：`sk-xxxxxxxxxxxxxx`
-- **限制：** 无法使用签到、余额刷新、上游 API Token 管理等功能
+- **限制：** 无法使用签到、余额刷新、面板签发令牌管理等功能
 
 #### 特殊说明
 
@@ -272,7 +272,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 | 代理调用 | ✅ 支持 |
 | 余额查询 | ❌ 不支持（OpenAI 无公开接口） |
 | 自动签到 | ❌ 不适用 |
-| 上游 API Token 管理 | ❌ 不适用 |
+| 面板签发令牌管理 | ❌ 不适用 |
 
 ---
 
@@ -302,7 +302,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 | 代理调用 | ✅ 支持（自动转换 OpenAI ⇄ Claude 格式） |
 | 余额查询 | ❌ 不支持 |
 | 自动签到 | ❌ 不适用 |
-| 上游 API Token 管理 | ❌ 不适用 |
+| 面板签发令牌管理 | ❌ 不适用 |
 
 **协议转换：** r-api 自动处理 OpenAI 格式与 Claude Messages API 格式的双向转换，下游客户端可使用 OpenAI SDK 调用 Claude 模型。
 
@@ -334,7 +334,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 | 代理调用 | ✅ 支持（自动转换 OpenAI ⇄ Gemini 格式） |
 | 余额查询 | ❌ 不支持 |
 | 自动签到 | ❌ 不适用 |
-| 上游 API Token 管理 | ❌ 不适用 |
+| 面板签发令牌管理 | ❌ 不适用 |
 
 **协议转换：** r-api 自动处理 OpenAI 格式与 Gemini `generateContent` API 格式的双向转换。
 
@@ -375,9 +375,9 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 ---
 
-## 🔐 OAuth 连接接入
+## 🔐 官方凭证池接入
 
-有些 provider 更适合在左侧菜单 **OAuth 管理** 里直接授权，而不是在「站点管理 → 账号管理」里手填凭证。
+有些 provider 应直接在 **接入管理 → 官方凭证池** 中授权或导入，而不是在普通渠道的面板账号或直连 API Key 中反复尝试。
 
 ### 当前推荐走 OAuth 的 provider
 
@@ -396,12 +396,12 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 #### 使用建议
 
-1. 进入左侧菜单 **OAuth 管理**
+1. 进入 **接入管理 → 官方凭证池**
 2. 选择对应 provider 发起授权
 3. 如果是远程部署，按页面提示使用 SSH 隧道或手动回填 callback URL
 4. 授权成功后，r-api 会自动创建或复用对应站点与连接
 
-完整流程见 [OAuth 管理](./oauth.md)。
+完整流程见 [官方凭证池](./oauth.md)。
 
 ---
 
@@ -604,14 +604,14 @@ r-api 会定期抓取已接入站点的公告，并在首次发现时写入站�
 - 直接使用 API Key 模式
 - 不要再按「用户名密码登录 + 自动签到」的思路排查
 
-### 问题：什么时候不该再用账号管理，而应该去 OAuth 管理
+### 问题：什么时候不该再用普通渠道，而应该去官方凭证池
 
 **原因：** 你接的不是普通面板站，而是 provider 自己的授权账号。
 
 **解决方法：**
 
-- Codex / Claude / Gemini CLI / Antigravity 这类连接直接去左侧 **OAuth 管理**
-- 不要在账号管理里反复尝试 Cookie / Session / API Key 兜底
+- Codex / Claude / Gemini CLI / Antigravity 这类连接直接去 **官方凭证池**
+- 不要在面板账号或直连 API Key 中反复尝试 Cookie / Session / API Key 兜底
 
 ### 问题：签到失败
 
@@ -644,7 +644,7 @@ r-api 会定期抓取已接入站点的公告，并在首次发现时写入站�
 
 | 场景 | 推荐凭证类型 | 原因 |
 |------|-------------|------|
-| 个人站点，需要完整功能 | 用户名密码 / Access Token | 支持自动签到、上游 API Token 管理 |
+| 个人站点，需要完整功能 | 用户名密码 / Access Token | 支持自动签到和面板签发令牌管理 |
 | 共享账号，只读权限 | Access Token | 避免密码泄露 |
 | 仅用于模型调用 | API Token | 最小权限原则 |
 | Provider 原生账号 | OAuth | 更适合后续刷新、重绑与统一管理 |
@@ -683,7 +683,7 @@ r-api 会定期抓取已接入站点的公告，并在首次发现时写入站�
 ## 🔗 相关文档
 
 - [配置说明](./configuration.md) — 环境变量与路由参数
-- [OAuth 管理](./oauth.md) — Codex / Claude / Gemini CLI / Antigravity 授权接入
+- [官方凭证池](./oauth.md) — Codex / Claude / Gemini CLI / Antigravity 授权、导入和调度
 - [客户端接入](./client-integration.md) — 下游应用配置
 - [常见问题](./faq.md) — 故障排查与优化建议
 
