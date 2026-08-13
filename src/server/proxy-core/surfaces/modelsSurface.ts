@@ -64,7 +64,7 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
       id,
       object: 'model' as const,
       created: Math.floor(now.getTime() / 1000),
-      owned_by: 'metapi',
+      owned_by: 'r-api',
     })),
   };
 }

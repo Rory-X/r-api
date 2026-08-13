@@ -20,7 +20,7 @@ export class OneApiAdapter extends BasePlatformAdapter {
   }
 
   private buildDefaultTokenPayload(options?: CreateApiTokenOptions): CreateApiTokenPayload {
-    const normalizedName = (options?.name || '').trim() || 'metapi';
+    const normalizedName = (options?.name || '').trim() || 'r-api';
     const unlimitedQuota = options?.unlimitedQuota ?? true;
     const remainQuota = Number.isFinite(options?.remainQuota)
       ? Math.max(0, Math.trunc(options?.remainQuota as number))

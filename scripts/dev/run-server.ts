@@ -37,7 +37,7 @@ async function ensureBetterSqliteCompatible() {
   }
 
   const rebuild = buildBetterSqliteRebuildCommand();
-  console.log('[metapi] Detected better-sqlite3 ABI mismatch. Rebuilding for the current Node.js runtime...');
+  console.log('[r-api] Detected better-sqlite3 ABI mismatch. Rebuilding for the current Node.js runtime...');
   await run(rebuild.command, rebuild.args);
 
   try {

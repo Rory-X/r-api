@@ -16,12 +16,12 @@ type AdminTotpModalProps = {
 
 function downloadRecoveryCodes(codes: string[]) {
   const blob = new Blob([
-    `Metapi administrator recovery codes\nGenerated: ${new Date().toISOString()}\n\n${codes.join('\n')}\n`,
+    `r-api administrator recovery codes\nGenerated: ${new Date().toISOString()}\n\n${codes.join('\n')}\n`,
   ], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = 'metapi-admin-recovery-codes.txt';
+  anchor.download = 'r-api-admin-recovery-codes.txt';
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }

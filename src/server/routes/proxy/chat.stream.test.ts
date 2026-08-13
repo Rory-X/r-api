@@ -4731,7 +4731,7 @@ describe('chat proxy stream behavior', () => {
   it('returns synthetic Anthropic web_search server tool results without adding a new search dependency', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       object: 'search.result',
-      data: [{ title: 'Metapi', url: 'https://example.com/metapi' }],
+      data: [{ title: 'Gateway guide', url: 'https://example.com/gateway' }],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -4745,7 +4745,7 @@ describe('chat proxy stream behavior', () => {
         max_tokens: 256,
         stream: false,
         tools: [{ type: 'web_search_20250305', max_uses: 2 }],
-        messages: [{ role: 'user', content: 'metapi protocol compatibility' }],
+        messages: [{ role: 'user', content: 'gateway protocol compatibility' }],
       },
     });
 
@@ -4755,7 +4755,7 @@ describe('chat proxy stream behavior', () => {
     const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
     expect(targetUrl).toBe('https://upstream.example.com/v1/search');
     expect(JSON.parse(options.body)).toMatchObject({
-      query: 'metapi protocol compatibility',
+      query: 'gateway protocol compatibility',
       max_results: 2,
     });
 
@@ -4772,7 +4772,7 @@ describe('chat proxy stream behavior', () => {
   it('streams synthetic Anthropic web_search server tool results over SSE', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       object: 'search.result',
-      data: [{ title: 'Metapi SSE' }],
+      data: [{ title: 'Gateway SSE' }],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -4786,7 +4786,7 @@ describe('chat proxy stream behavior', () => {
         max_tokens: 256,
         stream: true,
         tools: [{ type: 'web_search_20250305' }],
-        messages: [{ role: 'user', content: 'metapi sse search' }],
+        messages: [{ role: 'user', content: 'gateway sse search' }],
       },
     });
 
@@ -4800,7 +4800,7 @@ describe('chat proxy stream behavior', () => {
   it('returns synthetic Responses web_search results without touching completions upstreams', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       object: 'search.result',
-      data: [{ title: 'Metapi Responses', url: 'https://example.com/responses' }],
+      data: [{ title: 'Gateway Responses', url: 'https://example.com/responses' }],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -4813,7 +4813,7 @@ describe('chat proxy stream behavior', () => {
         model: 'gpt-4.1',
         stream: false,
         tools: [{ type: 'web_search', name: 'web_search', max_results: 3 }],
-        input: 'metapi responses web search',
+        input: 'gateway responses web search',
       },
     });
 
@@ -4823,22 +4823,22 @@ describe('chat proxy stream behavior', () => {
     const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
     expect(targetUrl).toBe('https://upstream.example.com/v1/search');
     expect(JSON.parse(options.body)).toMatchObject({
-      query: 'metapi responses web search',
+      query: 'gateway responses web search',
       max_results: 3,
     });
 
     const body = response.json();
     expect(body.object).toBe('response');
-    expect(body.output_text).toContain('Metapi Responses');
+    expect(body.output_text).toContain('Gateway Responses');
     expect(body.output?.[0]).toMatchObject({
       type: 'web_search_call',
       status: 'completed',
       action: {
         type: 'search',
-        query: 'metapi responses web search',
+        query: 'gateway responses web search',
       },
     });
-    expect(body.output?.[1]?.content?.[0]?.text).toContain('Metapi Responses');
+    expect(body.output?.[1]?.content?.[0]?.text).toContain('Gateway Responses');
   });
 
   it('routes gemini platform to OpenAI-compatible upstream endpoint path', async () => {

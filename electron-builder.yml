@@ -1,5 +1,5 @@
 appId: me.cita777.metapi.desktop
-productName: Metapi
+productName: r-api
 artifactName: ${name}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
@@ -30,8 +30,8 @@ linux:
   maintainer: cita-777 <cita-777@users.noreply.github.com>
 publish:
   provider: github
-  owner: cita-777
-  repo: metapi
+  owner: Rory-X
+  repo: r-api
   releaseType: release
   publishAutoUpdate: true
 nsis:

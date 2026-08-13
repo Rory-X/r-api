@@ -202,7 +202,7 @@ export default function ChannelOverview() {
         <div>
           <h3 className="page-title" style={{ fontSize: 18 }}>{tr('渠道总览')}</h3>
           <div style={{ marginTop: 6, color: 'var(--color-text-muted)', fontSize: 12 }}>
-            {tr('每一行都是一个可供 Metapi 聚合和路由的 API 上游渠道。')}
+            {tr('每一行都是一个可供 r-api 聚合和路由的 API 上游渠道。')}
           </div>
         </div>
         <div className="page-actions">

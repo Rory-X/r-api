@@ -225,11 +225,11 @@ export function Login({ onLogin, t }: { onLogin: () => void; t: (text: string) =
           <div className="login-brand-header">
             <div className="brand-mark-frame brand-mark-frame-hero">
               <div className="brand-mark-canvas">
-                <img src="/logo.png" alt="Metapi" className="login-brand-logo" />
+                <img src="/logo.png" alt="r-api" className="login-brand-logo" />
               </div>
             </div>
             <div className="login-brand-summary">
-              <div className="login-brand-name">Metapi</div>
+              <div className="login-brand-name">r-api</div>
               <div className="login-brand-kicker">{t('中转站的中转站')}</div>
             </div>
           </div>
@@ -496,7 +496,7 @@ export const sidebarGroups = [
     items: [
       { to: '/channels', label: '渠道管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
       { to: '/site-announcements', label: '站点公告', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
-      { to: '/local-connector', label: '会话接管', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h8M8 17h8M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6" /></svg> },
+      { to: '/local-connector', label: '本地 Connector', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h8M8 17h8M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6" /></svg> },
     ],
   },
   {
@@ -806,8 +806,8 @@ function AppShell() {
           </button>
         )}
         <div className="topbar-logo">
-          <img src="/logo.png" alt="Metapi" style={{ width: 28, height: 28, borderRadius: 6 }} />
-          <span className="topbar-logo-text">Metapi</span>
+          <img src="/logo.png" alt="r-api" style={{ width: 28, height: 28, borderRadius: 6 }} />
+          <span className="topbar-logo-text">r-api</span>
         </div>
         <nav className="topbar-nav">
           {topNavItems.map((item) => (
@@ -940,8 +940,8 @@ function AppShell() {
             closeLabel={t('关闭导航')}
           >
             <div className="mobile-drawer-header">
-              <img src="/logo.png" alt="Metapi" />
-              <span>Metapi</span>
+              <img src="/logo.png" alt="r-api" />
+              <span>r-api</span>
             </div>
             <nav className="mobile-nav">
               {sidebarGroups.map((group) => (

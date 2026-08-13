@@ -1,19 +1,19 @@
 apiVersion: zeabur.com/v1
 kind: Template
 metadata:
-  name: Metapi
+  name: r-api
 spec:
   description: Meta-layer management and unified proxy for AI API aggregation platforms.
-  icon: https://raw.githubusercontent.com/cita-777/metapi/main/docs/logos/logo-icon-512.png
-  coverImage: https://raw.githubusercontent.com/cita-777/metapi/main/docs/logos/logo-banner.png
+  icon: https://raw.githubusercontent.com/Rory-X/r-api/main/docs/logos/logo-icon-512.png
+  coverImage: https://raw.githubusercontent.com/Rory-X/r-api/main/docs/logos/logo-banner.png
   tags:
     - AI
     - Tool
     - Proxy
   readme: |-
-    # Metapi (Zeabur Template)
+    # r-api (Zeabur Template)
 
-    Metapi is an AI API aggregation proxy with token routing, account management, monitoring, and admin dashboard.
+    r-api is an AI API aggregation proxy with token routing, account management, monitoring, and admin dashboard.
 
     ## Required Variables
 
@@ -41,8 +41,8 @@ spec:
       name: Service Port
       description: Internal HTTP port (default 4000).
   services:
-    - name: metapi
-      icon: https://raw.githubusercontent.com/cita-777/metapi/main/docs/logos/logo-icon-512.png
+    - name: r-api
+      icon: https://raw.githubusercontent.com/Rory-X/r-api/main/docs/logos/logo-icon-512.png
       template: PREBUILT
       spec:
         source:
@@ -78,7 +78,7 @@ spec:
             default: production
 localization:
   zh-CN:
-    description: Metapi 是一个 AI 中转聚合代理，提供路由、监控和管理后台。
+    description: r-api 是一个 AI 中转聚合代理，提供路由、监控和管理后台。
     variables:
       - key: AUTH_TOKEN
         name: 管理员令牌
@@ -93,9 +93,9 @@ localization:
         name: 服务端口
         description: 内部监听端口（默认 4000）。
     readme: |-
-      # Metapi (Zeabur 模板)
+      # r-api (Zeabur 模板)
 
-      Metapi 是一个 AI 中转聚合代理，支持 Token 路由、账号管理、监控和管理后台。
+      r-api 是一个 AI 中转聚合代理，支持 Token 路由、账号管理、监控和管理后台。
 
       ## 必填变量
 

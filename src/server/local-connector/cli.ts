@@ -31,7 +31,7 @@ import {
   uninstallLocalConnectorServices,
 } from './launchAgent.js';
 
-const HELP = `Metapi Local Connector
+const HELP = `r-api Local Connector
 
 Install:
   npm install --global metapi-connector
@@ -473,7 +473,7 @@ async function connectorDoctorReport(values: Record<string, unknown>) {
   });
   checks.push({
     id: 'remote',
-    label: 'Metapi 线上心跳',
+    label: 'r-api 线上心跳',
     status: report.remote.reachable ? 'pass' : 'fail',
     detail: report.remote.reachable ? report.serverUrl : report.remote.error || '不可达',
   });

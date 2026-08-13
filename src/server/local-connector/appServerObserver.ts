@@ -372,7 +372,7 @@ export async function startCodexAppServerObserver(input: {
       write({
         jsonrpc: '2.0',
         id: message.id,
-        error: { code: -32601, message: 'Metapi observer does not own interactive requests' },
+        error: { code: -32601, message: 'r-api observer does not own interactive requests' },
       });
       return;
     }
@@ -398,7 +398,7 @@ export async function startCodexAppServerObserver(input: {
     id: 1,
     method: 'initialize',
     params: {
-      clientInfo: { name: 'metapi-local-connector', title: 'Metapi Local Connector', version: '1.0.0' },
+      clientInfo: { name: 'metapi-local-connector', title: 'r-api Local Connector', version: '1.0.0' },
       capabilities: { experimentalApi: true },
     },
   });

@@ -1,7 +1,7 @@
 {
   "name": "metapi-connector",
   "version": "1.0.4",
-  "description": "Local-first Codex connector for Metapi session control, approvals and notifications",
+  "description": "Local-first Codex connector for r-api session control, approvals and notifications",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -25,7 +25,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cita-777/metapi.git",
+    "url": "git+https://github.com/Rory-X/r-api.git",
     "directory": "packages/metapi-connector"
   }
 }

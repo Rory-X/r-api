@@ -54,13 +54,13 @@ export function normalizeServerUrl(value: string): string {
   try {
     parsed = new URL(String(value || '').trim());
   } catch {
-    throw new Error('Metapi 服务地址无效');
+    throw new Error('r-api 服务地址无效');
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('Metapi 服务地址不能包含凭据、查询参数或片段');
+    throw new Error('r-api 服务地址不能包含凭据、查询参数或片段');
   }
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname))) {
-    throw new Error('远端 Metapi 服务必须使用 HTTPS');
+    throw new Error('远端 r-api 服务必须使用 HTTPS');
   }
   return parsed.origin;
 }
@@ -73,7 +73,7 @@ export function parseRecoveryLaunchUrl(value: string): BrowserRecoveryLaunch {
     throw new Error('凭证采集链接无效');
   }
   if (!parsed.pathname.endsWith('/browser-credential-recovery')) {
-    throw new Error('当前链接不是 Metapi 浏览器凭证任务');
+    throw new Error('当前链接不是 r-api 浏览器凭证任务');
   }
   const params = new URLSearchParams(parsed.hash.replace(/^#/, ''));
   const taskId = params.get('task') || '';

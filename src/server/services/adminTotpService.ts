@@ -158,7 +158,7 @@ function generateRecoveryCodes(): { codes: string[]; hashes: string[] } {
 
 function buildTotp(secretBase32: string): OTPAuth.TOTP {
   return new OTPAuth.TOTP({
-    issuer: 'Metapi',
+    issuer: 'r-api',
     label: 'administrator',
     algorithm: 'SHA1',
     digits: 6,

@@ -157,12 +157,12 @@ export class AppServerInteractionBridge {
 
   private async runRequest(request: AppServerRequestMetadata, responder: ServerRequestResponder): Promise<void> {
     if (this.closed) {
-      responder.reject(new Error('Metapi Interaction Bridge 已关闭'));
+      responder.reject(new Error('r-api Interaction Bridge 已关闭'));
       return;
     }
     const kind = interactionKindForAppServerMethod(request.method);
     if (!kind) {
-      responder.reject(new Error(`Metapi 不支持 App Server 请求: ${request.method}`));
+      responder.reject(new Error(`r-api 不支持 App Server 请求: ${request.method}`));
       return;
     }
     const normalizedSourceRequestId = sourceRequestId(request.requestId);
@@ -260,7 +260,7 @@ export class AppServerInteractionBridge {
     } finally {
       this.pending.delete(key);
       if (this.controller.signal.aborted && !pending.responseSent && !pending.sourceResolved) {
-        responder.reject(new Error('Metapi Interaction Bridge 已停止'));
+        responder.reject(new Error('r-api Interaction Bridge 已停止'));
       }
     }
   }

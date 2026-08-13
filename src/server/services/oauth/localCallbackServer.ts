@@ -121,7 +121,7 @@ async function handleCallbackRequest(
     });
     respondHtml(response, 200, 'OAuth authorization succeeded. You can close this window.');
   } catch {
-    respondHtml(response, 500, 'OAuth authorization failed. Return to metapi and review the server logs.');
+    respondHtml(response, 500, 'OAuth authorization failed. Return to r-api and review the server logs.');
   }
 }
 

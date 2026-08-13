@@ -45,7 +45,7 @@ export type DockerHubTagCandidates = {
 };
 
 const STABLE_SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/i;
-const GITHUB_RELEASES_URL = 'https://api.github.com/repos/cita-777/metapi/releases';
+const GITHUB_RELEASES_URL = 'https://api.github.com/repos/Rory-X/r-api/releases';
 const DOCKER_HUB_TAGS_URL = 'https://hub.docker.com/v2/repositories/1467078763/metapi/tags?page_size=100';
 const UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS = 5_000;
 const PREFERRED_DOCKER_HUB_TAG_ALIASES = ['latest', 'main'] as const;
@@ -284,7 +284,7 @@ export async function fetchLatestStableGitHubRelease(): Promise<UpdateCenterVers
   const releases = await fetchJsonWithTimeout(GITHUB_RELEASES_URL, {
     headers: {
       accept: 'application/vnd.github+json',
-      'user-agent': 'metapi-update-center/1.0',
+      'user-agent': 'r-api-update-center/1.0',
     },
   }, 'GitHub releases lookup') as GitHubReleaseRecord[];
   return selectLatestStableGitHubRelease(Array.isArray(releases) ? releases : []);
@@ -298,7 +298,7 @@ export async function fetchDockerHubTagCandidates(): Promise<DockerHubTagCandida
   const payload = await fetchJsonWithTimeout(DOCKER_HUB_TAGS_URL, {
     headers: {
       accept: 'application/json',
-      'user-agent': 'metapi-update-center/1.0',
+      'user-agent': 'r-api-update-center/1.0',
     },
   }, 'Docker Hub tag lookup') as { results?: DockerHubTagRecord[] };
   return selectDockerHubTagCandidates(Array.isArray(payload?.results) ? payload.results : []);

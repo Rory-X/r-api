@@ -208,7 +208,7 @@ export async function executeMonitorProxyRequest(
     cookie: storedCookie,
     accept: input.headers.accept || '*/*',
     'accept-language': input.headers.acceptLanguage || 'zh-CN,zh;q=0.9,en;q=0.8',
-    'user-agent': input.headers.userAgent || 'metapiMonitorProxy/1.0',
+    'user-agent': input.headers.userAgent || 'r-api-monitor-proxy/1.0',
   };
   if (contentType) upstreamHeaders['content-type'] = contentType;
   if (input.headers.referer) {

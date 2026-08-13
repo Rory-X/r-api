@@ -76,7 +76,7 @@ const zhToEn: Record<string, string> = {
   '模型操练场': 'Model Playground',
   '模型测试': 'Model Testing',
   '关于': 'About',
-  '关于 Metapi': 'About Metapi',
+  '关于 r-api': 'About r-api',
   '站点文档': 'Site Docs',
   '任务状态已更新': 'Task status updated',
   '会话已过期，请重新登录': 'Session expired, please sign in again',
@@ -103,7 +103,7 @@ const zhToEn: Record<string, string> = {
   '统一管理所有 API 上游渠道，以及它们的站点、连接、OAuth 和浏览器凭证流程。': 'Manage every upstream API channel, including its sites, connections, OAuth, and browser credential workflows.',
   '未识别平台': 'Unknown Platform',
   '加载渠道概览失败': 'Failed to load channel overview',
-  '每一行都是一个可供 Metapi 聚合和路由的 API 上游渠道。': 'Each row is an upstream API channel that Metapi can aggregate and route.',
+  '每一行都是一个可供 r-api 聚合和路由的 API 上游渠道。': 'Each row is an upstream API channel that r-api can aggregate and route.',
   '添加 OAuth': 'Add OAuth',
   '添加上游渠道': 'Add Upstream Channel',
   '个上游站点': 'upstream sites',
@@ -253,7 +253,7 @@ const zhToEn: Record<string, string> = {
   '代理端点': 'Proxy Endpoints',
   '路由行为': 'Routing Behavior',
   '指标口径': 'Metric Notes',
-  'metapi 将多个上游兼容供应商聚合为统一的 OpenAI / Claude 下游兼容入口。': 'Metapi aggregates multiple upstream compatible providers into a unified OpenAI / Claude compatible downstream endpoint.',
+  'r-api 将多个上游兼容供应商聚合为统一的 OpenAI / Claude 下游兼容入口。': 'r-api aggregates multiple upstream compatible providers into a unified OpenAI / Claude compatible downstream endpoint.',
   '核心目标：自动签到、自动模型发现、自动路由重建、统一代理可观测性。': 'Core goals: auto check-in, auto model discovery, auto route rebuild, and unified proxy observability.',
   '1. 路由根据模型可用性自动生成。': '1. Routes are auto-generated based on model availability.',
   '2. 当模型或账号发生变更时，路由通道会自动重建。': '2. Route channels are auto-rebuilt when models or accounts change.',
@@ -358,7 +358,7 @@ const zhToEn: Record<string, string> = {
   '零配置嵌入式数据库': 'Zero-config embedded database',
   '项目链接': 'Project Links',
   '数据与隐私': 'Data & Privacy',
-  'Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在本地 SQLite 数据库中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。': 'Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) is stored in a local SQLite database and never sent to any third party. Proxy requests travel directly between your server and upstream sites.',
+  'r-api 完全自托管，所有数据（账号、令牌、路由、日志）均存储在本地 SQLite 数据库中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。': 'r-api is fully self-hosted. All data (accounts, tokens, routes, logs) is stored in a local SQLite database and never sent to any third party. Proxy requests travel directly between your server and upstream sites.',
 };
 
 for (const [source, target] of Object.entries(zhToEnSupplemental)) {

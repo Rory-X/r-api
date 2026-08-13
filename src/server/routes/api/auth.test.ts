@@ -324,7 +324,7 @@ describe('auth routes', () => {
     expect(setup.otpauthUrl).toContain('otpauth://totp/');
 
     const totp = new OTPAuth.TOTP({
-      issuer: 'Metapi',
+      issuer: 'r-api',
       label: 'administrator',
       algorithm: 'SHA1',
       digits: 6,

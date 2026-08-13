@@ -99,7 +99,7 @@ describe('App Server Interaction Bridge', () => {
     }, responder);
     expect(responder.respond).not.toHaveBeenCalled();
     expect(responder.reject).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Metapi 不支持 App Server 请求: item/tool/call',
+      message: 'r-api 不支持 App Server 请求: item/tool/call',
     }));
     await bridge.close();
   });

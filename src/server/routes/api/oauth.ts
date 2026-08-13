@@ -574,7 +574,7 @@ export async function oauthRoutes(app: FastifyInstance) {
         });
         message = 'OAuth authorization succeeded. You can close this window.';
       } catch {
-        message = 'OAuth authorization failed. Return to metapi and review the server logs.';
+        message = 'OAuth authorization failed. Return to r-api and review the server logs.';
       }
 
       reply.type('text/html; charset=utf-8');

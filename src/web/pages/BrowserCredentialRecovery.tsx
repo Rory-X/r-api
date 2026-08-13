@@ -114,7 +114,7 @@ export default function BrowserCredentialRecovery() {
         <div style={{ width: 'min(520px, 100%)', background: '#fff', border: '1px solid #e1e5eb', borderRadius: 8, padding: 28 }}>
           <h1 style={{ margin: '0 0 10px', fontSize: 21, color: '#18212f' }}>浏览器凭证</h1>
           <p style={{ margin: '0 0 18px', color: '#657184', fontSize: 14, lineHeight: 1.6 }}>
-            一次性令牌尚未领取。已安装 Metapi 浏览器扩展时，可在当前标签页打开扩展并领取；否则选择手动填写。
+            一次性令牌尚未领取。已安装 r-api 浏览器扩展时，可在当前标签页打开扩展并领取；否则选择手动填写。
           </p>
           {error && <div style={{ marginBottom: 14, color: '#b42318', fontSize: 13 }}>{error}</div>}
           <Button type="button" disabled={loading} onClick={() => void claimManually()} style={{ border: 0, borderRadius: 6, background: '#1f6feb', color: '#fff', padding: '11px 14px', fontSize: 14, cursor: loading ? 'wait' : 'pointer' }}>
@@ -131,7 +131,7 @@ export default function BrowserCredentialRecovery() {
       <main style={{ width: 'min(620px, 100%)', margin: '0 auto', background: '#fff', border: '1px solid #e1e5eb', borderRadius: 8, padding: 28 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
           <div>
-            <div style={{ fontSize: 12, color: '#657184', marginBottom: 6 }}>Metapi · 浏览器凭证</div>
+            <div style={{ fontSize: 12, color: '#657184', marginBottom: 6 }}>r-api · 浏览器凭证</div>
             <h1 style={{ margin: 0, fontSize: 22 }}>保存 {task.credentialName}</h1>
           </div>
           <span style={{ color: completed ? '#18864b' : '#657184', fontSize: 12 }}>{statusText(task.status)}</span>

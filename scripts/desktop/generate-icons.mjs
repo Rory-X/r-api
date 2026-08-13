@@ -119,7 +119,7 @@ const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process
 
 if (isDirectRun) {
   const outputs = await generateDesktopIconAssets();
-  console.log(`[metapi-desktop] Generated desktop icons:
+  console.log(`[r-api-desktop] Generated desktop icons:
 - ${outputs.buildOutputPath}
 - ${outputs.webOutputPath}
 - ${outputs.trayTemplateOutputPath}`);

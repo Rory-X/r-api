@@ -78,7 +78,7 @@ export async function waitForServerReady(input: WaitForServerReadyInput): Promis
     await delay(intervalMs);
   }
 
-  throw new Error('Timed out waiting for metapi desktop server');
+  throw new Error('Timed out waiting for r-api desktop server');
 }
 
 export function isFatalServerExit(exitState: ServerExitState): boolean {

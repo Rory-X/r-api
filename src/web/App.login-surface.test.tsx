@@ -21,7 +21,7 @@ describe('Login surface', () => {
   });
 
   it('uses the author github profile for the login github shortcut', () => {
-    expect(SITE_GITHUB_URL).toBe('https://github.com/cita-777');
+    expect(SITE_GITHUB_URL).toBe('https://github.com/Rory-X/r-api');
   });
 
   it('renders a poster-style hero with a floating admin login panel', () => {
@@ -47,7 +47,7 @@ describe('Login surface', () => {
         && node.props.className.includes('brand-mark-canvas')
       ));
 
-      expect(pageText).toContain('Metapi');
+      expect(pageText).toContain('r-api');
       expect(pageText).toContain('中转站的中转站');
       expect(pageText).not.toContain('一个 API Key，一个入口');
       expect(pageText).toContain('兼容 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API');

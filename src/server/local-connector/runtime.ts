@@ -637,7 +637,7 @@ export class LocalConnectorRuntime {
           },
           onServerRequest: async (request, responder) => {
             if (!interactionBridge) {
-              responder.reject(new Error('Metapi Interaction Bridge 未初始化'));
+              responder.reject(new Error('r-api Interaction Bridge 未初始化'));
               return;
             }
             await interactionBridge.handleRequest(request, responder);

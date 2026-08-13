@@ -35,7 +35,7 @@ export async function ensureAdHocSignature(appPath) {
     return signature;
   }
 
-  console.log('[metapi-desktop] No macOS signing identity detected, applying ad-hoc signature.');
+  console.log('[r-api-desktop] No macOS signing identity detected, applying ad-hoc signature.');
   await adHocSign(appPath);
   return inspectSignature(appPath);
 }

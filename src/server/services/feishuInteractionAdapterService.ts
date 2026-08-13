@@ -1954,7 +1954,7 @@ function notificationCardHeader(
   if (parts.sessionTitle) {
     return compactCardHeader(parts.sessionTitle, notificationStatusLabel(parts.status, level));
   }
-  return truncateText(title.replace(/^\[Metapi\]\s*/i, ''), 72) || 'Metapi 通知';
+  return truncateText(title.replace(/^\[(?:Metapi|r-api)\]\s*/i, ''), 72) || 'r-api 通知';
 }
 
 function notificationSummary(message: string, level: 'info' | 'warning' | 'error'): string {
@@ -3522,7 +3522,7 @@ async function handlePreparedFeishuCallback(
     return {
       toast: {
         type: 'warning',
-        content: '该请求已过期，请在 Metapi 控制台刷新',
+        content: '该请求已过期，请在 r-api 控制台刷新',
       },
     };
   }
@@ -3537,7 +3537,7 @@ async function handlePreparedFeishuCallback(
   return {
     toast: {
       type: 'success',
-      content: consumed.replayed ? '该操作已处理' : '已提交到 Metapi',
+      content: consumed.replayed ? '该操作已处理' : '已提交到 r-api',
     },
   };
 }

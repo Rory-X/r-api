@@ -68,7 +68,7 @@ describe('Local Connector dashboard server', () => {
       const page = await fetch(`http://127.0.0.1:${dashboard.port}/`);
       expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
       const html = await page.text();
-      expect(html).toContain('Metapi Connector');
+      expect(html).toContain('r-api Connector');
       expect(html).toContain('@media(max-width:640px)');
       expect(html).toContain('/api/status');
       expect(html).toContain('Codex Desktop · 可追加消息');

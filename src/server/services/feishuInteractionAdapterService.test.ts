@@ -630,7 +630,7 @@ describe('Feishu Interaction Adapter service', () => {
       eventId: 'evt_ws_approval_1',
       event: callbackEvent,
     })).resolves.toMatchObject({
-      toast: { type: 'success', content: '已提交到 Metapi' },
+      toast: { type: 'success', content: '已提交到 r-api' },
     });
     await expect(feishu.handleFeishuLongConnectionCallback({
       adapterId: adapter.id,
@@ -764,7 +764,7 @@ describe('Feishu Interaction Adapter service', () => {
       action.envelope,
       new Date(),
       action.security,
-    )).resolves.toMatchObject({ toast: { type: 'success', content: '已提交到 Metapi' } });
+    )).resolves.toMatchObject({ toast: { type: 'success', content: '已提交到 r-api' } });
     const stored = await interaction.getInteractionRequest(created.request.state.requestId);
     expect(stored?.state).toMatchObject({ status: 'response_pending', responsePayload: { decision: 'accept' } });
   });
@@ -899,7 +899,7 @@ describe('Feishu Interaction Adapter service', () => {
     }, callbackAt);
 
     expect(callback).toEqual({
-      toast: { type: 'warning', content: '该请求已过期，请在 Metapi 控制台刷新' },
+      toast: { type: 'warning', content: '该请求已过期，请在 r-api 控制台刷新' },
     });
     const stored = await interaction.getInteractionRequest(created.request.state.requestId);
     expect(stored?.state).toMatchObject({ status: 'expired', responsePayload: null });

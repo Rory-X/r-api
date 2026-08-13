@@ -127,7 +127,7 @@ describe('update center routes', () => {
       source: 'github-release',
       rawVersion: 'v1.3.0',
       normalizedVersion: '1.3.0',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+      url: 'https://github.com/Rory-X/r-api/releases/tag/v1.3.0',
     } as const;
     const dockerHubTag = {
       source: 'docker-hub-tag',
@@ -377,7 +377,7 @@ describe('update center routes', () => {
       source: 'github-release',
       rawVersion: 'v1.3.0',
       normalizedVersion: '1.3.0',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+      url: 'https://github.com/Rory-X/r-api/releases/tag/v1.3.0',
     });
     getUpdateCenterHelperStatusMock.mockResolvedValue({
       ok: true,
@@ -435,7 +435,7 @@ describe('update center routes', () => {
           source: 'github-release',
           rawVersion: 'v1.3.0',
           normalizedVersion: '1.3.0',
-          url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+          url: 'https://github.com/Rory-X/r-api/releases/tag/v1.3.0',
           tagName: 'v1.3.0',
           digest: null,
           displayVersion: '1.3.0',
@@ -518,7 +518,7 @@ describe('update center routes', () => {
       tagName: 'v1.3.1',
       displayVersion: '1.3.1',
       publishedAt: '2026-03-31T10:00:00Z',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.1',
+      url: 'https://github.com/Rory-X/r-api/releases/tag/v1.3.1',
     });
     fetchDockerHubTagCandidatesMock.mockResolvedValue({
       primary: {

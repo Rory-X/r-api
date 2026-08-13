@@ -1,8 +1,8 @@
 services:
   - type: web
-    name: metapi
+    name: r-api
     runtime: docker
-    repo: https://github.com/cita-777/metapi
+    repo: https://github.com/Rory-X/r-api
     dockerfilePath: ./docker/Dockerfile
     dockerContext: .
     plan: free

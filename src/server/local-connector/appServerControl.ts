@@ -413,7 +413,7 @@ export class CodexAppServerControlClient {
       await this.request('initialize', {
         clientInfo: {
           name: 'metapi-local-connector',
-          title: 'Metapi Local Connector',
+          title: 'r-api Local Connector',
           version: CONNECTOR_VERSION,
         },
         capabilities: {
@@ -567,7 +567,7 @@ export class CodexAppServerControlClient {
       if (this.options.onServerRequest) {
         void Promise.resolve(this.options.onServerRequest(metadata, responder)).catch((error) => responder.reject(error as Error));
       } else {
-        responder.reject(new Error('Metapi interaction adapter is not configured'));
+        responder.reject(new Error('r-api interaction adapter is not configured'));
       }
       return;
     }

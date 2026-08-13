@@ -145,7 +145,7 @@ function buildTelegramText(
   timeFootnote: string,
 ): string {
   const maxTextLength = 3_900;
-  const raw = `[metapi][${level.toUpperCase()}] ${title}\n\n${message}\n\nLevel: ${level}\n${timeFootnote}`;
+  const raw = `[r-api][${level.toUpperCase()}] ${title}\n\n${message}\n\nLevel: ${level}\n${timeFootnote}`;
   if (raw.length <= maxTextLength) return raw;
   return `${raw.slice(0, maxTextLength)}\n\n...(truncated)`;
 }
@@ -166,7 +166,7 @@ function buildWeComText(
   timeFootnote: string,
 ): string {
   const maxLength = 1_900;
-  const raw = `[metapi][${level.toUpperCase()}] ${title}\n\n${message}\n\n${timeFootnote}`;
+  const raw = `[r-api][${level.toUpperCase()}] ${title}\n\n${message}\n\n${timeFootnote}`;
   if (raw.length <= maxLength) return raw;
   return `${raw.slice(0, maxLength)}\n...(truncated)`;
 }
@@ -190,7 +190,7 @@ function buildFeishuText(
   timeFootnote: string,
 ): string {
   const maxLength = 3_900;
-  const raw = `[metapi][${level.toUpperCase()}] ${title}\n\n${message}\n\n${timeFootnote}`;
+  const raw = `[r-api][${level.toUpperCase()}] ${title}\n\n${message}\n\n${timeFootnote}`;
   if (raw.length <= maxLength) return raw;
   return `${raw.slice(0, maxLength)}\n...(truncated)`;
 }
@@ -369,7 +369,7 @@ async function dispatchSmtp(input: NotificationChannelDispatchInput): Promise<vo
     await getSmtpTransporter().sendMail({
       from: config.smtpFrom,
       to: config.smtpTo,
-      subject: `[metapi][${input.level.toUpperCase()}] ${input.title}`,
+      subject: `[r-api][${input.level.toUpperCase()}] ${input.title}`,
       text: `${input.message}\n\nLevel: ${input.level}\n${buildTimeFootnote(occurredAt)}`,
     });
   } catch (error) {

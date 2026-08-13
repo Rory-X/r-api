@@ -59,7 +59,7 @@ async function requestJson(url: string, init: RequestInit): Promise<any> {
     }
     return payload;
   } catch (error) {
-    if ((error as Error)?.name === 'AbortError') throw new Error('连接 Metapi 服务超时');
+    if ((error as Error)?.name === 'AbortError') throw new Error('连接 r-api 服务超时');
     throw error;
   } finally {
     clearTimeout(timeout);

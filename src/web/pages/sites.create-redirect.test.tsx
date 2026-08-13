@@ -1,6 +1,6 @@
 /**
  * @Author: 橘子
- * @Project_description: Metapi 站点创建跳转测试
+ * @Project_description: r-api 站点创建跳转测试
  * @Description: 代码是我抄的，不会也是真的
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

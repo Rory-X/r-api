@@ -44,10 +44,10 @@ describe('desktop runtime helpers', () => {
 
   it('uses resources path as backend cwd for packaged desktop builds', () => {
     expect(resolveDesktopServerWorkingDir({
-      appPath: 'C:/Users/test/AppData/Local/Programs/Metapi/resources/app.asar',
-      resourcesPath: 'C:/Users/test/AppData/Local/Programs/Metapi/resources',
+      appPath: 'C:/Users/test/AppData/Local/Programs/r-api/resources/app.asar',
+      resourcesPath: 'C:/Users/test/AppData/Local/Programs/r-api/resources',
       isPackaged: true,
-    })).toBe('C:/Users/test/AppData/Local/Programs/Metapi/resources');
+    })).toBe('C:/Users/test/AppData/Local/Programs/r-api/resources');
 
     expect(resolveDesktopServerWorkingDir({
       appPath: '/workspace/metapi',
@@ -80,7 +80,7 @@ describe('desktop runtime helpers', () => {
       fetcher,
       timeoutMs: 10,
       intervalMs: 1,
-    })).rejects.toThrow('Timed out waiting for metapi desktop server');
+    })).rejects.toThrow('Timed out waiting for r-api desktop server');
   });
 
   it('treats non-zero non-signal exits as fatal', () => {

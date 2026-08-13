@@ -21,7 +21,7 @@ describe('startupInfo', () => {
       host: '0.0.0.0',
     });
 
-    expect(lines.some((line) => line.includes('metapi running'))).toBe(true);
+    expect(lines.some((line) => line.includes('r-api running'))).toBe(true);
     expect(lines.some((line) => line.includes('Dashboard: http://127.0.0.1:4000'))).toBe(true);
     expect(lines.some((line) => line.includes('/api/stats/dashboard'))).toBe(true);
     expect(lines.some((line) => line.includes('/v1/chat/completions'))).toBe(true);

@@ -31,7 +31,7 @@ describe('BrowserCredentialRecovery page', () => {
       },
       history: { replaceState },
     });
-    vi.stubGlobal('document', { title: 'Metapi' });
+    vi.stubGlobal('document', { title: 'r-api' });
     apiMock.claimBrowserRecoveryTask.mockResolvedValue({
       task: {
         id: 'task-1',

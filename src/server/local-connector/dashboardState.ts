@@ -218,7 +218,7 @@ export class LocalConnectorDashboardState {
     this.lastServerErrorAt = null;
     this.lastServerError = null;
     this.consecutiveServerFailures = 0;
-    if (recovered) this.recordEvent('connector', 'info', 'Metapi connection restored', this.input.serverUrl, null);
+    if (recovered) this.recordEvent('connector', 'info', 'r-api connection restored', this.input.serverUrl, null);
   }
 
   markServerError(error: unknown): void {
@@ -227,7 +227,7 @@ export class LocalConnectorDashboardState {
     this.lastServerErrorAt = isoNow();
     this.lastServerError = normalizedError(error);
     if (firstFailure) {
-      this.recordEvent('connector', 'warning', 'Metapi connection interrupted', this.lastServerError, null);
+      this.recordEvent('connector', 'warning', 'r-api connection interrupted', this.lastServerError, null);
     }
   }
 
@@ -247,7 +247,7 @@ export class LocalConnectorDashboardState {
     this.lastThreadSnapshotSyncAt = isoNow();
     this.lastThreadSnapshotSyncError = null;
     if (changed) {
-      this.recordEvent('connector', 'info', 'Session ownership sync enabled', 'Metapi accepted thread snapshots', null);
+      this.recordEvent('connector', 'info', 'Session ownership sync enabled', 'r-api accepted thread snapshots', null);
     }
   }
 

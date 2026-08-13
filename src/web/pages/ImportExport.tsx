@@ -165,7 +165,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
     const legacyPrefs = Boolean(data.data?.preferences);
     const profilesCount = Array.isArray(data.apiCredentialProfiles?.profiles) ? data.apiCredentialProfiles.profiles.length : 0;
     const bookmarksCount = Array.isArray(accountsSection?.bookmarks) ? accountsSection.bookmarks.length : 0;
-    const isNativeMetapiBackup = Boolean(
+    const isNativeGatewayBackup = Boolean(
       accountsSection
       && Array.isArray(accountsSection.sites)
       && Array.isArray(accountsSection.accountTokens)
@@ -183,7 +183,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
       ));
     const isAllApiHubV2 = Boolean(
       accountsSection
-      && !isNativeMetapiBackup
+      && !isNativeGatewayBackup
       && hasLegacyAccountRows
       && Array.isArray(accountsSection.accounts)
       && (
@@ -363,9 +363,9 @@ export default function ImportExport() {
       const data = await api.exportBackup(type);
       const date = new Date().toISOString().split('T')[0];
       const fileName: Record<BackupType, string> = {
-        all: `metapi-backup-${date}.json`,
-        accounts: `metapi-accounts-${date}.json`,
-        preferences: `metapi-preferences-${date}.json`,
+        all: `r-api-backup-${date}.json`,
+        accounts: `r-api-accounts-${date}.json`,
+        preferences: `r-api-preferences-${date}.json`,
       };
       downloadJsonFile(data, fileName[type]);
       toast.success('导出成功');
@@ -730,7 +730,7 @@ export default function ImportExport() {
             <input
               value={webdavConfig.fileUrl}
               onChange={(e) => setWebdavConfig((prev) => ({ ...prev, fileUrl: e.target.value }))}
-              placeholder="https://dav.example.com/backups/metapi.json"
+              placeholder="https://dav.example.com/backups/r-api.json"
               style={settingsInputStyle}
             />
           </div>

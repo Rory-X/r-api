@@ -149,7 +149,7 @@ function PopupApp() {
       applyState({ active: false });
       setTaskUrl('');
       setCaptureOrigin('');
-      showStatus(response.idempotent ? '任务此前已完成。' : '凭证已加密写入 Metapi Vault。', 'success');
+      showStatus(response.idempotent ? '任务此前已完成。' : '凭证已加密写入 r-api Vault。', 'success');
     } catch (error) {
       showStatus(errorMessage(error), 'error');
     } finally {
@@ -177,7 +177,7 @@ function PopupApp() {
   return (
     <main className="extension-popup">
       <header className="extension-header">
-        <strong>Metapi 浏览器凭证</strong>
+        <strong>r-api 浏览器凭证</strong>
         <span>仅采集站点适配器声明字段</span>
       </header>
 

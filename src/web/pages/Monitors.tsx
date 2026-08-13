@@ -137,7 +137,7 @@ export default function Monitors() {
         <div>
           <h2 className="page-title">{tr('监控内嵌')}</h2>
           <div style={{ marginTop: 6, fontSize: 13, color: 'var(--color-text-muted)' }}>
-            在 metapi 内查看外部站点监控页面。
+            在 r-api 内查看外部站点监控页面。
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
