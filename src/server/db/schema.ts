@@ -126,6 +126,114 @@ export const credentialVaultItems = sqliteTable('credential_vault_items', {
 }));
 
 /**
+ * Durable, secret-free record of one credential import request.
+ * Raw input and normalized secret material must never be persisted here.
+ */
+export const credentialImportJobs = sqliteTable('credential_import_jobs', {
+  id: text('id').primaryKey(),
+  status: text('status').notNull().default('previewed'),
+  target: text('target'),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  operatorId: text('operator_id').notNull(),
+  conflictPolicy: text('conflict_policy').notNull().default('skip'),
+  sourceFormat: text('source_format').notNull(),
+  sourceVersion: text('source_version'),
+  sourcePlatform: text('source_platform'),
+  detectionConfidence: text('detection_confidence').notNull(),
+  detectionIsBatch: integer('detection_is_batch', { mode: 'boolean' }).notNull().default(false),
+  detectionWarnings: text('detection_warnings'),
+  normalizationWarnings: text('normalization_warnings'),
+  batchFingerprint: text('batch_fingerprint').notNull(),
+  requestFingerprint: text('request_fingerprint').notNull(),
+  idempotencyKeyHash: text('idempotency_key_hash'),
+  candidateCount: integer('candidate_count').notNull().default(0),
+  duplicateCount: integer('duplicate_count').notNull().default(0),
+  importedCount: integer('imported_count').notNull().default(0),
+  updatedCount: integer('updated_count').notNull().default(0),
+  skippedCount: integer('skipped_count').notNull().default(0),
+  failedCount: integer('failed_count').notNull().default(0),
+  failureMessage: text('failure_message'),
+  startedAt: text('started_at'),
+  completedAt: text('completed_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  idempotencyKeyHashUnique: uniqueIndex('credential_import_jobs_idempotency_key_hash_unique')
+    .on(table.idempotencyKeyHash),
+  requestFingerprintIdx: index('credential_import_jobs_request_fingerprint_idx')
+    .on(table.requestFingerprint),
+  statusCreatedAtIdx: index('credential_import_jobs_status_created_at_idx')
+    .on(table.status, table.createdAt),
+  siteCreatedAtIdx: index('credential_import_jobs_site_created_at_idx')
+    .on(table.siteId, table.createdAt),
+}));
+
+/** Secret-free preview and execution result for one normalized credential candidate. */
+export const credentialImportItems = sqliteTable('credential_import_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobId: text('job_id').notNull().references(() => credentialImportJobs.id, { onDelete: 'cascade' }),
+  sourceIndex: integer('source_index').notNull(),
+  candidateFingerprint: text('candidate_fingerprint').notNull(),
+  sourceFormat: text('source_format').notNull(),
+  sourceVersion: text('source_version'),
+  sourcePlatform: text('source_platform'),
+  provider: text('provider'),
+  kind: text('kind').notNull(),
+  identitySummary: text('identity_summary'),
+  secretSummary: text('secret_summary').notNull(),
+  compatibleTargets: text('compatible_targets').notNull(),
+  expiresAt: text('expires_at'),
+  disabled: integer('disabled', { mode: 'boolean' }).notNull().default(false),
+  candidateWarnings: text('candidate_warnings'),
+  validationStatus: text('validation_status').notNull(),
+  validationErrors: text('validation_errors'),
+  validationWarnings: text('validation_warnings'),
+  duplicateOfIndex: integer('duplicate_of_index'),
+  status: text('status').notNull().default('previewed'),
+  resultMessage: text('result_message'),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+  vaultItemIds: text('vault_item_ids'),
+  completedAt: text('completed_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  jobSourceIndexUnique: uniqueIndex('credential_import_items_job_source_index_unique')
+    .on(table.jobId, table.sourceIndex),
+  jobStatusIdx: index('credential_import_items_job_status_idx').on(table.jobId, table.status),
+  candidateFingerprintIdx: index('credential_import_items_candidate_fingerprint_idx')
+    .on(table.candidateFingerprint),
+  accountIdIdx: index('credential_import_items_account_id_idx').on(table.accountId),
+}));
+
+/** Links imported resources back to their source and conflict decision. */
+export const credentialImportProvenance = sqliteTable('credential_import_provenance', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobId: text('job_id').notNull().references(() => credentialImportJobs.id, { onDelete: 'cascade' }),
+  itemId: integer('item_id').notNull().references(() => credentialImportItems.id, { onDelete: 'cascade' }),
+  targetEntityType: text('target_entity_type').notNull(),
+  targetEntityId: integer('target_entity_id').notNull(),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  candidateFingerprint: text('candidate_fingerprint').notNull(),
+  sourceFormat: text('source_format').notNull(),
+  sourceVersion: text('source_version'),
+  sourcePlatform: text('source_platform'),
+  provider: text('provider'),
+  operatorId: text('operator_id').notNull(),
+  conflictPolicy: text('conflict_policy').notNull(),
+  importAction: text('import_action').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  itemEntityUnique: uniqueIndex('credential_import_provenance_item_entity_unique')
+    .on(table.itemId, table.targetEntityType, table.targetEntityId),
+  targetEntityIdx: index('credential_import_provenance_target_entity_idx')
+    .on(table.targetEntityType, table.targetEntityId),
+  siteCreatedAtIdx: index('credential_import_provenance_site_created_at_idx')
+    .on(table.siteId, table.createdAt),
+  fingerprintIdx: index('credential_import_provenance_fingerprint_idx')
+    .on(table.candidateFingerprint),
+}));
+
+/**
  * Short-lived browser credential recovery handoffs.
  * Token material is stored only as hashes; the captured fields are written to
  * credentialVaultItems inside the completion transaction and never stored here.
@@ -194,6 +302,7 @@ export const localConnectorThreads = sqliteTable('local_connector_threads', {
   activeTurnId: text('active_turn_id'),
   lastEventKind: text('last_event_kind').notNull(),
   lastSeenAt: text('last_seen_at').notNull(),
+  lastActiveAt: text('last_active_at'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -202,6 +311,7 @@ export const localConnectorThreads = sqliteTable('local_connector_threads', {
   deviceLastSeenIdx: index('local_connector_threads_device_last_seen_idx')
     .on(table.deviceId, table.lastSeenAt),
   lastSeenAtIdx: index('local_connector_threads_last_seen_at_idx').on(table.lastSeenAt),
+  lastActiveAtIdx: index('local_connector_threads_last_active_at_idx').on(table.lastActiveAt),
 }));
 
 export const localConnectorPairings = sqliteTable('local_connector_pairings', {

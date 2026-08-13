@@ -1122,6 +1122,426 @@
         }
       }
     },
+    "credential_import_items": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "job_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_index": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "candidate_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_format": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_version": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_platform": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "identity_summary": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "secret_summary": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "compatible_targets": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "disabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "false",
+          "primaryKey": false
+        },
+        "candidate_warnings": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "validation_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "validation_errors": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "validation_warnings": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "duplicate_of_index": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'previewed'",
+          "primaryKey": false
+        },
+        "result_message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "vault_item_ids": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "completed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "credential_import_jobs": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'previewed'",
+          "primaryKey": false
+        },
+        "target": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "operator_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "conflict_policy": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'skip'",
+          "primaryKey": false
+        },
+        "source_format": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_version": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_platform": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "detection_confidence": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "detection_is_batch": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "false",
+          "primaryKey": false
+        },
+        "detection_warnings": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "normalization_warnings": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "batch_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "request_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "idempotency_key_hash": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "candidate_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "duplicate_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "imported_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "updated_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "skipped_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "failed_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "failure_message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "started_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "completed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "credential_import_provenance": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "job_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "item_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "target_entity_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "target_entity_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "candidate_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_format": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_version": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_platform": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "operator_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "conflict_policy": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "import_action": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "credential_vault_items": {
       "columns": {
         "id": {
@@ -2584,6 +3004,12 @@
         },
         "title": {
           "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_active_at": {
+          "logicalType": "datetime",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
@@ -5225,6 +5651,110 @@
       "unique": false
     },
     {
+      "name": "credential_import_items_account_id_idx",
+      "table": "credential_import_items",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_items_candidate_fingerprint_idx",
+      "table": "credential_import_items",
+      "columns": [
+        "candidate_fingerprint"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_items_job_source_index_unique",
+      "table": "credential_import_items",
+      "columns": [
+        "job_id",
+        "source_index"
+      ],
+      "unique": true
+    },
+    {
+      "name": "credential_import_items_job_status_idx",
+      "table": "credential_import_items",
+      "columns": [
+        "job_id",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_jobs_idempotency_key_hash_unique",
+      "table": "credential_import_jobs",
+      "columns": [
+        "idempotency_key_hash"
+      ],
+      "unique": true
+    },
+    {
+      "name": "credential_import_jobs_request_fingerprint_idx",
+      "table": "credential_import_jobs",
+      "columns": [
+        "request_fingerprint"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_jobs_site_created_at_idx",
+      "table": "credential_import_jobs",
+      "columns": [
+        "site_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_jobs_status_created_at_idx",
+      "table": "credential_import_jobs",
+      "columns": [
+        "status",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_provenance_fingerprint_idx",
+      "table": "credential_import_provenance",
+      "columns": [
+        "candidate_fingerprint"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_provenance_item_entity_unique",
+      "table": "credential_import_provenance",
+      "columns": [
+        "item_id",
+        "target_entity_type",
+        "target_entity_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "credential_import_provenance_site_created_at_idx",
+      "table": "credential_import_provenance",
+      "columns": [
+        "site_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_import_provenance_target_entity_idx",
+      "table": "credential_import_provenance",
+      "columns": [
+        "target_entity_type",
+        "target_entity_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "credential_vault_items_account_id_idx",
       "table": "credential_vault_items",
       "columns": [
@@ -5716,6 +6246,14 @@
         "thread_id"
       ],
       "unique": true
+    },
+    {
+      "name": "local_connector_threads_last_active_at_idx",
+      "table": "local_connector_threads",
+      "columns": [
+        "last_active_at"
+      ],
+      "unique": false
     },
     {
       "name": "local_connector_threads_last_seen_at_idx",
@@ -6590,6 +7128,30 @@
       ]
     },
     {
+      "name": "credential_import_items_job_source_index_unique",
+      "table": "credential_import_items",
+      "columns": [
+        "job_id",
+        "source_index"
+      ]
+    },
+    {
+      "name": "credential_import_jobs_idempotency_key_hash_unique",
+      "table": "credential_import_jobs",
+      "columns": [
+        "idempotency_key_hash"
+      ]
+    },
+    {
+      "name": "credential_import_provenance_item_entity_unique",
+      "table": "credential_import_provenance",
+      "columns": [
+        "item_id",
+        "target_entity_type",
+        "target_entity_id"
+      ]
+    },
+    {
       "name": "downstream_api_key_leases_key_slot_unique",
       "table": "downstream_api_key_leases",
       "columns": [
@@ -7011,6 +7573,72 @@
         "id"
       ],
       "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_import_items",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "credential_import_items",
+      "columns": [
+        "job_id"
+      ],
+      "referencedTable": "credential_import_jobs",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_import_jobs",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "credential_import_provenance",
+      "columns": [
+        "item_id"
+      ],
+      "referencedTable": "credential_import_items",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_import_provenance",
+      "columns": [
+        "job_id"
+      ],
+      "referencedTable": "credential_import_jobs",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_import_provenance",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
     },
     {
       "table": "credential_vault_items",

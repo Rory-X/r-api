@@ -27,6 +27,8 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'sites',
   'accounts',
   'credential_vault_items',
+  'credential_import_items',
+  'credential_import_provenance',
   'oauth_refresh_leases',
   'account_tokens',
   'checkin_logs',
