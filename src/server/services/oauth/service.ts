@@ -77,6 +77,15 @@ type ImportedNativeOauthJson = {
   last_refresh?: unknown;
 };
 
+type ImportedSub2ApiAccount = {
+  name?: unknown;
+  platform?: unknown;
+  type?: unknown;
+  credentials?: unknown;
+  extra?: unknown;
+  disabled?: unknown;
+};
+
 export class OauthImportValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -267,7 +276,8 @@ function resolveImportedOauthIdentity(
 function parseImportedOauthExpiry(value: unknown): number | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.trunc(value);
+    const normalized = Math.trunc(value);
+    return normalized < 1_000_000_000_000 ? normalized * 1000 : normalized;
   }
   if (typeof value !== 'string') {
     throwOauthImportValidationError('invalid oauth expired timestamp');
@@ -277,7 +287,7 @@ function parseImportedOauthExpiry(value: unknown): number | undefined {
   if (/^\d+$/.test(trimmed)) {
     const parsedNumeric = Number.parseInt(trimmed, 10);
     if (Number.isFinite(parsedNumeric) && parsedNumeric > 0) {
-      return parsedNumeric;
+      return parsedNumeric < 1_000_000_000_000 ? parsedNumeric * 1000 : parsedNumeric;
     }
   }
   const parsed = Date.parse(trimmed);
@@ -306,13 +316,6 @@ function resolveImportedNativeOauthIdentity(
   name: string;
 } {
   const rawType = asNonEmptyString(payload.type);
-  const payloadRecord = payload as Record<string, unknown>;
-  if (rawType === 'sub2api-data' || rawType === 'sub2api-bundle' || Array.isArray(payloadRecord.accounts)) {
-    throwOauthImportValidationError('native oauth json expected; sub2api envelopes are no longer supported');
-  }
-  if ('accounts' in payloadRecord || 'proxies' in payloadRecord || 'version' in payloadRecord || 'exported_at' in payloadRecord) {
-    throwOauthImportValidationError('native oauth json expected; sub2api envelopes are no longer supported');
-  }
   const provider = rawType ? mapImportedOauthProvider(rawType) : null;
   if (!provider) {
     throwOauthImportValidationError(`unsupported oauth import type: ${rawType || 'unknown'}`);
@@ -449,16 +452,47 @@ function normalizeImportedOauthJsonItems(input: {
   data?: unknown;
   items?: unknown[];
 }): unknown[] {
-  const batchItems = Array.isArray(input.items)
-    ? input.items
-    : [];
+  const extractItem = (value: unknown): unknown[] => {
+    if (!isRecord(value) || !Array.isArray(value.accounts)) return [value];
+    const envelopeType = asNonEmptyString(value.type);
+    if (envelopeType && envelopeType !== 'sub2api-data' && envelopeType !== 'sub2api-bundle') {
+      throwOauthImportValidationError(`unsupported oauth import envelope: ${envelopeType}`);
+    }
+    const extracted = value.accounts.flatMap((rawAccount): ImportedNativeOauthJson[] => {
+      if (!isRecord(rawAccount)) return [];
+      const account = rawAccount as ImportedSub2ApiAccount;
+      if (asNonEmptyString(account.type)?.toLowerCase() !== 'oauth') return [];
+      if (!isRecord(account.credentials)) {
+        return [{ type: asNonEmptyString(account.platform) || 'unknown' }];
+      }
+      const credentials = account.credentials as Record<string, unknown>;
+      const extra = isRecord(account.extra) ? account.extra as Record<string, unknown> : null;
+      return [{
+        ...credentials,
+        type: asNonEmptyString(extra?.auth_provider)
+          || asNonEmptyString(account.platform)
+          || 'unknown',
+        email: asNonEmptyString(credentials.email) || asNonEmptyString(account.name),
+        account_id: asNonEmptyString(credentials.chatgpt_account_id)
+          || asNonEmptyString(credentials.account_id),
+        expired: credentials.expires_at,
+        disabled: account.disabled === true,
+      }];
+    });
+    if (extracted.length <= 0) {
+      throwOauthImportValidationError('sub2api package does not contain official oauth accounts');
+    }
+    return extracted;
+  };
+
+  const batchItems = Array.isArray(input.items) ? input.items : [];
   if (batchItems.length > 0) {
-    return batchItems;
+    return batchItems.flatMap(extractItem);
   }
   if (input.data === undefined) {
     return [];
   }
-  return [input.data];
+  return extractItem(input.data);
 }
 
 async function activatePersistedOauthAccount(input: {
@@ -924,7 +958,15 @@ export async function listOauthConnections(options: {
   const routeChannelRows = await db.select({
     accountId: schema.routeChannels.accountId,
     oauthRouteUnitId: schema.routeChannels.oauthRouteUnitId,
-    count: sql<number>`COUNT(*)`,
+    enabled: schema.routeChannels.enabled,
+    cooldownUntil: schema.routeChannels.cooldownUntil,
+    lastSelectedAt: schema.routeChannels.lastSelectedAt,
+    lastUsedAt: schema.routeChannels.lastUsedAt,
+    lastFailAt: schema.routeChannels.lastFailAt,
+    successCount: schema.routeChannels.successCount,
+    failCount: schema.routeChannels.failCount,
+    consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
+    cooldownLevel: schema.routeChannels.cooldownLevel,
   }).from(schema.routeChannels)
     .where(routeUnitIds.length > 0
       ? or(
@@ -932,18 +974,38 @@ export async function listOauthConnections(options: {
         inArray(schema.routeChannels.oauthRouteUnitId, routeUnitIds),
       )
       : inArray(schema.routeChannels.accountId, accountIds))
-    .groupBy(schema.routeChannels.accountId, schema.routeChannels.oauthRouteUnitId)
     .all();
-  const routeChannelCountByAccount = new Map<number, number>();
-  const routeChannelCountByRouteUnit = new Map<number, number>();
+  const routeChannelsByAccount = new Map<number, typeof routeChannelRows>();
+  const routeChannelsByRouteUnit = new Map<number, typeof routeChannelRows>();
   for (const row of routeChannelRows) {
     if (typeof row.accountId === 'number' && row.accountId > 0) {
-      routeChannelCountByAccount.set(row.accountId, row.count ?? 0);
+      const accountRows = routeChannelsByAccount.get(row.accountId) || [];
+      accountRows.push(row);
+      routeChannelsByAccount.set(row.accountId, accountRows);
     }
     if (typeof row.oauthRouteUnitId === 'number' && row.oauthRouteUnitId > 0) {
-      routeChannelCountByRouteUnit.set(row.oauthRouteUnitId, row.count ?? 0);
+      const unitRows = routeChannelsByRouteUnit.get(row.oauthRouteUnitId) || [];
+      unitRows.push(row);
+      routeChannelsByRouteUnit.set(row.oauthRouteUnitId, unitRows);
     }
   }
+
+  const routeUnitMemberRows = routeUnitIds.length > 0
+    ? await db.select().from(schema.oauthRouteUnitMembers)
+      .where(and(
+        inArray(schema.oauthRouteUnitMembers.unitId, routeUnitIds),
+        inArray(schema.oauthRouteUnitMembers.accountId, accountIds),
+      ))
+      .all()
+    : [];
+  const routeUnitMemberByAccount = new Map<
+    number,
+    typeof schema.oauthRouteUnitMembers.$inferSelect
+  >(routeUnitMemberRows.map((member) => [member.accountId, member]));
+
+  const newestTime = (values: Array<string | null | undefined>): string | null => (
+    values.filter((value): value is string => !!value).sort().at(-1) || null
+  );
 
   const items = rows.flatMap((row) => {
     const oauth = getOauthInfoFromAccount(row.accounts);
@@ -965,6 +1027,42 @@ export async function listOauthConnections(options: {
         memberCount: routeUnit.memberCount,
       }
       : null;
+    const schedulingChannels = routeUnit?.kind === 'route_unit'
+      ? (routeChannelsByRouteUnit.get(routeUnit.id) || [])
+      : (routeChannelsByAccount.get(row.accounts.id) || []).filter((channel) => !channel.oauthRouteUnitId);
+    const routeUnitMember = routeUnitMemberByAccount.get(row.accounts.id) || null;
+    const enabledRouteCount = schedulingChannels.filter((channel) => channel.enabled !== false).length;
+    const routeChannelCount = schedulingChannels.length;
+    const nowIso = new Date().toISOString();
+    const cooldownUntil = routeUnitMember?.cooldownUntil && routeUnitMember.cooldownUntil > nowIso
+      ? routeUnitMember.cooldownUntil
+      : newestTime(schedulingChannels
+        .map((channel) => channel.cooldownUntil)
+        .filter((value) => !!value && value > nowIso));
+    const schedulingState = status === 'abnormal'
+      ? 'blocked'
+      : enabledRouteCount <= 0
+        ? 'unrouted'
+        : cooldownUntil
+          ? 'cooldown'
+          : 'ready';
+    const schedulingStats = routeUnitMember
+      ? {
+        successCount: routeUnitMember.successCount || 0,
+        failCount: routeUnitMember.failCount || 0,
+        consecutiveFailCount: routeUnitMember.consecutiveFailCount || 0,
+        cooldownLevel: routeUnitMember.cooldownLevel || 0,
+        lastSelectedAt: routeUnitMember.lastSelectedAt || routeUnitMember.lastUsedAt || null,
+        lastFailAt: routeUnitMember.lastFailAt || null,
+      }
+      : {
+        successCount: schedulingChannels.reduce((totalValue, channel) => totalValue + (channel.successCount || 0), 0),
+        failCount: schedulingChannels.reduce((totalValue, channel) => totalValue + (channel.failCount || 0), 0),
+        consecutiveFailCount: Math.max(0, ...schedulingChannels.map((channel) => channel.consecutiveFailCount || 0)),
+        cooldownLevel: Math.max(0, ...schedulingChannels.map((channel) => channel.cooldownLevel || 0)),
+        lastSelectedAt: newestTime(schedulingChannels.map((channel) => channel.lastSelectedAt || channel.lastUsedAt)),
+        lastFailAt: newestTime(schedulingChannels.map((channel) => channel.lastFailAt)),
+      };
     return [{
       accountId: row.accounts.id,
       siteId: row.sites.id,
@@ -978,9 +1076,16 @@ export async function listOauthConnections(options: {
       modelsPreview: models.slice(0, 10),
       quota: buildQuotaSnapshotFromOauthInfo(oauth),
       status,
-      routeChannelCount: routeUnit?.kind === 'route_unit'
-        ? (routeChannelCountByRouteUnit.get(routeUnit.id) || 0)
-        : (routeChannelCountByAccount.get(row.accounts.id) || 0),
+      routeChannelCount,
+      scheduling: {
+        state: schedulingState,
+        eligible: schedulingState === 'ready',
+        mode: routeUnit?.kind === 'route_unit' ? 'route_unit' : 'single',
+        routeCount: routeChannelCount,
+        enabledRouteCount,
+        cooldownUntil,
+        ...schedulingStats,
+      },
       lastModelSyncAt: oauth.lastModelSyncAt,
       lastModelSyncError: oauth.lastModelSyncError,
       proxyUrl: getProxyUrlFromExtraConfig(row.accounts.extraConfig),
@@ -1061,7 +1166,8 @@ export async function importOauthConnectionsFromNativeJson(input: {
   useSystemProxy?: boolean;
 }) {
   const payloadItems = normalizeImportedOauthJsonItems(input);
-  const continueOnItemFailure = Array.isArray(input.items);
+  const continueOnItemFailure = Array.isArray(input.items)
+    || (isRecord(input.data) && Array.isArray(input.data.accounts));
   if (payloadItems.length <= 0) {
     throwOauthImportValidationError('data must be a native oauth json object');
   }

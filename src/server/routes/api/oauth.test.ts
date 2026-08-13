@@ -2757,7 +2757,20 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
-  it('rejects legacy sub2api oauth envelopes', async () => {
+  it('imports official oauth accounts from a Cockpit Sub2API envelope', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ id: 'gpt-5.4' }] }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ id: 'gpt-5.4-mini' }] }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
     const response = await app.inject({
       method: 'POST',
       url: '/api/oauth/import',
@@ -2765,15 +2778,163 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         data: {
           type: 'sub2api-data',
           version: 1,
-          accounts: [],
+          accounts: [{
+            name: 'Codex Plus',
+            platform: 'openai',
+            type: 'oauth',
+            credentials: {
+              access_token: 'sub2api-access-a',
+              refresh_token: 'sub2api-refresh-a',
+              email: 'sub2api-a@example.com',
+              chatgpt_account_id: 'sub2api-account-a',
+              plan_type: 'plus',
+              expires_at: 1_800_000_000,
+            },
+            concurrency: 3,
+            priority: 50,
+          }, {
+            name: 'Ignored API Key',
+            platform: 'openai',
+            type: 'apikey',
+            credentials: { api_key: 'sk-ignored' },
+          }, {
+            name: 'Codex Team',
+            platform: 'openai',
+            type: 'oauth',
+            credentials: {
+              access_token: 'sub2api-access-b',
+              refresh_token: 'sub2api-refresh-b',
+              email: 'sub2api-b@example.com',
+              chatgpt_account_id: 'sub2api-account-b',
+              plan_type: 'team',
+            },
+          }],
           proxies: [],
         },
       },
     });
 
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      imported: 2,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(2);
+    expect(accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        username: 'sub2api-a@example.com',
+        accessToken: 'sub2api-access-a',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'sub2api-account-a',
+      }),
+      expect.objectContaining({
+        username: 'sub2api-b@example.com',
+        accessToken: 'sub2api-access-b',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'sub2api-account-b',
+      }),
+    ]));
+    const firstCredential = JSON.parse(
+      accounts.find((row) => row.oauthAccountKey === 'sub2api-account-a')?.oauthCredentialPayload || '{}',
+    );
+    expect(firstCredential).toMatchObject({
+      email: 'sub2api-a@example.com',
+      planType: 'plus',
+      refreshToken: 'sub2api-refresh-a',
+      tokenExpiresAt: 1_800_000_000_000,
+    });
+  });
+
+  it('requires explicit plaintext confirmation for the Sub2API export endpoint', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/export/sub2api',
+      payload: {
+        accountIds: [1],
+        confirmation: '',
+      },
+    });
+
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
-      message: 'native oauth json expected; sub2api envelopes are no longer supported',
+      message: 'explicit secret export confirmation is required',
+    });
+  });
+
+  it('exports a selected Codex official credential as a Cockpit Sub2API package', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const idToken = buildJwt({
+      sub: 'route-export-user',
+      email: 'route-export@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'route-export-account',
+        chatgpt_user_id: 'route-export-user',
+        organization_id: 'route-export-org',
+        chatgpt_plan_type: 'plus',
+      },
+    });
+    const accessToken = buildJwt({ exp: 1_800_000_000 });
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'Route Export',
+      accessToken,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'route-export-account',
+      oauthCredentialPayload: JSON.stringify({
+        email: 'route-export@example.com',
+        planType: 'plus',
+        refreshToken: 'route-export-refresh',
+        idToken,
+        tokenExpiresAt: 1_800_000_000_000,
+      }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/export/sub2api',
+      payload: {
+        accountIds: [account.id],
+        confirmation: 'EXPORT_OFFICIAL_SECRETS',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      export: {
+        type: 'sub2api-data',
+        version: 1,
+        exported_at: expect.any(String),
+        proxies: [],
+        accounts: [{
+          name: 'Route Export',
+          platform: 'openai',
+          type: 'oauth',
+          credentials: {
+            access_token: accessToken,
+            refresh_token: 'route-export-refresh',
+            client_id: config.codexClientId,
+            id_token: idToken,
+            email: 'route-export@example.com',
+            chatgpt_account_id: 'route-export-account',
+            chatgpt_user_id: 'route-export-user',
+            organization_id: 'route-export-org',
+            plan_type: 'plus',
+          },
+          concurrency: 3,
+          priority: 50,
+        }],
+      },
     });
   });
 
@@ -2959,6 +3120,12 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       platform: 'codex',
       status: 'active',
     }).returning().get();
+    const secondaryAnchor = await db.insert(schema.sites).values({
+      name: 'Legacy Codex OAuth Anchor',
+      url: 'https://legacy-codex-anchor.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
 
     const accountA = await db.insert(schema.accounts).values({
       siteId: site.id,
@@ -2979,7 +3146,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     }).returning().get();
     const accountB = await db.insert(schema.accounts).values({
-      siteId: site.id,
+      siteId: secondaryAnchor.id,
       username: 'pool-b@example.com',
       accessToken: 'oauth-access-token-b',
       apiToken: null,
@@ -3028,6 +3195,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(createResponse.json()).toMatchObject({
       success: true,
       routeUnit: expect.objectContaining({
+        siteId: site.id,
         name: 'Codex Pool',
         strategy: 'round_robin',
         memberCount: 2,

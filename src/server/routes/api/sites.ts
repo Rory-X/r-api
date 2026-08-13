@@ -25,6 +25,7 @@ import { probeSiteModels } from '../../services/modelService.js';
 import { listSiteAdapterContracts, getSiteAdapterContract } from '../../services/platforms/siteAdapterContract.js';
 import {
   clearOauthProviderSiteDeletionForSite,
+  isOauthProviderSite,
   markOauthProviderSiteDeleted,
 } from '../../services/oauth/oauthSiteRegistry.js';
 
@@ -487,7 +488,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       }).from(schema.accounts).all(),
       listSiteRuntimeHealthSnapshots(),
     ]);
-    const siteRowsWithApiEndpoints = await attachSiteApiEndpoints(siteRows);
+    const visibleSiteRows = siteRows.filter((site) => !isOauthProviderSite(site));
+    const siteRowsWithApiEndpoints = await attachSiteApiEndpoints(visibleSiteRows);
 
     const totalBalanceBySiteId: Record<number, number> = {};
     const subscriptionBySiteId: Record<number, SiteSubscriptionAggregate | undefined> = {};

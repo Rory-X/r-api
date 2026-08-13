@@ -247,16 +247,14 @@ export async function createOauthRouteUnit(input: {
   }
 
   const first = rows[0]!;
-  const expectedSiteId = first.accounts.siteId;
+  // The schema still requires one FK anchor; pool ownership is provider-scoped.
+  const anchorSiteId = first.accounts.siteId;
   const expectedProvider = (first.accounts.oauthProvider || '').trim();
   if (!expectedProvider) {
     throw new Error('oauth route unit only supports oauth accounts');
   }
 
   for (const row of rows) {
-    if (row.accounts.siteId !== expectedSiteId) {
-      throw new Error('oauth route unit accounts must belong to the same site');
-    }
     if ((row.accounts.oauthProvider || '').trim() !== expectedProvider) {
       throw new Error('oauth route unit accounts must share the same provider');
     }
@@ -279,7 +277,7 @@ export async function createOauthRouteUnit(input: {
         table: schema.oauthRouteUnits,
         idColumn: schema.oauthRouteUnits.id,
         values: {
-          siteId: expectedSiteId,
+          siteId: anchorSiteId,
           provider: expectedProvider,
           name,
           strategy,

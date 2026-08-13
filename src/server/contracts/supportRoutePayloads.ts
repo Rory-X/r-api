@@ -44,6 +44,11 @@ const oauthImportPayloadSchema = z.object({
   useSystemProxy: z.boolean().optional(),
 }).passthrough();
 
+const oauthSub2ApiExportPayloadSchema = z.object({
+  accountIds: z.array(z.number().int().positive()),
+  confirmation: z.string(),
+}).passthrough();
+
 const oauthRouteUnitStrategySchema = z.preprocess((value) => {
   if (typeof value !== 'string') return value;
   return value.trim().toLowerCase();
@@ -88,6 +93,7 @@ export type MonitorConfigPayload = z.output<typeof monitorConfigPayloadSchema>;
 export type OauthConnectionRebindPayload = z.output<typeof oauthConnectionRebindPayloadSchema>;
 export type OauthConnectionProxyUpdatePayload = z.output<typeof oauthConnectionProxyUpdatePayloadSchema>;
 export type OauthImportPayload = z.output<typeof oauthImportPayloadSchema>;
+export type OauthSub2ApiExportPayload = z.output<typeof oauthSub2ApiExportPayloadSchema>;
 export type OauthManualCallbackPayload = z.output<typeof oauthManualCallbackPayloadSchema>;
 export type OauthQuotaBatchRefreshPayload = z.output<typeof oauthQuotaBatchRefreshPayloadSchema>;
 export type OauthRouteUnitCreatePayload = z.output<typeof oauthRouteUnitCreatePayloadSchema>;
@@ -249,6 +255,11 @@ export function parseOauthQuotaBatchRefreshPayload(input: unknown):
 export function parseOauthImportPayload(input: unknown):
 { success: true; data: OauthImportPayload } | { success: false; error: string } {
   return parseSupportRoutePayload(oauthImportPayloadSchema, input);
+}
+
+export function parseOauthSub2ApiExportPayload(input: unknown):
+{ success: true; data: OauthSub2ApiExportPayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(oauthSub2ApiExportPayloadSchema, input);
 }
 
 export function parseOauthRouteUnitCreatePayload(input: unknown):

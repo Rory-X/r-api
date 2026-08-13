@@ -16,6 +16,12 @@ function findProviderForSite(site: Pick<typeof schema.sites.$inferSelect, 'platf
   ));
 }
 
+export function isOauthProviderSite(
+  site: Pick<typeof schema.sites.$inferSelect, 'platform' | 'url'>,
+): boolean {
+  return Boolean(findProviderForSite(site));
+}
+
 async function isDeletionMarked(definition: OAuthProviderDefinition, txDb: typeof db = db): Promise<boolean> {
   const marker = await txDb.select({ key: schema.settings.key })
     .from(schema.settings)

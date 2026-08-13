@@ -32,7 +32,12 @@ import {
   parseOauthRouteUnitCreatePayload,
   parseOauthRouteUnitUpdatePayload,
   parseOauthStartPayload,
+  parseOauthSub2ApiExportPayload,
 } from '../../contracts/supportRoutePayloads.js';
+import {
+  exportOfficialCredentialsAsSub2Api,
+  OfficialCredentialExportError,
+} from '../../services/oauth/officialCredentialExportService.js';
 
 const limitOauthProviderRead = createRateLimitGuard({
   bucket: 'oauth-provider-read',
@@ -81,6 +86,7 @@ function createOauthSensitiveRouteLimiter(keyPrefix: string, points = 20) {
 let oauthQuotaBatchRefreshLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-quota-batch');
 let oauthProxyUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-proxy');
 let oauthImportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-import');
+let oauthExportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-export');
 let oauthRouteUnitCreateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-create');
 let oauthRouteUnitUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-update');
 let oauthRouteUnitDeleteLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-delete');
@@ -93,6 +99,7 @@ export function resetOauthSensitiveRouteLimiterForTests(options: {
   oauthQuotaBatchRefreshLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-quota-batch', points);
   oauthProxyUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-proxy', points);
   oauthImportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-import', points);
+  oauthExportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-export', points);
   oauthRouteUnitCreateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-create', points);
   oauthRouteUnitUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-update', points);
   oauthRouteUnitDeleteLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-delete', points);
@@ -454,6 +461,36 @@ export async function oauthRoutes(app: FastifyInstance) {
   );
 
   app.post<{ Body: unknown }>(
+    '/api/oauth/export/sub2api',
+    { preHandler: [limitOauthConnectionMutate] },
+    async (request, reply) => {
+      try {
+        await oauthExportLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
+      const parsedBody = parseOauthSub2ApiExportPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+      try {
+        return {
+          success: true,
+          export: await exportOfficialCredentialsAsSub2Api(parsedBody.data),
+        };
+      } catch (error: any) {
+        const message = error?.message || 'official credential export failed';
+        if (error instanceof OfficialCredentialExportError) {
+          return reply.code(400).send({ message });
+        }
+        request.log.error({ err: error }, 'official credential export failed');
+        return reply.code(500).send({ message });
+      }
+    },
+  );
+
+  app.post<{ Body: unknown }>(
     '/api/oauth/route-units',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
@@ -484,7 +521,6 @@ export async function oauthRoutes(app: FastifyInstance) {
           || message === 'invalid oauth route unit strategy'
           || message === 'oauth route unit accounts already grouped'
           || message === 'oauth route unit only supports oauth accounts'
-          || message === 'oauth route unit accounts must belong to the same site'
           || message === 'oauth route unit accounts must share the same provider'
         ) {
           return reply.code(400).send({ message });
