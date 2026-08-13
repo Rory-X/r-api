@@ -415,7 +415,7 @@ export default function FeishuPromptCardsPanel({ deviceId: connectorDeviceId }: 
                   ))}
                   {selectableThreads.map((thread) => (
                     <Option key={thread.id} value={`thread:${thread.id}`}>
-                      最近 · {compactThreadId(thread.threadId)} · {thread.deviceName} · {threadStatusLabel(thread.threadStatus)} · {formatDate(thread.lastSeenAt)}
+                      最近 · {compactThreadId(thread.threadId)} · {thread.deviceName} · {threadStatusLabel(thread.threadStatus)} · 最近活跃 {formatDate(thread.lastActiveAt)}
                     </Option>
                   ))}
                 </Select>

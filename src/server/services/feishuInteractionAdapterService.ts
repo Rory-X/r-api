@@ -292,6 +292,36 @@ function parseOperatorAllowlist(raw: string): string[] {
   }
 }
 
+function feishuCardMentionIds(raw: string): string[] {
+  const ids: string[] = [];
+  for (const entry of parseOperatorAllowlist(raw)) {
+    const separator = entry.indexOf(':');
+    if (separator <= 0) continue;
+    const kind = entry.slice(0, separator);
+    const id = entry.slice(separator + 1).trim();
+    // Card Markdown supports open_id/user_id for targeted mentions. Keep
+    // union_id available for callback authorization, but never put it into a
+    // card mention tag because Feishu does not accept it for this syntax.
+    if ((kind !== 'open_id' && kind !== 'user_id')
+      || !/^[A-Za-z0-9_.:@-]+$/.test(id)) continue;
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids.slice(0, 20);
+}
+
+function feishuCardMentionMarkup(rawOperatorAllowlist: string): string {
+  const ids = feishuCardMentionIds(rawOperatorAllowlist);
+  if (ids.length === 0) return '';
+  return ids.length === 1
+    ? `<at id=${ids[0]}></at>`
+    : `<at ids=${ids.join(',')}></at>`;
+}
+
+function prependFeishuCardMentions(content: string, rawOperatorAllowlist: string): string {
+  const mentions = feishuCardMentionMarkup(rawOperatorAllowlist);
+  return mentions ? `${mentions}\n${content}` : content;
+}
+
 function parseStringArray(raw: string | null): string[] {
   if (!raw) return [];
   try {
@@ -1488,6 +1518,12 @@ function buildFeishuInteractionCard(
     placeholder: '输入补充说明或下一步要求',
   });
   const sessionTitle = threadTitle || 'Codex 会话';
+  const summary = prependFeishuCardMentions([
+    `**${interactionSummaryLabel(interaction.state.kind)}**`,
+    escapeNotificationMarkdown(interactionSummary(interaction)),
+    '',
+    ...interactionContextLines(interaction),
+  ].join('\n').trim(), adapter.operatorAllowlist);
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -1504,12 +1540,7 @@ function buildFeishuInteractionCard(
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: [
-            `**${interactionSummaryLabel(interaction.state.kind)}**`,
-            escapeNotificationMarkdown(interactionSummary(interaction)),
-            '',
-            ...interactionContextLines(interaction),
-          ].join('\n').trim(),
+          content: summary,
         },
       },
       ...(responseButtons.length > 0 ? [{ tag: 'action', actions: responseButtons.slice(0, 4) }] : []),
@@ -1544,6 +1575,7 @@ function buildFeishuPromptCard(
     placeholder: '输入下一条要发送给 Codex 的消息',
   });
   const sessionTitle = threadTitle || 'Codex 会话';
+  const mentionMarkup = feishuCardMentionMarkup(adapter.operatorAllowlist);
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -1551,6 +1583,7 @@ function buildFeishuPromptCard(
       title: { tag: 'plain_text', content: compactCardHeader(sessionTitle, '继续对话') },
     },
     elements: [
+      ...(mentionMarkup ? [{ tag: 'div', text: { tag: 'lark_md', content: mentionMarkup } }] : []),
       ...(promptForm ? [promptForm] : []),
       ...(consoleUrl ? [{
         tag: 'action',
@@ -1607,11 +1640,19 @@ function interactionStatusPresentation(status: InteractionRequestRecord['state']
 }
 
 function buildFeishuInteractionStatusCard(
+  adapter: AdapterRow,
   interaction: InteractionRequestRecord,
   threadTitle: string | null,
 ): Record<string, unknown> | null {
   const presentation = interactionStatusPresentation(interaction.state.status);
   if (!presentation) return null;
+  const summary = prependFeishuCardMentions([
+    `**${kindTitle(interaction.state.kind)}**`,
+    escapeNotificationMarkdown(interactionSummary(interaction)),
+    '',
+    presentation.detail,
+    ...interactionContextLines(interaction).filter((line) => !line.startsWith('**有效至**')),
+  ].join('\n').trim(), adapter.operatorAllowlist);
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -1626,13 +1667,7 @@ function buildFeishuInteractionStatusCard(
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: [
-            `**${kindTitle(interaction.state.kind)}**`,
-            escapeNotificationMarkdown(interactionSummary(interaction)),
-            '',
-            presentation.detail,
-            ...interactionContextLines(interaction).filter((line) => !line.startsWith('**有效至**')),
-          ].join('\n').trim(),
+          content: summary,
         },
       },
     ],
@@ -1665,11 +1700,13 @@ function promptCardStatusPresentation(status: PromptCardRow['status']): {
 }
 
 function buildFeishuPromptStatusCard(
+  adapter: AdapterRow,
   promptCard: PromptCardRow,
   threadTitle: string | null,
 ): Record<string, unknown> | null {
   const presentation = promptCardStatusPresentation(promptCard.status);
   if (!presentation) return null;
+  const mentionMarkup = feishuCardMentionMarkup(adapter.operatorAllowlist);
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -1680,6 +1717,7 @@ function buildFeishuPromptStatusCard(
       },
     },
     elements: [
+      ...(mentionMarkup ? [{ tag: 'div', text: { tag: 'lark_md', content: mentionMarkup } }] : []),
       {
         tag: 'div',
         text: {
@@ -1699,8 +1737,11 @@ async function currentCardUpdateTarget(dispatch: DispatchRow): Promise<CardUpdat
     const promptCard = await db.select().from(schema.interactionPromptCards)
       .where(eq(schema.interactionPromptCards.id, dispatch.promptCardId)).get();
     if (!promptCard) return null;
+    const adapter = await db.select().from(schema.interactionAdapters)
+      .where(eq(schema.interactionAdapters.id, dispatch.adapterId)).get();
+    if (!adapter) return null;
     const threadTitle = await observedThreadTitle(promptCard.deviceId, promptCard.threadId);
-    const card = buildFeishuPromptStatusCard(promptCard, threadTitle);
+    const card = buildFeishuPromptStatusCard(adapter, promptCard, threadTitle);
     return card ? Object.freeze({
       subjectRevision: promptCard.stateVersion,
       targetStatus: promptCard.status,
@@ -1710,11 +1751,14 @@ async function currentCardUpdateTarget(dispatch: DispatchRow): Promise<CardUpdat
   if (!dispatch.interactionId || dispatch.promptCardId) return null;
   const interaction = await getInteractionRequest(dispatch.interactionId);
   if (!interaction) return null;
+  const adapter = await db.select().from(schema.interactionAdapters)
+    .where(eq(schema.interactionAdapters.id, dispatch.adapterId)).get();
+  if (!adapter) return null;
   const threadTitle = await observedThreadTitle(
     interaction.state.deviceId,
     interaction.state.threadId,
   );
-  const card = buildFeishuInteractionStatusCard(interaction, threadTitle);
+  const card = buildFeishuInteractionStatusCard(adapter, interaction, threadTitle);
   return card ? Object.freeze({
     subjectRevision: interaction.stateVersion,
     targetStatus: interaction.state.status,
@@ -1997,6 +2041,16 @@ function feishuNotificationUuid(input: {
     .slice(0, 50);
 }
 
+function feishuTopicMessageUuid(notificationUuid: string, purpose: 'bootstrap' | 'notification'): string {
+  return createHash('sha256')
+    .update('metapi-feishu-topic-message\0')
+    .update(notificationUuid)
+    .update('\0')
+    .update(purpose)
+    .digest('hex')
+    .slice(0, 50);
+}
+
 function buildFeishuTopicPromptForm(topicPromptToken: string): Record<string, unknown> {
   return {
     tag: 'form',
@@ -2027,12 +2081,15 @@ function buildFeishuTopicPromptForm(topicPromptToken: string): Record<string, un
 }
 
 function buildFeishuNotificationCard(
+  adapter: AdapterRow,
   title: string,
   message: string,
   level: 'info' | 'warning' | 'error',
   occurredAt: string,
   topicPromptToken?: string | null,
 ): Record<string, unknown> {
+  const summary = notificationSummary(message, level);
+  const detail = escapeNotificationMarkdown(truncateNotificationDetail(message));
   return {
     schema: '2.0',
     header: {
@@ -2044,7 +2101,7 @@ function buildFeishuNotificationCard(
       elements: [
         {
           tag: 'markdown',
-          content: notificationSummary(message, level),
+          content: prependFeishuCardMentions(summary, adapter.operatorAllowlist),
         },
         {
           tag: 'collapsible_panel',
@@ -2055,7 +2112,7 @@ function buildFeishuNotificationCard(
           elements: [
             {
               tag: 'markdown',
-              content: escapeNotificationMarkdown(truncateNotificationDetail(message)),
+              content: detail,
             },
           ],
         },
@@ -2065,6 +2122,30 @@ function buildFeishuNotificationCard(
           content: `<font color='grey'>${formatCardDateTime(occurredAt)}</font>`,
         },
       ],
+    },
+  };
+}
+
+function buildFeishuTopicBootstrapCard(
+  adapter: AdapterRow,
+  message: string,
+): Record<string, unknown> {
+  const sessionTitle = notificationMessageParts(message).sessionTitle || 'Codex 会话';
+  return {
+    schema: '2.0',
+    header: {
+      template: 'blue',
+      title: { tag: 'plain_text', content: compactCardHeader(sessionTitle, '话题已建立') },
+    },
+    body: {
+      direction: 'vertical',
+      elements: [{
+        tag: 'markdown',
+        content: prependFeishuCardMentions(
+          '**会话话题已建立**\n后续完成通知和继续对话都会归入本话题。',
+          adapter.operatorAllowlist,
+        ),
+      }],
     },
   };
 }
@@ -2129,19 +2210,40 @@ export async function sendFeishuCardNotification(input: {
         occurredAt: input.occurredAt,
       });
       const card = buildFeishuNotificationCard(
+        adapter,
         input.title,
         input.message,
         input.level,
         input.occurredAt,
         topicBinding ? buildTopicPromptToken(adapter.id, topicBinding.id) : null,
       );
-      if (topicBinding?.rootMessageId) {
+      if (topicBinding?.rootMessageId && !topicBinding.feishuThreadId) {
+        const bootstrap = await replyFeishuCard({
+          adapter,
+          rootMessageId: topicBinding.rootMessageId,
+          // A previous topic-creation attempt may have failed after the root
+          // card was already delivered. Use the current notification as the
+          // topic reply so no later completion is swallowed while repairing
+          // the binding.
+          card,
+          fetchImpl,
+          uuid: feishuTopicMessageUuid(uuid, 'notification'),
+        });
+        await recordFeishuTopicReply({
+          adapterId: adapter.id,
+          bindingId: topicBinding.id,
+          rootMessageId: topicBinding.rootMessageId,
+          messageId: bootstrap.messageId,
+          feishuThreadId: bootstrap.threadId,
+        });
+        messageIds.push(bootstrap.messageId);
+      } else if (topicBinding?.rootMessageId) {
         const sent = await replyFeishuCard({
           adapter,
           rootMessageId: topicBinding.rootMessageId,
           card,
           fetchImpl,
-          uuid,
+          uuid: feishuTopicMessageUuid(uuid, 'notification'),
         });
         await recordFeishuTopicReply({
           adapterId: adapter.id,
@@ -2154,14 +2256,36 @@ export async function sendFeishuCardNotification(input: {
       } else {
         const sent = await sendFeishuCard({ adapter, card, fetchImpl, uuid });
         if (topicBinding) {
-          await bindFeishuTopicRoot({
+          const bound = await bindFeishuTopicRoot({
             adapterId: adapter.id,
             bindingId: topicBinding.id,
             rootMessageId: sent.messageId,
             feishuThreadId: sent.threadId,
           });
+          messageIds.push(sent.messageId);
+          // In a normal group, sending the root card does not create a topic.
+          // Create one immediately so the targeted @ mention happens inside
+          // the topic and Feishu can passively subscribe those users.
+          if (!bound.feishuThreadId) {
+            const bootstrap = await replyFeishuCard({
+              adapter,
+              rootMessageId: sent.messageId,
+              card: buildFeishuTopicBootstrapCard(adapter, input.message),
+              fetchImpl,
+              uuid: feishuTopicMessageUuid(uuid, 'bootstrap'),
+            });
+            await recordFeishuTopicReply({
+              adapterId: adapter.id,
+              bindingId: topicBinding.id,
+              rootMessageId: sent.messageId,
+              messageId: bootstrap.messageId,
+              feishuThreadId: bootstrap.threadId,
+            });
+            messageIds.push(bootstrap.messageId);
+          }
+        } else {
+          messageIds.push(sent.messageId);
         }
-        messageIds.push(sent.messageId);
       }
     } catch (error) {
       await db.update(schema.interactionAdapters).set({

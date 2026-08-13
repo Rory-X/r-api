@@ -540,7 +540,13 @@ export default function FeishuInteractionAdaptersPanel({
             <label style={fieldLabelStyle}>控制台公开 URL<Input aria-label="飞书控制台公开 URL" value={draft.consoleBaseUrl} onChange={(event) => setDraft((current) => ({ ...current, consoleBaseUrl: event.target.value }))} placeholder="https://gateway.example.com" /></label>
             <label style={fieldLabelStyle}><span className="feishu-secret-label">App Secret {editingAdapter && <SecretState configured={editingAdapter.secretsConfigured.appSecret} />}</span><Input aria-label="飞书 App Secret" type="password" value={draft.appSecret} onChange={(event) => setDraft((current) => ({ ...current, appSecret: event.target.value }))} placeholder={editingAdapter ? '留空表示不修改' : ''} autoComplete="new-password" /></label>
           </div>
-          <label style={{ ...fieldLabelStyle, marginTop: 12 }}>操作者白名单<TextArea aria-label="飞书操作者白名单" value={draft.operatorAllowlist} onChange={(event) => setDraft((current) => ({ ...current, operatorAllowlist: event.target.value }))} rows={4} placeholder={'open_id:ou_xxx\nunion_id:on_xxx\nuser_id:12345'} spellCheck={false} className="feishu-allowlist-editor" /></label>
+          <label style={{ ...fieldLabelStyle, marginTop: 12 }}>
+            <span>操作者白名单</span>
+            <small style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+              open_id / user_id 成员会在会话话题中被 @，用于触发被动订阅；union_id 仅用于回调鉴权。
+            </small>
+            <TextArea aria-label="飞书操作者白名单" value={draft.operatorAllowlist} onChange={(event) => setDraft((current) => ({ ...current, operatorAllowlist: event.target.value }))} rows={4} placeholder={'open_id:ou_xxx\nunion_id:on_xxx\nuser_id:12345'} spellCheck={false} className="feishu-allowlist-editor" />
+          </label>
           <Disclosure title="HTTP 兼容与加密配置" className="feishu-advanced-settings">
             <div className="feishu-adapter-fields">
               <label style={fieldLabelStyle}><span className="feishu-secret-label">Verification Token {editingAdapter && <SecretState configured={editingAdapter.secretsConfigured.verificationToken} />}</span><Input aria-label="飞书 Verification Token" type="password" value={draft.verificationToken} onChange={(event) => setDraft((current) => ({ ...current, verificationToken: event.target.value }))} placeholder={editingAdapter ? '留空表示不修改' : '可选'} autoComplete="new-password" /></label>

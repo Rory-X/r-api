@@ -129,6 +129,17 @@ describe('Feishu Interaction Adapter service', () => {
       }), { status: 200, headers: { 'content-type': 'application/json' } }));
   }
 
+  function deliveredNotificationFetch() {
+    return deliveredFetch().mockResolvedValueOnce(new Response(JSON.stringify({
+      code: 0,
+      data: {
+        message_id: 'om_topic_bootstrap_1',
+        root_id: 'om_message_1',
+        thread_id: 'omt_topic_1',
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  }
+
   function ticketFromMessageFetch(fetchMock: ReturnType<typeof deliveredFetch>, label: string): string {
     const request = fetchMock.mock.calls[1]?.[1] as { body?: string };
     const messageBody = JSON.parse(request.body || '{}');
@@ -197,9 +208,50 @@ describe('Feishu Interaction Adapter service', () => {
     expect(vaultRows.map((row) => row.ciphertext).join(' ')).not.toContain('app-secret-value');
   });
 
+  it('uses only card-compatible identities for passive topic subscription mentions', async () => {
+    const adapter = await feishu.createFeishuInteractionAdapter({
+      deviceId,
+      name: 'Mention identities',
+      appId: 'cli_test_mentions',
+      appSecret: 'app-secret-value',
+      verificationToken: 'verification-token-value',
+      apiBaseUrl: 'https://open.feishu.cn',
+      receiveIdType: 'chat_id',
+      receiveId: 'oc_chat_1',
+      operatorAllowlist: [
+        'union_id:on_union_only',
+        'open_id:ou_allowed',
+        'user_id:12345',
+      ],
+    });
+    const fetchMock = deliveredNotificationFetch();
+
+    await feishu.sendFeishuCardNotification({
+      deviceId,
+      title: 'Codex 会话已完成',
+      message: '会话名称：Mention identities\n线程 ID：thread-mentions\n状态：completed',
+      level: 'info',
+      occurredAt: '2026-08-11T05:00:00.000Z',
+      fetchImpl: fetchMock as any,
+    });
+
+    const card = cardFromFetchCall(fetchMock, 1);
+    const summary = card.body.elements[0].content as string;
+    expect(summary).toContain('<at ids=ou_allowed,12345></at>');
+    expect(summary).not.toContain('on_union_only');
+    const topicBootstrap = cardFromFetchCall(fetchMock, 2);
+    expect(topicBootstrap.body.elements[0].content).toContain('<at ids=ou_allowed,12345></at>');
+    expect(topicBootstrap.body.elements[0].content).not.toContain('on_union_only');
+    expect(adapter.operatorAllowlist).toEqual([
+      'union_id:on_union_only',
+      'open_id:ou_allowed',
+      'user_id:12345',
+    ]);
+  });
+
   it('sends a collapsed card notification through the adapter bound to the connector', async () => {
     const adapter = await createAdapter();
-    const fetchMock = deliveredFetch();
+    const fetchMock = deliveredNotificationFetch();
 
     await expect(feishu.sendFeishuTextNotification({
       deviceId,
@@ -216,9 +268,12 @@ describe('Feishu Interaction Adapter service', () => {
       level: 'info',
       occurredAt: '2026-08-11T05:00:00.000Z',
       fetchImpl: fetchMock as any,
-    })).resolves.toMatchObject({ adapterId: adapter.id, messageIds: ['om_message_1'] });
+    })).resolves.toMatchObject({
+      adapterId: adapter.id,
+      messageIds: ['om_message_1', 'om_topic_bootstrap_1'],
+    });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const [url, request] = fetchMock.mock.calls[1] as [URL, RequestInit];
     expect(url.toString()).toContain('/open-apis/im/v1/messages?receive_id_type=chat_id');
     const payload = JSON.parse(String(request.body || '{}')) as {
@@ -236,6 +291,7 @@ describe('Feishu Interaction Adapter service', () => {
     });
     expect(card.header.title.content.length).toBeLessThanOrEqual(72);
     expect(card.body.elements[0].content).toContain('**最终回复**');
+    expect(card.body.elements[0].content).toContain('<at id=ou_allowed></at>');
     expect(card.body.elements[0].content).toContain('已完成连接检查');
     expect(card.body.elements[0].content).toContain('下一步可以直接在该话题继续发送消息');
     expect(card.body.elements[0].content).not.toContain('thread-a');
@@ -264,6 +320,17 @@ describe('Feishu Interaction Adapter service', () => {
         value: { metapi_topic_prompt: expect.stringMatching(/^mtp_topic_/) },
       }],
     });
+    const [bootstrapUrl, bootstrapRequest] = fetchMock.mock.calls[2] as [string, RequestInit];
+    expect(bootstrapUrl).toContain('/open-apis/im/v1/messages/om_message_1/reply');
+    const bootstrapPayload = JSON.parse(String(bootstrapRequest.body || '{}'));
+    expect(bootstrapPayload).toMatchObject({
+      msg_type: 'interactive',
+      reply_in_thread: true,
+      uuid: expect.stringMatching(/^[a-f0-9]{50}$/),
+    });
+    const bootstrapCard = JSON.parse(bootstrapPayload.content || '{}');
+    expect(bootstrapCard.header.title.content).toBe('Local Connector · 话题已建立');
+    expect(bootstrapCard.body.elements[0].content).toContain('<at id=ou_allowed></at>');
 
     const binding = await db.select().from(schema.feishuTopicBindings).get();
     expect(binding).toMatchObject({
@@ -271,7 +338,8 @@ describe('Feishu Interaction Adapter service', () => {
       deviceId,
       codexThreadId: 'thread-a',
       rootMessageId: 'om_message_1',
-      lastMessageId: 'om_message_1',
+      feishuThreadId: 'omt_topic_1',
+      lastMessageId: 'om_topic_bootstrap_1',
     });
   });
 
@@ -286,6 +354,14 @@ describe('Feishu Interaction Adapter service', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 0,
         data: { message_id: 'om_topic_root' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: {
+          message_id: 'om_topic_bootstrap',
+          root_id: 'om_topic_root',
+          thread_id: 'omt_codex_thread_a',
+        },
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 0,
@@ -313,8 +389,8 @@ describe('Feishu Interaction Adapter service', () => {
       fetchImpl: fetchMock as any,
     })).resolves.toMatchObject({ adapterId: adapter.id, messageIds: ['om_topic_reply'] });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const [replyUrl, replyRequest] = fetchMock.mock.calls[2] as [string, RequestInit];
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const [replyUrl, replyRequest] = fetchMock.mock.calls[3] as [string, RequestInit];
     expect(replyUrl).toContain('/open-apis/im/v1/messages/om_topic_root/reply');
     expect(JSON.parse(String(replyRequest.body || '{}'))).toMatchObject({
       msg_type: 'interactive',
@@ -343,6 +419,14 @@ describe('Feishu Interaction Adapter service', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 0,
         data: { message_id: 'om_recovered_root' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: {
+          message_id: 'om_recovered_bootstrap',
+          root_id: 'om_recovered_root',
+          thread_id: 'omt_recovered',
+        },
       }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const input = {
       deviceId,
@@ -358,7 +442,7 @@ describe('Feishu Interaction Adapter service', () => {
     expect(pending).toMatchObject({ codexThreadId: 'thread-retry', rootMessageId: null });
 
     await expect(feishu.sendFeishuCardNotification(input)).resolves.toMatchObject({
-      messageIds: ['om_recovered_root'],
+      messageIds: ['om_recovered_root', 'om_recovered_bootstrap'],
     });
     const firstBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body || '{}'));
     const retryBody = JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body || '{}'));
@@ -368,7 +452,72 @@ describe('Feishu Interaction Adapter service', () => {
     expect(recovered).toMatchObject({
       codexThreadId: 'thread-retry',
       rootMessageId: 'om_recovered_root',
-      lastMessageId: 'om_recovered_root',
+      feishuThreadId: 'omt_recovered',
+      lastMessageId: 'om_recovered_bootstrap',
+    });
+  });
+
+  it('delivers the current notification while repairing a topic after bootstrap uncertainty', async () => {
+    const adapter = await createAdapter();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        tenant_access_token: 'tenant-token',
+        expire: 7_200,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: { message_id: 'om_bootstrap_retry_root' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockRejectedValueOnce(new Error('socket closed while creating topic'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: {
+          message_id: 'om_bootstrap_retry_reply',
+          root_id: 'om_bootstrap_retry_root',
+          thread_id: 'omt_bootstrap_retry',
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const firstInput = {
+      deviceId,
+      title: 'Codex 会话已完成',
+      message: '线程 ID：thread-bootstrap-retry\n轮次 ID：turn-1\n状态：completed',
+      level: 'info' as const,
+      occurredAt: '2026-08-11T05:00:00.000Z',
+      fetchImpl: fetchMock as any,
+    };
+
+    await expect(feishu.sendFeishuCardNotification(firstInput)).rejects.toThrow('话题回复投递结果未知');
+    expect(await db.select().from(schema.feishuTopicBindings).get()).toMatchObject({
+      rootMessageId: 'om_bootstrap_retry_root',
+      feishuThreadId: null,
+      lastMessageId: 'om_bootstrap_retry_root',
+    });
+
+    await expect(feishu.sendFeishuCardNotification({
+      ...firstInput,
+      message: '线程 ID：thread-bootstrap-retry\n轮次 ID：turn-2\n状态：completed',
+      occurredAt: '2026-08-11T05:10:00.000Z',
+    })).resolves.toMatchObject({
+      adapterId: adapter.id,
+      messageIds: ['om_bootstrap_retry_reply'],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain(
+      '/open-apis/im/v1/messages/om_bootstrap_retry_root/reply',
+    );
+    const repairedNotification = JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body || '{}'));
+    expect(repairedNotification).toMatchObject({
+      reply_in_thread: true,
+      uuid: expect.stringMatching(/^[a-f0-9]{50}$/),
+    });
+    const repairedCard = JSON.parse(repairedNotification.content || '{}');
+    expect(JSON.stringify(repairedCard)).toContain('turn-2');
+    expect(JSON.stringify(repairedCard)).toContain('<at id=ou_allowed></at>');
+    expect(await db.select().from(schema.feishuTopicBindings).get()).toMatchObject({
+      rootMessageId: 'om_bootstrap_retry_root',
+      feishuThreadId: 'omt_bootstrap_retry',
+      lastMessageId: 'om_bootstrap_retry_reply',
     });
   });
 
@@ -402,7 +551,7 @@ describe('Feishu Interaction Adapter service', () => {
 
   it('reuses the completed-card Prompt form and deduplicates callback retries by event id', async () => {
     const adapter = await createAdapter();
-    const fetchMock = deliveredFetch();
+    const fetchMock = deliveredNotificationFetch();
     await feishu.sendFeishuCardNotification({
       deviceId,
       title: 'Codex 会话已完成',
@@ -475,7 +624,7 @@ describe('Feishu Interaction Adapter service', () => {
 
   it('queues ordinary text sent in the bound Feishu topic and deduplicates message retries', async () => {
     const adapter = await createAdapter();
-    const fetchMock = deliveredFetch();
+    const fetchMock = deliveredNotificationFetch();
     await feishu.sendFeishuCardNotification({
       deviceId,
       title: 'Codex 任务已完成',
@@ -508,7 +657,7 @@ describe('Feishu Interaction Adapter service', () => {
         message: {
           message_id: 'om_topic_user_1',
           root_id: 'om_message_1',
-          thread_id: 'omt_topic_message',
+          thread_id: 'omt_topic_1',
           message_type: 'text',
           content: JSON.stringify({ text: '请继续检查这个会话的结果' }),
         },
@@ -551,7 +700,7 @@ describe('Feishu Interaction Adapter service', () => {
     expect(await bridge.listBridgeContinuationTasks({ deviceId })).toHaveLength(1);
     expect(await db.select().from(schema.feishuTopicBindings).get()).toMatchObject({
       rootMessageId: 'om_message_1',
-      feishuThreadId: 'omt_topic_message',
+      feishuThreadId: 'omt_topic_1',
       lastMessageId: 'om_topic_user_1',
     });
   });
@@ -600,6 +749,7 @@ describe('Feishu Interaction Adapter service', () => {
     expect(card.header.title.content).toBe('Dependency health check · 命令审批');
     expect(card.header.title.content.length).toBeLessThanOrEqual(72);
     const summary = card.elements.find((item: any) => item.tag === 'div')?.text?.content || '';
+    expect(summary).toContain('<at id=ou_allowed></at>');
     expect(summary).toContain('**待执行命令**');
     expect(summary).toContain('npm test');
     expect(summary).toContain('**工作目录**  /workspace');
@@ -812,6 +962,7 @@ describe('Feishu Interaction Adapter service', () => {
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('PATCH');
     const pendingCard = cardFromFetchCall(fetchMock, 2);
     expect(pendingCard.header.title.content).toBe('Dependency health check · 已提交');
+    expect(JSON.stringify(pendingCard)).toContain('<at id=ou_allowed></at>');
     expect(pendingCard.elements.some((element: any) => element.tag === 'action' || element.tag === 'form')).toBe(false);
     expect(JSON.stringify(pendingCard)).not.toContain('thread-a');
     expect(JSON.stringify(pendingCard)).not.toContain('turn-a');
