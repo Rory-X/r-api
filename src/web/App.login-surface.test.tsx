@@ -16,8 +16,8 @@ describe('Login surface', () => {
     vi.restoreAllMocks();
   });
 
-  it('uses the site root as the documentation URL', () => {
-    expect(SITE_DOCS_URL).toBe('https://metapi.cita777.me');
+  it('uses the GitHub Pages project site as the documentation URL', () => {
+    expect(SITE_DOCS_URL).toBe('https://rory-x.github.io/r-api/');
   });
 
   it('uses the author github profile for the login github shortcut', () => {

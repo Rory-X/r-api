@@ -64,11 +64,11 @@ describe('desktop navigation guard', () => {
     });
 
     const result = harness.getOpenHandler()({
-      url: 'https://metapi.cita777.me',
+      url: 'https://rory-x.github.io/r-api/',
     });
 
     expect(result).toEqual({ action: 'deny' });
-    expect(openExternal).toHaveBeenCalledWith('https://metapi.cita777.me');
+    expect(openExternal).toHaveBeenCalledWith('https://rory-x.github.io/r-api/');
   });
 
   it('prevents same-window cross-origin navigations and opens them externally', () => {

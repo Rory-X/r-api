@@ -51,12 +51,12 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>Docs</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">Quick Start</a> ·
-  <a href="https://metapi.cita777.me/deployment">Deployment</a> ·
-  <a href="https://metapi.cita777.me/configuration">Configuration</a> ·
-  <a href="https://metapi.cita777.me/client-integration">Client Integration</a> ·
-  <a href="https://metapi.cita777.me/faq">FAQ</a> ·
+  <a href="https://rory-x.github.io/r-api/"><strong>Docs</strong></a> ·
+  <a href="https://rory-x.github.io/r-api/getting-started">Quick Start</a> ·
+  <a href="https://rory-x.github.io/r-api/deployment">Deployment</a> ·
+  <a href="https://rory-x.github.io/r-api/configuration">Configuration</a> ·
+  <a href="https://rory-x.github.io/r-api/client-integration">Client Integration</a> ·
+  <a href="https://rory-x.github.io/r-api/faq">FAQ</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 

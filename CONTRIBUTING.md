@@ -214,7 +214,7 @@ If you're adding support for a new AI API platform / 如果您要添加对新 AI
 
 ## Getting Help / 获取帮助
 
-- 📖 [Documentation](https://metapi.cita777.me) / [文档](https://metapi.cita777.me)
+- 📖 [Documentation](https://rory-x.github.io/r-api/) / [文档](https://rory-x.github.io/r-api/)
 - 💬 [GitHub Discussions](https://github.com/Rory-X/r-api/discussions) / [GitHub 讨论区](https://github.com/Rory-X/r-api/discussions)
 - 🐛 [Issue Tracker](https://github.com/Rory-X/r-api/issues) / [Issue 跟踪](https://github.com/Rory-X/r-api/issues)
 

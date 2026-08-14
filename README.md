@@ -35,12 +35,12 @@
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>📚 在线文档</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">快速上手</a> ·
-  <a href="https://metapi.cita777.me/deployment">部署指南</a> ·
-  <a href="https://metapi.cita777.me/configuration">配置说明</a> ·
-  <a href="https://metapi.cita777.me/client-integration">客户端接入</a> ·
-  <a href="https://metapi.cita777.me/faq">常见问题</a>
+  <a href="https://rory-x.github.io/r-api/"><strong>📚 在线文档</strong></a> ·
+  <a href="https://rory-x.github.io/r-api/getting-started">快速上手</a> ·
+  <a href="https://rory-x.github.io/r-api/deployment">部署指南</a> ·
+  <a href="https://rory-x.github.io/r-api/configuration">配置说明</a> ·
+  <a href="https://rory-x.github.io/r-api/client-integration">客户端接入</a> ·
+  <a href="https://rory-x.github.io/r-api/faq">常见问题</a>
 </p>
 
 </div>
@@ -399,9 +399,9 @@ docker run -d --name r-api \
 > 如果在「设置」面板中修改了管理员登录凭据，全部现有管理会话会被撤销。
 > 可在「系统设置 → 管理员安全」启用 TOTP 双重验证。TOTP Secret 由独立 `ACCOUNT_CREDENTIAL_SECRET` 加密，恢复码只显示一次；显式管理脚本 Bearer 保持密码单因素兼容。
 
-Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](https://metapi.cita777.me/deployment)。
+Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](https://rory-x.github.io/r-api/deployment)。
 
-📖 **[环境变量与配置](https://metapi.cita777.me/configuration)** · **[客户端接入指南](https://metapi.cita777.me/client-integration)** · **[常见问题](https://metapi.cita777.me/faq)**
+📖 **[环境变量与配置](https://rory-x.github.io/r-api/configuration)** · **[客户端接入指南](https://rory-x.github.io/r-api/client-integration)** · **[常见问题](https://rory-x.github.io/r-api/faq)**
 
 ---
 

@@ -1,12 +1,16 @@
 import { defineConfig } from 'vitepress';
+
+const docsBase = '/r-api/';
+
 export default defineConfig({
   lang: 'zh-CN',
   title: 'r-api 文档',
   description: 'r-api 使用文档、FAQ 与维护协作指南',
+  base: docsBase,
   head: [
-    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon.png' }],
-    ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: '/favicon-64.png' }],
-    ['link', { rel: 'shortcut icon', href: '/favicon.ico' }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: `${docsBase}favicon.png` }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: `${docsBase}favicon-64.png` }],
+    ['link', { rel: 'shortcut icon', href: `${docsBase}favicon.ico` }],
   ],
   cleanUrls: true,
   lastUpdated: true,

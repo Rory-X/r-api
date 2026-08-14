@@ -7,6 +7,10 @@ import config from './config';
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 describe('docs vitepress config', () => {
+  it('uses the GitHub Pages project base path', () => {
+    expect(config.base).toBe('/r-api/');
+  });
+
   it('fails the docs build when an internal link is broken', () => {
     expect(config.ignoreDeadLinks).not.toBe(true);
   });
@@ -63,8 +67,8 @@ describe('docs vitepress config', () => {
           (entry[1].rel === 'icon' || entry[1].rel === 'shortcut icon'),
       ) ?? [];
 
-    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon.png')).toBe(true);
-    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon-64.png')).toBe(true);
-    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon.ico')).toBe(true);
+    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/r-api/favicon.png')).toBe(true);
+    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/r-api/favicon-64.png')).toBe(true);
+    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/r-api/favicon.ico')).toBe(true);
   });
 });
