@@ -762,6 +762,11 @@ body {
   min-width: 0;
 }
 
+.about-page {
+  width: 100%;
+  min-width: 0;
+}
+
 /* ===== Button System ===== */
 .btn {
   position: relative;

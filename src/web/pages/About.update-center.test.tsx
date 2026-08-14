@@ -65,6 +65,8 @@ describe('About update center', () => {
       });
       await flushMicrotasks();
 
+      expect(root.root.findByProps({ className: 'about-page animate-fade-in' })).toBeDefined();
+
       const text = collectText(root.root);
       expect(text).toContain('v1.2.3');
       expect(text).toContain('GitHub 稳定版');
