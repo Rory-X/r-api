@@ -1302,7 +1302,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       ok: false,
       status: 403,
       json: async () => ({ error: 'forbidden' }),
-      text: async () => 'forbidden',
+      headers: {
+        get: (name: string) => name.toLowerCase() === 'content-type' ? 'text/html; charset=UTF-8' : null,
+      },
+      text: async () => '<!doctype html><html><body>Unable to load site · Cloudflare · IP:101.36.117.253</body></html>',
     });
 
     const site = await db.insert(schema.sites).values({
@@ -1363,7 +1366,10 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelDiscoveryStatus: 'abnormal',
     });
     expect(parsed.oauth).not.toHaveProperty('provider');
-    expect(parsed.oauth.lastModelSyncError).toContain('HTTP 403');
+    expect(parsed.oauth.lastModelSyncError).toContain(
+      'HTTP 403: Codex 上游拒绝当前服务器网络访问，请配置可用代理后重试',
+    );
+    expect(parsed.oauth.lastModelSyncError).not.toContain('<html');
     expect(parsed.oauth.lastModelSyncAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
     expect(parsed.runtimeHealth?.state).toBe('unhealthy');
   });

@@ -5,6 +5,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
 import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -28,6 +29,7 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   recoveredFromSelfLog: false,
 }));
 const trackedClientSockets = new Set<WebSocket>();
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
 let siteApiEndpointRows: Array<Record<string, unknown>> = [];
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
@@ -330,7 +332,7 @@ function createClientSocketForPath(path: string, headers: Record<string, string>
   return socket;
 }
 
-describe('responses websocket transport', () => {
+describeWithLocalListener('responses websocket transport', () => {
   const originalCodexResponsesWebsocketBeta = config.codexResponsesWebsocketBeta;
   const originalCodexUpstreamWebsocketEnabled = config.codexUpstreamWebsocketEnabled;
   let app: FastifyInstance;

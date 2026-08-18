@@ -102,6 +102,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
   const dataDir = env.DATA_DIR || './data';
 
   return {
+    demoMode: parseBoolean(env.DEMO_MODE, false),
     authToken: env.AUTH_TOKEN || 'change-me-admin-token',
     authTokenHash: parseOptionalSecret(env.AUTH_TOKEN_HASH),
     adminCredentialBootstrapConfigured: !!(

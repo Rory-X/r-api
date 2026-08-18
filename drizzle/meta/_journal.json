@@ -40,358 +40,379 @@
     {
       "idx": 5,
       "version": "6",
+      "when": 1772320900000,
+      "tag": "0005_proxy_log_billing_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
       "when": 1773500331000,
       "tag": "0006_site_disabled_models",
       "breakpoints": true
     },
     {
-      "idx": 6,
+      "idx": 7,
       "version": "6",
       "when": 1773500400000,
       "tag": "0007_account_token_group",
       "breakpoints": true
     },
     {
-      "idx": 7,
+      "idx": 8,
       "version": "6",
       "when": 1773500500000,
       "tag": "0008_sqlite_schema_backfill",
       "breakpoints": true
     },
     {
-      "idx": 8,
+      "idx": 9,
       "version": "6",
       "when": 1773528832339,
       "tag": "0009_model_availability_is_manual",
       "breakpoints": true
     },
     {
-      "idx": 9,
+      "idx": 10,
       "version": "6",
       "when": 1773553945763,
       "tag": "0010_proxy_logs_downstream_api_key",
       "breakpoints": true
     },
     {
-      "idx": 10,
+      "idx": 11,
       "version": "6",
       "when": 1773605400000,
       "tag": "0011_downstream_api_key_metadata",
       "breakpoints": true
     },
     {
-      "idx": 11,
+      "idx": 12,
       "version": "6",
       "when": 1773665311013,
       "tag": "0012_account_token_value_status",
       "breakpoints": true
     },
     {
-      "idx": 12,
+      "idx": 13,
       "version": "6",
       "when": 1773682200000,
       "tag": "0013_oauth_multi_provider",
       "breakpoints": true
     },
     {
-      "idx": 13,
+      "idx": 14,
       "version": "6",
       "when": 1773855000000,
       "tag": "0014_explicit_group_routes",
       "breakpoints": true
     },
     {
-      "idx": 14,
+      "idx": 15,
       "version": "6",
       "when": 1773900000000,
       "tag": "0015_site_announcements",
       "breakpoints": true
     },
     {
-      "idx": 15,
+      "idx": 16,
       "version": "6",
       "when": 1773979652606,
       "tag": "0016_proxy_logs_client_fields",
       "breakpoints": true
     },
     {
-      "idx": 16,
+      "idx": 17,
       "version": "6",
       "when": 1774692431588,
       "tag": "0017_proxy_debug_traces",
       "breakpoints": true
     },
     {
-      "idx": 17,
+      "idx": 18,
       "version": "6",
       "when": 1774959227309,
       "tag": "0018_site_api_endpoints",
       "breakpoints": true
     },
     {
-      "idx": 18,
+      "idx": 19,
       "version": "6",
       "when": 1775058998448,
       "tag": "0019_proxy_logs_stream_timing",
       "breakpoints": true
     },
     {
-      "idx": 19,
+      "idx": 20,
       "version": "6",
       "when": 1775397600000,
       "tag": "0020_downstream_api_key_exclusions",
       "breakpoints": true
     },
     {
-      "idx": 20,
+      "idx": 21,
       "version": "6",
       "when": 1775441167045,
       "tag": "0021_young_shriek",
       "breakpoints": true
     },
     {
-      "idx": 21,
+      "idx": 22,
       "version": "6",
       "when": 1775713163948,
       "tag": "0022_admin_snapshots",
       "breakpoints": true
     },
     {
-      "idx": 22,
+      "idx": 23,
       "version": "6",
       "when": 1775721864379,
       "tag": "0023_usage_aggregates",
       "breakpoints": true
     },
     {
-      "idx": 23,
+      "idx": 24,
       "version": "6",
       "when": 1775731596826,
       "tag": "0024_projection_leases",
       "breakpoints": true
     },
     {
-      "idx": 24,
+      "idx": 25,
       "version": "6",
       "when": 1776943800000,
       "tag": "0025_site_post_refresh_probe",
       "breakpoints": true
     },
     {
-      "idx": 25,
+      "idx": 26,
       "version": "6",
       "when": 1776944000000,
       "tag": "0026_site_probe_latency_threshold",
       "breakpoints": true
     },
     {
-      "idx": 26,
+      "idx": 27,
       "version": "6",
       "when": 1785778308556,
       "tag": "0027_proxy_request_ledger",
       "breakpoints": true
     },
     {
-      "idx": 27,
+      "idx": 28,
       "version": "6",
       "when": 1785780202756,
       "tag": "0027_z_proxy_log_ledger_links",
       "breakpoints": true
     },
     {
-      "idx": 28,
+      "idx": 29,
       "version": "6",
       "when": 1785787134581,
       "tag": "0028_wise_thunderball",
       "breakpoints": true
     },
     {
-      "idx": 29,
+      "idx": 30,
       "version": "6",
       "when": 1785788679200,
       "tag": "0029_messy_jack_flag",
       "breakpoints": true
     },
     {
-      "idx": 30,
+      "idx": 31,
       "version": "6",
       "when": 1785791162930,
       "tag": "0030_outstanding_corsair",
       "breakpoints": true
     },
     {
-      "idx": 31,
+      "idx": 32,
       "version": "6",
       "when": 1785793393760,
       "tag": "0031_fast_union_jack",
       "breakpoints": true
     },
     {
-      "idx": 32,
+      "idx": 33,
       "version": "6",
       "when": 1785795369136,
       "tag": "0032_wild_talkback",
       "breakpoints": true
     },
     {
-      "idx": 33,
+      "idx": 34,
       "version": "6",
       "when": 1785796690604,
       "tag": "0033_greedy_post",
       "breakpoints": true
     },
     {
-      "idx": 34,
+      "idx": 35,
       "version": "6",
       "when": 1785797589008,
       "tag": "0034_soft_mephistopheles",
       "breakpoints": true
     },
     {
-      "idx": 35,
+      "idx": 36,
       "version": "6",
       "when": 1785808327677,
       "tag": "0035_awesome_doorman",
       "breakpoints": true
     },
     {
-      "idx": 36,
+      "idx": 37,
       "version": "6",
       "when": 1785826697461,
       "tag": "0036_cultured_fenris",
       "breakpoints": true
     },
     {
-      "idx": 37,
+      "idx": 38,
       "version": "6",
       "when": 1785830771337,
       "tag": "0037_reflective_speed_demon",
       "breakpoints": true
     },
     {
-      "idx": 38,
+      "idx": 39,
       "version": "6",
       "when": 1785835560723,
       "tag": "0038_colorful_chronomancer",
       "breakpoints": true
     },
     {
-      "idx": 39,
+      "idx": 40,
       "version": "6",
       "when": 1785837002710,
       "tag": "0039_supreme_blindfold",
       "breakpoints": true
     },
     {
-      "idx": 40,
+      "idx": 41,
       "version": "6",
       "when": 1785842119997,
       "tag": "0040_charming_master_mold",
       "breakpoints": true
     },
     {
-      "idx": 41,
+      "idx": 42,
       "version": "6",
       "when": 1785844388455,
       "tag": "0041_yummy_toro",
       "breakpoints": true
     },
     {
-      "idx": 42,
+      "idx": 43,
       "version": "6",
       "when": 1785850680683,
       "tag": "0042_black_smiling_tiger",
       "breakpoints": true
     },
     {
-      "idx": 43,
+      "idx": 44,
       "version": "6",
       "when": 1785854166462,
       "tag": "0043_chubby_firebrand",
       "breakpoints": true
     },
     {
-      "idx": 44,
+      "idx": 45,
       "version": "6",
       "when": 1785859819977,
       "tag": "0044_normal_roxanne_simpson",
       "breakpoints": true
     },
     {
-      "idx": 45,
+      "idx": 46,
       "version": "6",
       "when": 1785862810281,
       "tag": "0045_damp_red_shift",
       "breakpoints": true
     },
     {
-      "idx": 46,
+      "idx": 47,
       "version": "6",
       "when": 1786009085208,
       "tag": "0046_bright_stark_industries",
       "breakpoints": true
     },
     {
-      "idx": 47,
+      "idx": 48,
       "version": "6",
       "when": 1786101646901,
       "tag": "0047_sad_xorn",
       "breakpoints": true
     },
     {
-      "idx": 48,
+      "idx": 49,
       "version": "6",
       "when": 1786106309466,
       "tag": "0048_closed_nitro",
       "breakpoints": true
     },
     {
-      "idx": 49,
+      "idx": 50,
       "version": "6",
       "when": 1786421038874,
       "tag": "0049_condemned_blade",
       "breakpoints": true
     },
     {
-      "idx": 50,
+      "idx": 51,
       "version": "6",
       "when": 1786441506212,
       "tag": "0050_dear_shriek",
       "breakpoints": true
     },
     {
-      "idx": 51,
+      "idx": 52,
       "version": "6",
       "when": 1786507819197,
       "tag": "0051_fine_purifiers",
       "breakpoints": true
     },
     {
-      "idx": 52,
+      "idx": 53,
       "version": "6",
       "when": 1786547356943,
       "tag": "0052_broken_jimmy_woo",
       "breakpoints": true
     },
     {
-      "idx": 53,
+      "idx": 54,
       "version": "6",
       "when": 1786551972820,
       "tag": "0053_complex_blizzard",
       "breakpoints": true
     },
     {
-      "idx": 54,
+      "idx": 55,
       "version": "6",
       "when": 1786557370808,
       "tag": "0054_hot_triathlon",
       "breakpoints": true
     },
     {
-      "idx": 55,
+      "idx": 56,
       "version": "6",
       "when": 1786617162615,
       "tag": "0055_ambitious_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1786694453417,
+      "tag": "0056_eminent_santa_claus",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1786971927979,
+      "tag": "0058_lyrical_purifiers",
       "breakpoints": true
     }
   ]

@@ -118,6 +118,10 @@ import {
   SiteApiEndpointRequestError,
 } from '../../services/siteApiEndpointService.js';
 import {
+  createDeferredSseOutput,
+  PRE_OUTPUT_RETRY_GRACE_MS,
+} from '../deferredSseOutput.js';
+import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
   getTesterForcedChannelId,
@@ -125,72 +129,6 @@ import {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
-}
-
-function createDeferredSseOutput(input: {
-  start: () => void;
-  write: (chunk: string) => void;
-  end: () => void;
-  maxDelayMs?: number;
-}) {
-  const bufferedChunks: string[] = [];
-  let committed = false;
-  let endRequested = false;
-  let commitTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const clearCommitTimer = () => {
-    if (!commitTimer) return;
-    clearTimeout(commitTimer);
-    commitTimer = null;
-  };
-
-  const commit = () => {
-    if (committed) return;
-    clearCommitTimer();
-    input.start();
-    committed = true;
-    for (const chunk of bufferedChunks.splice(0)) {
-      input.write(chunk);
-    }
-    if (endRequested) {
-      input.end();
-    }
-  };
-
-  const output = {
-    get committed() {
-      return committed;
-    },
-    write(chunk: string) {
-      if (committed) {
-        input.write(chunk);
-        return;
-      }
-      bufferedChunks.push(chunk);
-    },
-    end() {
-      if (committed) {
-        input.end();
-        return;
-      }
-      endRequested = true;
-    },
-    commit,
-    cancelAutoCommit: clearCommitTimer,
-    discard() {
-      if (committed) return;
-      clearCommitTimer();
-      bufferedChunks.length = 0;
-      endRequested = false;
-    },
-  };
-
-  if ((input.maxDelayMs || 0) > 0) {
-    commitTimer = setTimeout(commit, input.maxDelayMs);
-    commitTimer.unref?.();
-  }
-
-  return output;
 }
 
 function getCodexSessionHeaderValue(headers: Record<string, string>): string {
@@ -1041,6 +979,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         });
       }
       const channelLease = leaseResult.lease;
+      let pendingStreamOutput: ReturnType<typeof createDeferredSseOutput> | null = null;
 
       try {
         const endpointResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
@@ -1134,7 +1073,9 @@ export async function handleOpenAiResponsesSurfaceRequest(
           };
           const streamOutput = createDeferredSseOutput({
             start: startSseResponse,
-            maxDelayMs: 10_000,
+            // Keep only a brief window for classifying an immediate upstream
+            // failure. Longer buffering directly inflates downstream TTFT.
+            maxDelayMs: PRE_OUTPUT_RETRY_GRACE_MS,
             write: (chunk) => {
               reply.raw.write(chunk);
             },
@@ -1142,6 +1083,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               reply.raw.end();
             },
           });
+          pendingStreamOutput = streamOutput;
 
           let parsedUsage: UsageSummary = {
             promptTokens: 0,
@@ -1672,6 +1614,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	          );
 		        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
 	      } finally {
+            pendingStreamOutput?.discard();
 	        channelLease.release();
 	      }
 	    }

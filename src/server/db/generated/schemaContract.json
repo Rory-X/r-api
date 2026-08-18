@@ -1815,6 +1815,12 @@
           "notNull": true,
           "defaultValue": "1",
           "primaryKey": false
+        },
+        "allowed_credential_refs": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2840,6 +2846,88 @@
         },
         "revoked_at": {
           "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "local_connector_health_checks": {
+      "columns": {
+        "id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "device_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "check_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'unknown'",
+          "primaryKey": false
+        },
+        "reason": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "observed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "transitioned_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "incident_started_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "alerted_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recovery_notified_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "auto_repair_action_id": {
+          "logicalType": "text",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
@@ -6205,6 +6293,24 @@
       "unique": true
     },
     {
+      "name": "local_connector_health_checks_device_check_unique",
+      "table": "local_connector_health_checks",
+      "columns": [
+        "device_id",
+        "check_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "local_connector_health_checks_status_observed_idx",
+      "table": "local_connector_health_checks",
+      "columns": [
+        "status",
+        "observed_at"
+      ],
+      "unique": false
+    },
+    {
       "name": "local_connector_pairings_claimed_device_idx",
       "table": "local_connector_pairings",
       "columns": [
@@ -7274,6 +7380,14 @@
       ]
     },
     {
+      "name": "local_connector_health_checks_device_check_unique",
+      "table": "local_connector_health_checks",
+      "columns": [
+        "device_id",
+        "check_id"
+      ]
+    },
+    {
       "name": "local_connector_pairings_token_hash_unique",
       "table": "local_connector_pairings",
       "columns": [
@@ -7895,6 +8009,17 @@
     },
     {
       "table": "local_connector_actions",
+      "columns": [
+        "device_id"
+      ],
+      "referencedTable": "local_connector_devices",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "local_connector_health_checks",
       "columns": [
         "device_id"
       ],

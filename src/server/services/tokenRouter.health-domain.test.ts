@@ -15,6 +15,7 @@ describe('TokenRouter proxy health domains', () => {
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let isSiteRuntimeBreakerOpen: TokenRouterModule['isSiteRuntimeBreakerOpen'];
   let claimSiteRuntimeRecoveryProbe: TokenRouterModule['claimSiteRuntimeRecoveryProbe'];
+  let recordSiteRuntimeRecoveryProbeFailure: TokenRouterModule['recordSiteRuntimeRecoveryProbeFailure'];
   let listDueSiteRuntimeRecoveryTargets: TokenRouterModule['listDueSiteRuntimeRecoveryTargets'];
   let dataDir = '';
   let seed = 0;
@@ -32,6 +33,7 @@ describe('TokenRouter proxy health domains', () => {
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     isSiteRuntimeBreakerOpen = tokenRouterModule.isSiteRuntimeBreakerOpen;
     claimSiteRuntimeRecoveryProbe = tokenRouterModule.claimSiteRuntimeRecoveryProbe;
+    recordSiteRuntimeRecoveryProbeFailure = tokenRouterModule.recordSiteRuntimeRecoveryProbeFailure;
     listDueSiteRuntimeRecoveryTargets = tokenRouterModule.listDueSiteRuntimeRecoveryTargets;
   });
 
@@ -236,7 +238,7 @@ describe('TokenRouter proxy health domains', () => {
       .toContain('熔断中');
   });
 
-  it('allows only one half-open probe and requires a second success to become healthy', async () => {
+  it('allows only one half-open probe and restores the Site immediately after success', async () => {
     const site = await createSite();
     const account = await createAccount(site.id, 'half-open');
     const token = await createToken(account.id, 'half-open');
@@ -274,26 +276,78 @@ describe('TokenRouter proxy health domains', () => {
 
     await router.recordProbeSuccess(channel.id, 240, 'gpt-5.4');
     expect(isSiteRuntimeBreakerOpen(site.id)).toBe(false);
-    const recoveringTargets = await listDueSiteRuntimeRecoveryTargets(halfOpenAtMs + 31_000);
-    expect(recoveringTargets).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        siteId: site.id,
-        recoveryState: 'recovering',
-        recoverySuccessCount: 1,
-      }),
-    ]));
-
+    expect(await listDueSiteRuntimeRecoveryTargets(halfOpenAtMs + 31_000))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ siteId: site.id })]));
     await expect(claimSiteRuntimeRecoveryProbe({
       siteId: site.id,
       modelName: 'gpt-5.4',
       channelId: channel.id,
       nowMs: halfOpenAtMs + 31_000,
-    })).resolves.toBe(true);
-    await router.recordProbeSuccess(channel.id, 210, 'gpt-5.4');
+    })).resolves.toBe(false);
+  });
 
-    expect(await listDueSiteRuntimeRecoveryTargets(halfOpenAtMs + 10 * 60_000))
+  it('caps repeated failed half-open probes at a ten-minute breaker window', async () => {
+    const site = await createSite();
+    const account = await createAccount(site.id, 'breaker-cap');
+    const token = await createToken(account.id, 'breaker-cap');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const openedAtMs = Date.now();
+    await router.recordFailure(channel.id, {
+      errorText: 'fetch failed: ECONNREFUSED upstream host',
+      modelName: 'gpt-5.4',
+    });
+
+    const firstProbeAtMs = openedAtMs + 61_000;
+    await expect(claimSiteRuntimeRecoveryProbe({
+      siteId: site.id,
+      modelName: 'gpt-5.4',
+      channelId: channel.id,
+      nowMs: firstProbeAtMs,
+    })).resolves.toBe(true);
+    await recordSiteRuntimeRecoveryProbeFailure({
+      siteId: site.id,
+      modelName: 'gpt-5.4',
+      channelId: channel.id,
+      errorText: 'connect ECONNREFUSED',
+      nowMs: firstProbeAtMs,
+    });
+
+    const secondProbeAtMs = firstProbeAtMs + 5 * 60_000 + 1;
+    await expect(claimSiteRuntimeRecoveryProbe({
+      siteId: site.id,
+      modelName: 'gpt-5.4',
+      channelId: channel.id,
+      nowMs: secondProbeAtMs,
+    })).resolves.toBe(true);
+    await recordSiteRuntimeRecoveryProbeFailure({
+      siteId: site.id,
+      modelName: 'gpt-5.4',
+      channelId: channel.id,
+      errorText: 'connect ECONNREFUSED',
+      nowMs: secondProbeAtMs,
+    });
+
+    expect(await listDueSiteRuntimeRecoveryTargets(secondProbeAtMs + 9 * 60_000))
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ siteId: site.id })]));
-    expect(isSiteRuntimeBreakerOpen(site.id)).toBe(false);
+    expect(await listDueSiteRuntimeRecoveryTargets(secondProbeAtMs + 10 * 60_000 + 1))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          siteId: site.id,
+          recoveryState: 'open',
+          breakerLevel: 3,
+        }),
+      ]));
   });
 
   it('isolates an explicit API endpoint transport failure without opening the Site breaker', async () => {

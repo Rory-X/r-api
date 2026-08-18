@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getProxyFileByPublicIdForOwnerMock = vi.fn();
+const { getProxyFileByPublicIdForOwnerMock } = vi.hoisted(() => ({
+  getProxyFileByPublicIdForOwnerMock: vi.fn(),
+}));
 
-vi.mock('./proxyFileStore.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./proxyFileStore.js')>();
-  return {
-    ...actual,
-    getProxyFileByPublicIdForOwner: (...args: unknown[]) => getProxyFileByPublicIdForOwnerMock(...args),
-  };
-});
+vi.mock('./proxyFileStore.js', () => ({
+  LOCAL_PROXY_FILE_ID_PREFIX: 'file-metapi-',
+  getProxyFileByPublicIdForOwner: (...args: unknown[]) => getProxyFileByPublicIdForOwnerMock(...args),
+}));
 
 describe('proxyInputFileResolver', () => {
   beforeEach(() => {

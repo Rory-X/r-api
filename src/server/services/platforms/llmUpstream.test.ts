@@ -5,6 +5,7 @@ import { OpenAiAdapter } from './openai.js';
 import { ClaudeAdapter } from './claude.js';
 import { GeminiAdapter } from './gemini.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
 interface RequestSnapshot {
   method: string;
@@ -12,7 +13,9 @@ interface RequestSnapshot {
   headers: IncomingMessage['headers'];
 }
 
-describe('official llm upstream adapters', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('official llm upstream adapters', () => {
   let server: ReturnType<typeof createServer>;
   let baseUrl: string;
   let requests: RequestSnapshot[] = [];

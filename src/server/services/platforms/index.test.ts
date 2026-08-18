@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { detectPlatform, getAdapter } from './index.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
+
+const itWithLocalListener = canBindLocalTestListener() ? it : it.skip;
 
 async function withHttpServer(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
@@ -96,7 +99,7 @@ describe('getAdapter platform aliases', () => {
     expect(gemini?.platformName).toBe('gemini');
   });
 
-  it('detects one-hub by title under custom domain before generic new-api', async () => {
+  itWithLocalListener('detects one-hub by title under custom domain before generic new-api', async () => {
     await withHttpServer((req, res) => {
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -118,7 +121,7 @@ describe('getAdapter platform aliases', () => {
     });
   });
 
-  it('detects done-hub by title under custom domain', async () => {
+  itWithLocalListener('detects done-hub by title under custom domain', async () => {
     await withHttpServer((req, res) => {
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -132,7 +135,7 @@ describe('getAdapter platform aliases', () => {
     });
   });
 
-  it('detects veloera by title under custom domain before generic new-api', async () => {
+  itWithLocalListener('detects veloera by title under custom domain before generic new-api', async () => {
     await withHttpServer((req, res) => {
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -154,7 +157,7 @@ describe('getAdapter platform aliases', () => {
     });
   });
 
-  it('falls back to new-api by title when api/status is unavailable', async () => {
+  itWithLocalListener('falls back to new-api by title when api/status is unavailable', async () => {
     await withHttpServer((req, res) => {
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

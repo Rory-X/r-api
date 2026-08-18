@@ -46,6 +46,24 @@ function buildCodexModelsEndpoint(baseUrl: string): string {
   return `${normalized}/models?client_version=${encodeURIComponent('1.0.0')}`;
 }
 
+function buildCodexDiscoveryHttpError(input: {
+  status: number;
+  contentType?: string | null;
+  bodyText: string;
+}): string {
+  const normalizedBody = input.bodyText.replace(/\s+/g, ' ').trim();
+  const isHtml = input.contentType?.toLowerCase().includes('text/html')
+    || /<!doctype\s+html|<html\b/i.test(normalizedBody);
+  if (isHtml) {
+    if (/unable to load site|cloudflare|cf-ray/i.test(normalizedBody)) {
+      return `HTTP ${input.status}: Codex 上游拒绝当前服务器网络访问，请配置可用代理后重试`;
+    }
+    return `HTTP ${input.status}: Codex 上游返回 HTML 错误页`;
+  }
+  const summary = normalizedBody.slice(0, 500);
+  return `HTTP ${input.status}: ${summary || 'codex model discovery failed'}`;
+}
+
 function extractCodexModelIds(payload: unknown): string[] {
   const collection = (() => {
     if (Array.isArray(payload)) return payload;
@@ -144,7 +162,11 @@ export async function discoverCodexModelsFromCloud(input: {
     );
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`HTTP ${response.status}: ${text || 'codex model discovery failed'}`);
+      throw new Error(buildCodexDiscoveryHttpError({
+        status: response.status,
+        contentType: response.headers?.get?.('content-type'),
+        bodyText: text,
+      }));
     }
     return response.json();
   });

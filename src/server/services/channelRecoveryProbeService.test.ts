@@ -162,7 +162,7 @@ describe('channelRecoveryProbeService', () => {
     expect(refreshed?.cooldownLevel).toBe(0);
   });
 
-  it('actively recovers a Site runtime breaker after two successful probes', async () => {
+  it('actively recovers a Site runtime breaker after one successful probe', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'runtime-breaker-site',
       url: 'https://runtime-breaker.example.com',
@@ -204,17 +204,6 @@ describe('channelRecoveryProbeService', () => {
     await runChannelRecoveryProbeSweep(firstProbeAtMs);
     expect(probeRuntimeModelMock).toHaveBeenCalledTimes(1);
     expect(await listDueSiteRuntimeRecoveryTargets(firstProbeAtMs + 31_000))
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          siteId: site.id,
-          recoveryState: 'recovering',
-          recoverySuccessCount: 1,
-        }),
-      ]));
-
-    await runChannelRecoveryProbeSweep(firstProbeAtMs + 31_000);
-    expect(probeRuntimeModelMock).toHaveBeenCalledTimes(2);
-    expect(await listDueSiteRuntimeRecoveryTargets(firstProbeAtMs + 10 * 60_000))
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ siteId: site.id })]));
   });
 

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NewApiAdapter } from './newApi.js';
 import { AnyRouterAdapter } from './anyrouter.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
 interface RequestSnapshot {
   method: string;
@@ -57,8 +58,9 @@ const CLOUDFLARE_530_HTML = `
   </body>
 </html>
 `;
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
 
-describe('NewApiAdapter', () => {
+describeWithLocalListener('NewApiAdapter', () => {
   let server: ReturnType<typeof createServer>;
   let baseUrl: string;
   let requests: RequestSnapshot[] = [];

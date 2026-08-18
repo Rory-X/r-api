@@ -6,9 +6,15 @@ describe('buildConfig', () => {
   it('defaults to external listen host for server deployments', () => {
     const config = buildConfig({});
 
+    expect(config.demoMode).toBe(false);
     expect(config.listenHost).toBe('0.0.0.0');
     expect(config.port).toBe(4000);
     expect(config.dataDir).toBe('./data');
+  });
+
+  it('enables the public read-only demo mode only when explicitly configured', () => {
+    expect(buildConfig({ DEMO_MODE: 'true' }).demoMode).toBe(true);
+    expect(buildConfig({ DEMO_MODE: 'false' }).demoMode).toBe(false);
   });
 
   it('aligns desktop deployments with server deployments for listen host', () => {

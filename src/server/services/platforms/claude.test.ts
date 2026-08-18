@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { ClaudeAdapter } from './claude.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
 vi.mock('../siteProxy.js', () => ({
   withSiteProxyRequestInit: (_url: string, options: unknown) => options,
 }));
 
-describe('ClaudeAdapter', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('ClaudeAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
   let baseUrl: string;
   const requests: Array<{ url: string | undefined; headers: IncomingMessage['headers'] }> = [];

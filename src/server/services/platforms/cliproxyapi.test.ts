@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
-describe('CliProxyApiAdapter detect', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('CliProxyApiAdapter detect', () => {
   let server: ReturnType<typeof createServer> | undefined;
   let baseUrl = '';
   let adapter: CliProxyApiAdapter;

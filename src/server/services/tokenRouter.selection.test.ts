@@ -1067,7 +1067,7 @@ describe('TokenRouter selection scoring', () => {
     expect(slowCandidate?.reason || '').toContain('首字倍率=0.35');
   });
 
-  it('requires two consecutive successes before fully closing a site breaker', async () => {
+  it('fully restores a site after the first successful half-open request', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,
       valueScoreFactor: 0,
@@ -1128,20 +1128,12 @@ describe('TokenRouter selection scoring', () => {
     invalidateTokenRouterCache();
 
     decision = await router.explainSelection('gpt-5.3');
-    const recoveringCandidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
-    const recoveringCandidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
-    expect((recoveringCandidateA?.probability || 0)).toBeLessThan(20);
-    expect((recoveringCandidateB?.probability || 0)).toBeGreaterThan(80);
-    expect(recoveringCandidateA?.reason || '').toContain('运行时健康=');
-
-    await router.recordSuccess(channelA.id, 580, 0);
-    invalidateTokenRouterCache();
-
-    decision = await router.explainSelection('gpt-5.3');
     const recoveredCandidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
     const recoveredCandidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
-    expect((recoveredCandidateA?.probability || 0)).toBeGreaterThan(30);
-    expect((recoveredCandidateB?.probability || 0)).toBeLessThan(70);
+    expect((recoveredCandidateA?.probability || 0)).toBeGreaterThan(40);
+    expect((recoveredCandidateB?.probability || 0)).toBeLessThan(60);
+    expect(recoveredCandidateA?.reason || '').not.toContain('熔断');
+    expect(recoveredCandidateA?.reason || '').not.toContain('恢复观察');
   });
 
   it('clears persisted runtime breaker state when channel cooldown is manually cleared', async () => {
@@ -1466,7 +1458,7 @@ describe('TokenRouter selection scoring', () => {
     expect(candidateA?.reason || '').toContain('运行时健康=');
   });
 
-  it('keeps a recovered stable_first site behind healthier peers until recent success rebuilds', async () => {
+  it('returns a recovered stable_first site to the primary pool immediately', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,
       valueScoreFactor: 0,
@@ -1532,10 +1524,13 @@ describe('TokenRouter selection scoring', () => {
     const recoveredCandidate = decision.candidates.find((candidate) => candidate.channelId === recoveredChannel.id);
     const healthyCandidate = decision.candidates.find((candidate) => candidate.channelId === healthyChannel.id);
 
-    expect(preview?.channel.id).toBe(healthyChannel.id);
-    expect(decision.selectedChannelId).toBe(healthyChannel.id);
-    expect((recoveredCandidate?.probability || 0)).toBeLessThan(healthyCandidate?.probability || 0);
+    expect(preview?.channel.id).toBe(recoveredChannel.id);
+    expect(decision.selectedChannelId).toBe(recoveredChannel.id);
+    expect(recoveredCandidate?.observationPool).toBe('primary');
+    expect(healthyCandidate?.observationPool).toBe('primary');
+    expect((recoveredCandidate?.probability || 0)).toBeGreaterThanOrEqual(healthyCandidate?.probability || 0);
     expect(recoveredCandidate?.reason || '').toContain('近期成功率=');
+    expect(recoveredCandidate?.reason || '').not.toContain('观察池');
     expect(healthyCandidate?.reason || '').toContain('近期成功率=');
   });
 
@@ -1931,6 +1926,12 @@ describe('TokenRouter selection scoring', () => {
 
     expect(observationCandidate?.probability).toBe(100);
     expect(primaryCandidate?.probability).toBe(0);
+    expect(observationCandidate).toMatchObject({
+      observationPool: 'observation',
+      observationRemainingRequests: 0,
+      observationDueNow: true,
+    });
+    expect(primaryCandidate?.observationPool).toBe('primary');
     expect(decision.summary.join(' ')).toContain('本次命中观察池灰度流量');
 
     const observationSelected = await router.selectChannel('gpt-5.4-probe-free');
@@ -1944,6 +1945,12 @@ describe('TokenRouter selection scoring', () => {
     expect(selectedChannelIds.filter((channelId) => channelId === primaryChannel.id).length).toBeGreaterThan(20);
     expect(decision.summary.join(' ')).toContain('观察池站点 1');
     expect(decision.summary.join(' ')).toContain('还需 23 次主池请求');
+    expect(observationCandidate).toMatchObject({
+      observationPool: 'observation',
+      observationRemainingRequests: 23,
+      observationDueNow: false,
+    });
+    expect(primaryCandidate?.observationPool).toBe('primary');
     expect(observationCandidate?.reason || '').toContain('观察池');
     expect(observationCandidate?.probability).toBe(0);
     expect(primaryCandidate?.reason || '').toContain('主池');
@@ -2018,6 +2025,14 @@ describe('TokenRouter selection scoring', () => {
       accountExtraConfig: accountBusy.extraConfig,
     });
     await Promise.resolve();
+    const stickyKey = proxyChannelCoordinator.buildStickySessionKey({
+      clientKind: 'codex',
+      sessionId: 'runtime-load-sticky',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+    proxyChannelCoordinator.bindStickyChannel(stickyKey, channelBusy.id, accountBusy.extraConfig);
 
     const router = new TokenRouter();
     const preview = await router.previewSelectedChannel('gpt-5.2');
@@ -2029,6 +2044,16 @@ describe('TokenRouter selection scoring', () => {
     expect(busyCandidate?.reason || '').toContain('会话负载=');
     expect(busyCandidate?.reason || '').toContain('活跃=1/1');
     expect(busyCandidate?.reason || '').toContain('等待=1');
+    expect(busyCandidate).toMatchObject({
+      stickyMode: 'session',
+      stickyHit: true,
+      stickyBindingCount: 1,
+    });
+    expect(freeCandidate).toMatchObject({
+      stickyMode: 'session',
+      stickyHit: false,
+      stickyBindingCount: 0,
+    });
     expect((busyCandidate?.probability || 0)).toBeLessThan((freeCandidate?.probability || 0));
 
     activeLease.lease.release();

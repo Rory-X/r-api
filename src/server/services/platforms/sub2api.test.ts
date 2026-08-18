@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Sub2ApiAdapter } from './sub2api.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
-describe('Sub2ApiAdapter', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('Sub2ApiAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
   let baseUrl: string;
   let adapter: Sub2ApiAdapter;

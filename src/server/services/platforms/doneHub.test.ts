@@ -3,8 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { DoneHubAdapter } from './doneHub.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
-describe('DoneHubAdapter', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('DoneHubAdapter', () => {
   let server: ReturnType<typeof createServer>;
   let baseUrl: string;
 

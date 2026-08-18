@@ -96,7 +96,7 @@ describe('GET /api/sites runtime health', () => {
         state: 'open',
         breakerLevel: 1,
         recoverySuccessCount: 0,
-        recoverySuccessThreshold: 2,
+        recoverySuccessThreshold: 1,
         recoveryTrafficRatio: 0.1,
         firstByteLatencyEmaMs: null,
         firstByteSampleCount: 0,

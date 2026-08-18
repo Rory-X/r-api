@@ -12,6 +12,16 @@ export type RouteDecisionCandidate = {
     eligible: boolean;
     recentlyFailed: boolean;
     avoidedByRecentFailure: boolean;
+    failureCount?: number;
+    consecutiveFailureCount?: number;
+    cooldownUntil?: string | null;
+    observationPool?: 'primary' | 'observation' | null;
+    observationRemainingRequests?: number | null;
+    observationDueNow?: boolean;
+    observationBlockedByCooldown?: boolean;
+    stickyMode?: 'none' | 'session' | 'route_unit';
+    stickyHit?: boolean;
+    stickyBindingCount?: number;
     probability: number;
     reason: string;
 };

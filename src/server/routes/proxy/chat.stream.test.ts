@@ -2,6 +2,7 @@ import { zstdCompressSync } from 'node:zlib';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
+import { PRE_OUTPUT_RETRY_GRACE_MS } from '../../proxy-core/deferredSseOutput.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
@@ -380,6 +381,7 @@ describe('chat proxy stream behavior', () => {
     expect(response.json()?.error?.type).toBe('upstream_error');
     expect(recordSuccessMock).not.toHaveBeenCalled();
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
+
   });
 
   it('returns HTTP upstream_error when streamed chat SSE yields only empty deltas before DONE', async () => {
@@ -2898,6 +2900,10 @@ describe('chat proxy stream behavior', () => {
     expect(response.json()?.error?.type).toBe('upstream_error');
     expect(recordSuccessMock).not.toHaveBeenCalled();
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
+
+    // The deferred SSE timer must be cancelled when this path returns an HTTP
+    // error, otherwise it will try to set SSE headers after the reply finishes.
+    await new Promise((resolve) => setTimeout(resolve, PRE_OUTPUT_RETRY_GRACE_MS + 25));
   });
 
   it('prefers native /v1/responses for claude-family /v1/responses requests that include input_file file_url', async () => {

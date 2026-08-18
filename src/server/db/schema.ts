@@ -290,6 +290,27 @@ export const localConnectorDevices = sqliteTable('local_connector_devices', {
   lastSeenAtIdx: index('local_connector_devices_last_seen_at_idx').on(table.lastSeenAt),
 }));
 
+export const localConnectorHealthChecks = sqliteTable('local_connector_health_checks', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
+  checkId: text('check_id').notNull(),
+  status: text('status').notNull().default('unknown'),
+  reason: text('reason'),
+  observedAt: text('observed_at'),
+  transitionedAt: text('transitioned_at'),
+  incidentStartedAt: text('incident_started_at'),
+  alertedAt: text('alerted_at'),
+  recoveryNotifiedAt: text('recovery_notified_at'),
+  autoRepairActionId: text('auto_repair_action_id'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  deviceCheckUnique: uniqueIndex('local_connector_health_checks_device_check_unique')
+    .on(table.deviceId, table.checkId),
+  statusObservedIdx: index('local_connector_health_checks_status_observed_idx')
+    .on(table.status, table.observedAt),
+}));
+
 export const localConnectorThreads = sqliteTable('local_connector_threads', {
   id: text('id').primaryKey(),
   deviceId: text('device_id').notNull().references(() => localConnectorDevices.id, { onDelete: 'cascade' }),
@@ -1290,6 +1311,7 @@ export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   allowedRouteIds: text('allowed_route_ids'), // JSON array<number>
   siteWeightMultipliers: text('site_weight_multipliers'), // JSON object { [siteId]: multiplier }
   excludedSiteIds: text('excluded_site_ids'), // JSON array<number>
+  allowedCredentialRefs: text('allowed_credential_refs'), // JSON array<DownstreamAllowedCredentialRef>
   excludedCredentialRefs: text('excluded_credential_refs'), // JSON array<DownstreamExcludedCredentialRef>
   lastUsedAt: text('last_used_at'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),

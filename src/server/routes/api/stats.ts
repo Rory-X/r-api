@@ -53,6 +53,7 @@ import { getSiteStatsSnapshot } from "../../services/siteStatsSnapshotService.js
 import {
   runUsageAggregationProjectionPass,
 } from "../../services/usageAggregationService.js";
+import { getRoutingObservabilitySnapshot } from "../../services/routingObservabilityService.js";
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -682,6 +683,13 @@ export async function statsRoutes(app: FastifyInstance) {
         ...insights.payload,
       };
     },
+  );
+
+  app.get<{ Querystring: { hours?: string } }>(
+    "/api/stats/routing-observability",
+    async (request) => getRoutingObservabilitySnapshot({
+      hours: request.query.hours,
+    }),
   );
 
   async function loadProxyLogsQueryPayload(params: {

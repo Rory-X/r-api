@@ -1,0 +1,1 @@
+ALTER TABLE `downstream_api_keys` ADD `allowed_credential_refs` text;

@@ -51,6 +51,28 @@ describe('proxyChannelCoordinator', () => {
     expect(proxyChannelCoordinator.getStickyChannelId(key)).toBeNull();
   });
 
+  it('reports active sticky binding counts by channel', () => {
+    const firstKey = proxyChannelCoordinator.buildStickySessionKey({
+      clientKind: 'codex',
+      sessionId: 'turn-count-1',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+    const secondKey = proxyChannelCoordinator.buildStickySessionKey({
+      clientKind: 'codex',
+      sessionId: 'turn-count-2',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+
+    proxyChannelCoordinator.bindStickyChannel(firstKey, 42, JSON.stringify({ credentialMode: 'session' }));
+    proxyChannelCoordinator.bindStickyChannel(secondKey, 42, JSON.stringify({ credentialMode: 'session' }));
+
+    expect(proxyChannelCoordinator.getStickyBindingCounts()).toEqual(new Map([[42, 2]]));
+  });
+
   it('does not store sticky bindings for apikey-only channels', () => {
     const key = proxyChannelCoordinator.buildStickySessionKey({
       clientKind: 'codex',

@@ -170,6 +170,15 @@ class ProxyChannelCoordinator {
     return entry.channelId;
   }
 
+  getStickyBindingCounts(nowMs = Date.now()): Map<number, number> {
+    cleanupExpiredStickyBindings(nowMs);
+    const counts = new Map<number, number>();
+    for (const entry of stickySessionBindings.values()) {
+      counts.set(entry.channelId, (counts.get(entry.channelId) ?? 0) + 1);
+    }
+    return counts;
+  }
+
   bindStickyChannel(stickySessionKey: string | null | undefined, channelId: number, accountIdentity?: SessionScopedChannelInput): void {
     if (!config.proxyStickySessionEnabled) return;
     if (!isSessionScopedChannel(accountIdentity)) return;

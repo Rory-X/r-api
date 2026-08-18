@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { OneHubAdapter } from './oneHub.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
-describe('OneHubAdapter', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('OneHubAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
   let baseUrl: string;
 

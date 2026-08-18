@@ -562,4 +562,75 @@ describe('TokenRouter downstream policy', () => {
     expect(blockedCandidate?.eligible).toBe(false);
     expect(blockedCandidate?.reason).toContain('API Key/令牌已被下游密钥排除');
   });
+
+  it('keeps initial selection and failover inside the downstream credential allowlist', async () => {
+    const allowedSite = await db.insert(schema.sites).values({
+      name: 'site-allowed',
+      url: 'https://allowed.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const blockedSite = await db.insert(schema.sites).values({
+      name: 'site-blocked',
+      url: 'https://blocked.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const allowedAccount = await db.insert(schema.accounts).values({
+      siteId: allowedSite.id,
+      username: 'allowed-account',
+      accessToken: '',
+      apiToken: 'sk-allowed-default',
+      status: 'active',
+    }).returning().get();
+    const blockedAccount = await db.insert(schema.accounts).values({
+      siteId: blockedSite.id,
+      username: 'blocked-account',
+      accessToken: '',
+      apiToken: 'sk-blocked-default',
+      status: 'active',
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.6-sol',
+      enabled: true,
+    }).returning().get();
+    const allowedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: allowedAccount.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    const blockedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: blockedAccount.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const policy: any = {
+      allowedRouteIds: [route.id],
+      supportedModels: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      allowedCredentialRefs: [
+        { kind: 'default_api_key', siteId: allowedSite.id, accountId: allowedAccount.id },
+      ],
+      excludedCredentialRefs: [],
+    };
+    const router = new TokenRouter();
+
+    const selected = await router.selectChannel('gpt-5.6-sol', policy);
+    const failover = await router.selectNextChannel('gpt-5.6-sol', [allowedChannel.id], policy);
+    const decision = await router.explainSelectionForRoute(route.id, 'gpt-5.6-sol', [], policy);
+    const blockedCandidate = decision.candidates.find((item) => item.channelId === blockedChannel.id);
+
+    expect(selected?.channel.id).toBe(allowedChannel.id);
+    expect(failover).toBeNull();
+    expect(blockedCandidate?.eligible).toBe(false);
+    expect(blockedCandidate?.reason).toContain('站点凭证不在下游密钥白名单');
+  });
 });

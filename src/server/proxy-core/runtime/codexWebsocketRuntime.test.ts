@@ -2,8 +2,11 @@ import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { resetCodexSessionResponseStore } from './codexSessionResponseStore.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
-describe('codexWebsocketRuntime', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('codexWebsocketRuntime', () => {
   let upstreamServer: WebSocketServer;
   let upstreamWsUrl: string;
   let upstreamConnectionCount = 0;

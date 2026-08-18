@@ -13,7 +13,11 @@ import {
   normalizeRouteRoutingStrategy,
   type RouteRoutingStrategy,
 } from './routeRoutingStrategy.js';
-import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
+import {
+  type DownstreamCredentialRef,
+  type DownstreamRoutingPolicy,
+  EMPTY_DOWNSTREAM_ROUTING_POLICY,
+} from './downstreamPolicyTypes.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { isOauthRefreshStateRoutable } from './oauth/refreshCoordinator.js';
@@ -98,6 +102,7 @@ export type TokenRouterSelectionConstraints = Readonly<{
 type FailureAwareChannel = {
   failCount?: number | null;
   lastFailAt?: string | null;
+  cooldownUntil?: string | null;
 };
 
 type SiteRuntimeFailureContext = {
@@ -171,11 +176,14 @@ export type SiteRuntimeHealthSnapshot = Readonly<{
 
 const FAILURE_BACKOFF_BASE_SEC = 15;
 const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
+// Upstream overloads and 5xx responses are usually short-lived. Historical
+// failures must not stretch one channel's cooldown into a long quarantine.
+const TRANSIENT_UPSTREAM_COOLDOWN_MAX_MS = 5 * 60 * 1000;
 // Keep weighted-route backoff within the JavaScript Date range when fail counts grow large.
 const MAX_FAILURE_BACKOFF_SEC = 30 * 24 * 60 * 60;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
-const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
+const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 60, 5 * 60, 10 * 60] as const;
 const STABLE_FIRST_SITE_SCORE_RATIO = 0.92;
 const SITE_RUNTIME_HEALTH_DECAY_HALF_LIFE_MS = 10 * 60 * 1000;
 const SITE_RUNTIME_MIN_MULTIPLIER = 0.08;
@@ -184,8 +192,8 @@ const SITE_RUNTIME_LATENCY_WINDOW_MS = 30_000;
 const SITE_RUNTIME_MAX_LATENCY_PENALTY = 0.35;
 const SITE_RUNTIME_LATENCY_EMA_ALPHA = 0.3;
 const SITE_RUNTIME_BREAKER_STREAK_THRESHOLD = 3;
-const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 60_000, 5 * 60_000, 30 * 60 * 1000] as const;
-const SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD = 2;
+const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 60_000, 5 * 60_000, 10 * 60_000] as const;
+const SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD = 1;
 const SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO = 0.1;
 const SITE_RUNTIME_RECOVERY_PROBE_RECHECK_MS = 30_000;
 const SITE_RUNTIME_RECOVERY_PROBE_LEASE_MS = 30_000;
@@ -435,6 +443,37 @@ function clampFailureCooldownMs(cooldownMs: number): number {
 
 function resolveEffectiveFailureCooldownMs(failCount?: number | null): number {
   return clampFailureCooldownMs(resolveFailureBackoffSec(failCount) * 1000);
+}
+
+function isTransientUpstreamFailure(
+  context: SiteRuntimeFailureContext,
+  domain: ProxyHealthDomain,
+): boolean {
+  if (domain !== 'gateway' && domain !== 'unknown') return false;
+  return isTransientSiteRuntimeFailure(context);
+}
+
+function capFailureCooldownForContext(
+  cooldownMs: number,
+  context: SiteRuntimeFailureContext,
+  domain: ProxyHealthDomain,
+): number {
+  const normalized = clampFailureCooldownMs(cooldownMs);
+  return isTransientUpstreamFailure(context, domain)
+    ? Math.min(normalized, TRANSIENT_UPSTREAM_COOLDOWN_MAX_MS)
+    : normalized;
+}
+
+function resolveFailureCooldownMsForContext(
+  failCount: number,
+  context: SiteRuntimeFailureContext,
+  domain: ProxyHealthDomain,
+): number {
+  return capFailureCooldownForContext(
+    resolveEffectiveFailureCooldownMs(failCount),
+    context,
+    domain,
+  );
 }
 
 function resolveRoundRobinCooldownSec(level: number): number {
@@ -1178,13 +1217,25 @@ function applyRuntimeHealthSuccess(
   firstByteLatencyMs?: number | null,
 ): void {
   refreshRecentOutcomeWindow(state, nowMs);
-  state.recentSuccessCount += 1;
-  state.penaltyScore = Math.max(0, state.penaltyScore * 0.2 - 0.3);
+  const recoveredFromBreaker = state.recoveryState !== 'healthy';
+  if (isProbe || recoveredFromBreaker) {
+    // A successful half-open request is current evidence that the upstream is
+    // usable again. Do not let stale transient failures keep a recovered,
+    // cheaper Site suppressed in the observation pool.
+    state.recentSuccessCount = 1;
+    state.recentFailureCount = 0;
+    state.penaltyScore = 0;
+  } else {
+    state.recentSuccessCount += 1;
+    state.penaltyScore = Math.max(0, state.penaltyScore * 0.2 - 0.3);
+  }
   state.transientFailureStreak = 0;
   state.lastTransientFailureAtMs = null;
   if (state.recoveryState === 'open') {
-    state.recoveryState = 'recovering';
-    state.recoverySuccessCount = 1;
+    const recovered = SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD <= 1;
+    state.recoveryState = recovered ? 'healthy' : 'recovering';
+    state.recoverySuccessCount = recovered ? 0 : 1;
+    state.breakerLevel = recovered ? 0 : state.breakerLevel;
     state.breakerUntilMs = null;
   } else if (state.recoveryState === 'recovering') {
     state.recoverySuccessCount += 1;
@@ -1833,9 +1884,17 @@ function isSiteDisabled(status?: string | null): boolean {
 export function isChannelRecentlyFailed(
   channel: FailureAwareChannel,
   nowMs = Date.now(),
-  avoidSec = resolveFailureBackoffSec(channel.failCount),
+  avoidSec?: number,
 ): boolean {
-  const avoidMs = clampFailureCooldownMs(avoidSec * 1000);
+  if (avoidSec == null) {
+    const cooldownUntil = String(channel.cooldownUntil || '').trim();
+    if (cooldownUntil) {
+      const cooldownTs = Date.parse(cooldownUntil);
+      if (!Number.isNaN(cooldownTs)) return cooldownTs > nowMs;
+    }
+  }
+
+  const avoidMs = clampFailureCooldownMs((avoidSec ?? resolveFailureBackoffSec(channel.failCount)) * 1000);
   if (avoidMs <= 0) return false;
   if ((channel.failCount ?? 0) <= 0) return false;
   if (!channel.lastFailAt) return false;
@@ -2711,6 +2770,7 @@ export class TokenRouter {
     const available: RouteChannelCandidate[] = [];
     const candidates: RouteDecisionCandidate[] = [];
     const candidateMap = new Map<number, RouteDecisionCandidate>();
+    const stickyBindingCounts = proxyChannelCoordinator.getStickyBindingCounts(nowMs);
 
     for (const row of match.channels) {
       const reasonParts = this.getCandidateEligibilityReasons(row, {
@@ -2726,6 +2786,15 @@ export class TokenRouter {
         ? isChannelRecentlyFailed(row.channel, nowMs)
         : false;
       const eligible = reasonParts.length === 0;
+      const channelLoad = proxyChannelCoordinator.getChannelLoadSnapshot({
+        channelId: row.channel.id,
+        accountExtraConfig: row.account.extraConfig,
+        accountOauthProvider: row.account.oauthProvider,
+      });
+      const stickyBindingCount = stickyBindingCounts.get(row.channel.id) ?? 0;
+      const stickyMode = row.routeUnit?.strategy === 'stick_until_unavailable'
+        ? 'route_unit'
+        : (channelLoad.sessionScoped ? 'session' : 'none');
       const candidate: RouteDecisionCandidate = {
         channelId: row.channel.id,
         accountId: row.account.id,
@@ -2738,6 +2807,16 @@ export class TokenRouter {
         eligible,
         recentlyFailed,
         avoidedByRecentFailure: false,
+        failureCount: Math.max(0, row.channel.failCount ?? 0),
+        consecutiveFailureCount: Math.max(0, row.channel.consecutiveFailCount ?? 0),
+        cooldownUntil: row.channel.cooldownUntil ?? null,
+        observationPool: null,
+        observationRemainingRequests: null,
+        observationDueNow: false,
+        observationBlockedByCooldown: false,
+        stickyMode,
+        stickyHit: stickyBindingCount > 0,
+        stickyBindingCount,
         probability: 0,
         reason: eligible ? '可用' : reasonParts.join('、'),
       };
@@ -2880,6 +2959,24 @@ export class TokenRouter {
         && poolPlan.observationCandidates.length > 0
         && remainingPrimaryRequestsBeforeObservation === 0
         && !observationDueNow;
+      for (const row of poolPlan.primaryCandidates) {
+        const target = candidateMap.get(row.channel.id);
+        if (!target) continue;
+        target.observationPool = 'primary';
+        target.observationRemainingRequests = null;
+        target.observationDueNow = false;
+        target.observationBlockedByCooldown = false;
+      }
+      for (const row of poolPlan.observationCandidates) {
+        const target = candidateMap.get(row.channel.id);
+        if (!target) continue;
+        target.observationPool = 'observation';
+        target.observationRemainingRequests = useObservationNow
+          ? 0
+          : remainingPrimaryRequestsBeforeObservation;
+        target.observationDueNow = useObservationNow;
+        target.observationBlockedByCooldown = observationBlockedByCooldown;
+      }
       const primaryWeighted = this.calculateWeightedSelection(
         poolPlan.primaryCandidates,
         useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
@@ -3248,6 +3345,7 @@ export class TokenRouter {
         const memberTotalLatencyMs = (memberRow.member.totalLatencyMs ?? 0) + latencyMs;
         const memberTotalCost = (memberRow.member.totalCost ?? 0) + cost;
         await db.update(schema.oauthRouteUnitMembers).set({
+          failCount: 0,
           successCount: memberSuccessCount,
           totalLatencyMs: memberTotalLatencyMs,
           totalCost: memberTotalCost,
@@ -3298,6 +3396,7 @@ export class TokenRouter {
     }
 
     await db.update(schema.routeChannels).set({
+      failCount: 0,
       successCount: nextSuccessCount,
       totalLatencyMs: nextTotalLatencyMs,
       totalCost: nextTotalCost,
@@ -3309,6 +3408,7 @@ export class TokenRouter {
     }).where(eq(schema.routeChannels.id, channelId)).run();
 
     patchCachedChannel(channelId, (channel) => {
+      channel.failCount = 0;
       channel.successCount = nextSuccessCount;
       channel.totalLatencyMs = nextTotalLatencyMs;
       channel.totalCost = nextTotalCost;
@@ -3354,6 +3454,7 @@ export class TokenRouter {
 
       if (memberRow) {
         await db.update(schema.oauthRouteUnitMembers).set({
+          failCount: 0,
           cooldownUntil: null,
           lastFailAt: null,
           consecutiveFailCount: 0,
@@ -3386,12 +3487,14 @@ export class TokenRouter {
       }
 
       await db.update(schema.routeChannels).set({
+        failCount: 0,
         cooldownUntil: null,
         lastFailAt: null,
         consecutiveFailCount: 0,
         cooldownLevel: 0,
       }).where(eq(schema.routeChannels.id, channelId)).run();
       patchCachedChannel(channelId, (channel) => {
+        channel.failCount = 0;
         channel.cooldownUntil = null;
         channel.lastFailAt = null;
         channel.consecutiveFailCount = 0;
@@ -3402,13 +3505,15 @@ export class TokenRouter {
     }
 
     const affectedChannelIds = await loadCredentialScopedChannelIds(ch, account.id);
-    const needsChannelReset = !!ch.cooldownUntil
+    const needsChannelReset = (ch.failCount ?? 0) > 0
+      || !!ch.cooldownUntil
       || !!ch.lastFailAt
       || (ch.consecutiveFailCount ?? 0) > 0
       || (ch.cooldownLevel ?? 0) > 0;
 
     if (needsChannelReset) {
       await db.update(schema.routeChannels).set({
+        failCount: 0,
         cooldownUntil: null,
         lastFailAt: null,
         consecutiveFailCount: 0,
@@ -3417,6 +3522,7 @@ export class TokenRouter {
 
       for (const affectedChannelId of affectedChannelIds) {
         patchCachedChannel(affectedChannelId, (channel) => {
+          channel.failCount = 0;
           channel.cooldownUntil = null;
           channel.lastFailAt = null;
           channel.consecutiveFailCount = 0;
@@ -3426,6 +3532,7 @@ export class TokenRouter {
     } else if (affectedChannelIds.length > 1) {
       const scopedRows = await db.select({
         id: schema.routeChannels.id,
+        failCount: schema.routeChannels.failCount,
         cooldownUntil: schema.routeChannels.cooldownUntil,
         lastFailAt: schema.routeChannels.lastFailAt,
         consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
@@ -3436,7 +3543,8 @@ export class TokenRouter {
         .all();
       const siblingIdsToReset = scopedRows
         .filter((candidate) => candidate.id !== channelId && (
-          !!candidate.cooldownUntil
+          (candidate.failCount ?? 0) > 0
+          || !!candidate.cooldownUntil
           || !!candidate.lastFailAt
           || (candidate.consecutiveFailCount ?? 0) > 0
           || (candidate.cooldownLevel ?? 0) > 0
@@ -3445,6 +3553,7 @@ export class TokenRouter {
 
       if (siblingIdsToReset.length > 0) {
         await db.update(schema.routeChannels).set({
+          failCount: 0,
           cooldownUntil: null,
           lastFailAt: null,
           consecutiveFailCount: 0,
@@ -3453,6 +3562,7 @@ export class TokenRouter {
 
         for (const siblingId of siblingIdsToReset) {
           patchCachedChannel(siblingId, (channel) => {
+            channel.failCount = 0;
             channel.cooldownUntil = null;
             channel.lastFailAt = null;
             channel.consecutiveFailCount = 0;
@@ -3611,7 +3721,11 @@ export class TokenRouter {
           consecutiveFailCount = 0;
           cooldownLevel = 0;
         } else if (mutation.affectsCredential) {
-          cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(Math.max(1, failCount))).toISOString();
+          cooldownUntil = new Date(nowMs + resolveFailureCooldownMsForContext(
+            Math.max(1, failCount),
+            normalizedContext,
+            domain,
+          )).toISOString();
           consecutiveFailCount = 0;
           cooldownLevel = 0;
         } else if (routeUnitStrategy === 'round_robin') {
@@ -3619,12 +3733,20 @@ export class TokenRouter {
             cooldownLevel = Math.min(cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1);
             const cooldownSec = resolveRoundRobinCooldownSec(cooldownLevel);
             cooldownUntil = cooldownSec > 0
-              ? new Date(nowMs + clampFailureCooldownMs(cooldownSec * 1000)).toISOString()
+              ? new Date(nowMs + capFailureCooldownForContext(
+                cooldownSec * 1000,
+                normalizedContext,
+                domain,
+              )).toISOString()
               : null;
             consecutiveFailCount = 0;
           }
         } else {
-          cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(failCount)).toISOString();
+          cooldownUntil = new Date(nowMs + resolveFailureCooldownMsForContext(
+            failCount,
+            normalizedContext,
+            domain,
+          )).toISOString();
           consecutiveFailCount = 0;
           cooldownLevel = 0;
         }
@@ -3660,7 +3782,11 @@ export class TokenRouter {
       consecutiveFailCount = 0;
       cooldownLevel = 0;
     } else if (mutation.affectsCredential) {
-      cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(Math.max(1, failCount))).toISOString();
+      cooldownUntil = new Date(nowMs + resolveFailureCooldownMsForContext(
+        Math.max(1, failCount),
+        normalizedContext,
+        domain,
+      )).toISOString();
       consecutiveFailCount = 0;
       cooldownLevel = 0;
     } else if (routeStrategy === 'round_robin') {
@@ -3668,12 +3794,20 @@ export class TokenRouter {
         cooldownLevel = Math.min(cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1);
         const cooldownSec = resolveRoundRobinCooldownSec(cooldownLevel);
         cooldownUntil = cooldownSec > 0
-          ? new Date(nowMs + clampFailureCooldownMs(cooldownSec * 1000)).toISOString()
+          ? new Date(nowMs + capFailureCooldownForContext(
+            cooldownSec * 1000,
+            normalizedContext,
+            domain,
+          )).toISOString()
           : null;
         consecutiveFailCount = 0;
       }
     } else {
-      cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(failCount)).toISOString();
+      cooldownUntil = new Date(nowMs + resolveFailureCooldownMsForContext(
+        failCount,
+        normalizedContext,
+        domain,
+      )).toISOString();
       consecutiveFailCount = 0;
       cooldownLevel = 0;
     }
@@ -4266,6 +4400,28 @@ export class TokenRouter {
     return null;
   }
 
+  private downstreamCredentialRefMatchesCandidate(
+    candidate: RouteChannelCandidate,
+    ref: DownstreamCredentialRef,
+  ): boolean {
+    if (candidate.account.id !== ref.accountId || candidate.site.id !== ref.siteId) {
+      return false;
+    }
+
+    if (ref.kind === 'account_token') {
+      return candidate.channel.tokenId === ref.tokenId && candidate.token?.id === ref.tokenId;
+    }
+
+    if (candidate.channel.tokenId != null) return false;
+    if (ref.kind === 'account_credential') {
+      return !!this.resolveChannelTokenValue(candidate);
+    }
+
+    const resolvedTokenValue = this.resolveChannelTokenValue(candidate);
+    const accountApiToken = candidate.account.apiToken?.trim() || '';
+    return !!resolvedTokenValue && !!accountApiToken && resolvedTokenValue === accountApiToken;
+  }
+
   private resolveDownstreamExclusionReason(
     candidate: RouteChannelCandidate,
     downstreamPolicy?: DownstreamRoutingPolicy,
@@ -4279,6 +4435,16 @@ export class TokenRouter {
       return '站点已被下游密钥排除';
     }
 
+    const allowedCredentialRefs = Array.isArray(downstreamPolicy.allowedCredentialRefs)
+      ? downstreamPolicy.allowedCredentialRefs
+      : [];
+    if (
+      allowedCredentialRefs.length > 0
+      && !allowedCredentialRefs.some((ref) => this.downstreamCredentialRefMatchesCandidate(candidate, ref))
+    ) {
+      return '站点凭证不在下游密钥白名单';
+    }
+
     const excludedCredentialRefs = Array.isArray(downstreamPolicy.excludedCredentialRefs)
       ? downstreamPolicy.excludedCredentialRefs
       : [];
@@ -4287,28 +4453,8 @@ export class TokenRouter {
     }
 
     for (const ref of excludedCredentialRefs) {
-      if (ref.kind === 'account_token') {
-        if (
-          candidate.channel.tokenId === ref.tokenId
-          && candidate.token?.id === ref.tokenId
-          && candidate.account.id === ref.accountId
-          && candidate.site.id === ref.siteId
-        ) {
-          return 'API Key/令牌已被下游密钥排除';
-        }
-        continue;
-      }
-
-      if (
-        candidate.channel.tokenId == null
-        && candidate.account.id === ref.accountId
-        && candidate.site.id === ref.siteId
-      ) {
-        const resolvedTokenValue = this.resolveChannelTokenValue(candidate);
-        const accountApiToken = candidate.account.apiToken?.trim() || '';
-        if (resolvedTokenValue && accountApiToken && resolvedTokenValue === accountApiToken) {
-          return 'API Key/令牌已被下游密钥排除';
-        }
+      if (this.downstreamCredentialRefMatchesCandidate(candidate, ref)) {
+        return 'API Key/令牌已被下游密钥排除';
       }
     }
 

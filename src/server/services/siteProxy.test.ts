@@ -8,8 +8,10 @@ import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { SocksClient } from 'socks';
 import { Headers, fetch } from 'undici';
+import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
 type DbModule = typeof import('../db/index.js');
+const itWithLocalListener = canBindLocalTestListener() ? it : it.skip;
 
 describe('siteProxy', () => {
   let db: DbModule['db'];
@@ -105,7 +107,7 @@ describe('siteProxy', () => {
     expect('dispatcher' in requestInit).toBe(true);
   });
 
-  it('injects a working dispatcher for socks5 system proxies', async () => {
+  itWithLocalListener('injects a working dispatcher for socks5 system proxies', async () => {
     const upstreamServer = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ok: true }));

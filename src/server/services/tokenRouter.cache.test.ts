@@ -248,6 +248,104 @@ describe('TokenRouter runtime cache', () => {
     }, recentFailureCheckAt)).toBe(false);
   });
 
+  it('caps transient upstream backoff and resets the failure ladder after a successful probe', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ordinary-503-site',
+      url: 'https://ordinary-503.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'ordinary-503-user',
+      accessToken: 'ordinary-503-access-token',
+      apiToken: 'ordinary-503-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'ordinary-503-token',
+      token: 'sk-ordinary-503-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    for (let index = 0; index < 7; index += 1) {
+      await router.recordFailure(channel.id, {
+        status: 502,
+        errorText: 'Bad gateway',
+        modelName: 'gpt-4o-mini',
+      });
+    }
+
+    const finalStartedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 502,
+      errorText: 'Bad gateway',
+      modelName: 'gpt-4o-mini',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - finalStartedAt;
+
+    expect(record?.failCount).toBe(8);
+    expect(cooldownMs).toBeGreaterThanOrEqual(295_000);
+    expect(cooldownMs).toBeLessThanOrEqual(305_000);
+
+    const checkAt = Date.now();
+    expect(isChannelRecentlyFailed({
+      failCount: 8,
+      lastFailAt: new Date(checkAt - 1_000).toISOString(),
+      cooldownUntil: new Date(checkAt - 1).toISOString(),
+    }, checkAt)).toBe(false);
+
+    await router.recordProbeSuccess(channel.id, 180, 'gpt-4o-mini');
+    const recovered = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    expect(recovered).toMatchObject({
+      failCount: 0,
+      cooldownUntil: null,
+      lastFailAt: null,
+      consecutiveFailCount: 0,
+      cooldownLevel: 0,
+    });
+
+    const nextFailureStartedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 503,
+      errorText: 'Service temporarily unavailable',
+      modelName: 'gpt-4o-mini',
+    });
+    const nextFailure = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const nextCooldownMs = Date.parse(String(nextFailure?.cooldownUntil || '')) - nextFailureStartedAt;
+    expect(nextFailure?.failCount).toBe(1);
+    expect(nextCooldownMs).toBeGreaterThanOrEqual(10_000);
+    expect(nextCooldownMs).toBeLessThanOrEqual(20_000);
+  });
+
   it('uses codex oauth reset hints for usage-limit cooldowns', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'codex-oauth-site',
@@ -748,7 +846,7 @@ describe('TokenRouter runtime cache', () => {
     expect(fourth?.channel.id).toBe(channels[0].id);
   });
 
-  it('applies staged cooldowns for round robin after every three consecutive failures', async () => {
+  it('keeps round-robin staged cooldowns within a ten-minute recovery window', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'round-robin-cooldown-site',
       url: 'https://round-robin-cooldown-site.example.com',
@@ -807,8 +905,8 @@ describe('TokenRouter runtime cache', () => {
     let cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
     expect(current?.consecutiveFailCount).toBe(0);
     expect(current?.cooldownLevel).toBe(1);
-    expect(cooldownMs).toBeGreaterThanOrEqual(9 * 60 * 1000);
-    expect(cooldownMs).toBeLessThanOrEqual(11 * 60 * 1000);
+    expect(cooldownMs).toBeGreaterThanOrEqual(55 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(65 * 1000);
 
     await db.update(schema.routeChannels).set({ cooldownUntil: null }).where(eq(schema.routeChannels.id, channel.id)).run();
 
@@ -822,8 +920,8 @@ describe('TokenRouter runtime cache', () => {
       .get();
     cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
     expect(current?.cooldownLevel).toBe(2);
-    expect(cooldownMs).toBeGreaterThanOrEqual(59 * 60 * 1000);
-    expect(cooldownMs).toBeLessThanOrEqual(61 * 60 * 1000);
+    expect(cooldownMs).toBeGreaterThanOrEqual(4 * 60 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(6 * 60 * 1000);
 
     await db.update(schema.routeChannels).set({ cooldownUntil: null }).where(eq(schema.routeChannels.id, channel.id)).run();
 
@@ -837,14 +935,15 @@ describe('TokenRouter runtime cache', () => {
       .get();
     cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
     expect(current?.cooldownLevel).toBe(3);
-    expect(cooldownMs).toBeGreaterThanOrEqual(23 * 60 * 60 * 1000);
-    expect(cooldownMs).toBeLessThanOrEqual(25 * 60 * 60 * 1000);
+    expect(cooldownMs).toBeGreaterThanOrEqual(9 * 60 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(11 * 60 * 1000);
 
     await router.recordSuccess(channel.id, 320, 0.12);
     current = await db.select().from(schema.routeChannels)
       .where(eq(schema.routeChannels.id, channel.id))
       .get();
     expect(current?.consecutiveFailCount).toBe(0);
+    expect(current?.failCount).toBe(0);
     expect(current?.cooldownLevel).toBe(0);
     expect(current?.cooldownUntil).toBeNull();
   });

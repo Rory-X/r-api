@@ -25,7 +25,7 @@ describe('listModelsSurface', () => {
           id: 'routable-model',
           object: 'model',
           created: 1773878400,
-          owned_by: 'metapi',
+          owned_by: 'r-api',
         },
       ],
     });
@@ -89,7 +89,7 @@ describe('listModelsSurface', () => {
           id: 'allowed-model',
           object: 'model',
           created: 1773878400,
-          owned_by: 'metapi',
+          owned_by: 'r-api',
         },
       ],
     });
