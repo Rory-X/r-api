@@ -21,6 +21,12 @@ import {
   parseObservedAppServerEvent,
   recordLocalConnectorThreadEvent,
 } from './localConnectorThreadService.js';
+import {
+  listLocalConnectorHealthChecks,
+  recordLocalConnectorHealthReports,
+  recordLocalConnectorHeartbeat,
+  type LocalConnectorHealthCheckPublic,
+} from './localConnectorHealthService.js';
 
 export {
   LOCAL_CONNECTOR_ACTION_KINDS,
@@ -42,6 +48,7 @@ export type LocalConnectorDevicePublic = Omit<
 > & {
   scopes: LocalConnectorScope[];
   capabilities: string[];
+  healthChecks: LocalConnectorHealthCheckPublic[];
 };
 
 export type LocalConnectorActionPublic = Omit<
@@ -87,6 +94,7 @@ export type LocalConnectorIdentity = {
 export type LocalConnectorRuntimeMetadataInput = {
   version?: unknown;
   capabilities?: unknown;
+  health?: unknown;
 };
 
 const DEFAULT_PAIRING_SCOPES: LocalConnectorScope[] = [
@@ -191,6 +199,7 @@ function toPublicDevice(row: typeof schema.localConnectorDevices.$inferSelect): 
     ...publicRow,
     scopes: normalizeScopes(parseStringArray(scopes), []),
     capabilities: parseStringArray(capabilities),
+    healthChecks: [],
   };
 }
 
@@ -458,35 +467,51 @@ export async function updateLocalConnectorRuntimeMetadata(
     ? identity.device.capabilities
     : normalizeCapabilities(input.capabilities);
   const capabilitiesChanged = JSON.stringify(capabilities) !== JSON.stringify(identity.device.capabilities);
-  if (version === identity.device.version && !capabilitiesChanged) return identity;
-
   const nowIso = new Date().toISOString();
-  await db.update(schema.localConnectorDevices).set({
-    version,
-    capabilities: capabilities.length > 0 ? JSON.stringify(capabilities) : null,
-    lastSeenAt: nowIso,
-    updatedAt: nowIso,
-  }).where(and(
-    eq(schema.localConnectorDevices.id, identity.device.id),
-    eq(schema.localConnectorDevices.status, 'active'),
-  )).run();
-  return {
-    tokenHash: identity.tokenHash,
-    device: {
-      ...identity.device,
+  let updatedIdentity = identity;
+  if (version !== identity.device.version || capabilitiesChanged) {
+    await db.update(schema.localConnectorDevices).set({
       version,
-      capabilities,
+      capabilities: capabilities.length > 0 ? JSON.stringify(capabilities) : null,
       lastSeenAt: nowIso,
       updatedAt: nowIso,
-    },
-  };
+    }).where(and(
+      eq(schema.localConnectorDevices.id, identity.device.id),
+      eq(schema.localConnectorDevices.status, 'active'),
+    )).run();
+    updatedIdentity = {
+      tokenHash: identity.tokenHash,
+      device: {
+        ...identity.device,
+        version,
+        capabilities,
+        lastSeenAt: nowIso,
+        updatedAt: nowIso,
+      },
+    };
+  }
+  if (input.version !== undefined || input.capabilities !== undefined || input.health !== undefined) {
+    await recordLocalConnectorHeartbeat(updatedIdentity.device, nowIso);
+  }
+  await recordLocalConnectorHealthReports({
+    device: updatedIdentity.device,
+    reports: input.health,
+    requestRepair: ensureLocalConnectorNotifyRepairAction,
+  });
+  return updatedIdentity;
 }
 
 export async function listLocalConnectorDevices(): Promise<LocalConnectorDevicePublic[]> {
-  const rows = await db.select().from(schema.localConnectorDevices)
+  const [rows, healthByDevice] = await Promise.all([
+    db.select().from(schema.localConnectorDevices)
     .orderBy(desc(schema.localConnectorDevices.createdAt))
-    .all();
-  return rows.map(toPublicDevice);
+      .all(),
+    listLocalConnectorHealthChecks(),
+  ]);
+  return rows.map((row) => ({
+    ...toPublicDevice(row),
+    healthChecks: healthByDevice.get(row.id) || [],
+  }));
 }
 
 export async function revokeLocalConnectorDevice(deviceIdInput: unknown): Promise<boolean> {
@@ -588,6 +613,28 @@ export async function createLocalConnectorAction(input: {
     .get();
   if (!row) throw new Error('Connector 动作创建失败');
   return toPublicAction(row);
+}
+
+export async function ensureLocalConnectorNotifyRepairAction(deviceIdInput: string): Promise<string> {
+  await expireActions();
+  const deviceId = normalizeText(deviceIdInput, '设备 id', 80);
+  await requireActiveLocalConnectorDevice(deviceId, 'notify.manage');
+  const existing = await db.select().from(schema.localConnectorActions).where(and(
+    eq(schema.localConnectorActions.deviceId, deviceId),
+    eq(schema.localConnectorActions.kind, 'notify'),
+    inArray(schema.localConnectorActions.status, ['pending', 'claimed']),
+  )).orderBy(desc(schema.localConnectorActions.createdAt)).get();
+  if (existing) {
+    const manifest = parseActionManifest(existing.manifest);
+    if (existing.operation === 'install' && manifest.agent === 'codex') return existing.id;
+    throw new Error(`已有 ${existing.operation} notify 动作正在执行`);
+  }
+  return (await createLocalConnectorAction({
+    deviceId,
+    kind: 'notify',
+    operation: 'install',
+    agent: 'codex',
+  })).id;
 }
 
 export async function listLocalConnectorActions(input: {

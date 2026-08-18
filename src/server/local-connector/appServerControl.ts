@@ -434,7 +434,9 @@ export class CodexAppServerControlClient {
 
   async continueThread(command: BridgeContinuationControlCommand): Promise<{ turnId: string }> {
     await this.connect();
-    await this.request('thread/resume', { threadId: command.threadId }, 20_000);
+    if (command.method === 'turn/start') {
+      await this.request('thread/resume', { threadId: command.threadId }, 20_000);
+    }
     const response = command.method === 'turn/steer'
       ? await this.request('turn/steer', {
         threadId: command.threadId,

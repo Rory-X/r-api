@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
+  isBridgeContinuationCommandWire,
   normalizeBridgeAppServerEventWire,
   type BridgeAppServerEventWire,
+  type BridgeContinuationCommandWire,
   type LocalConnectorEventKind,
 } from './protocol.js';
 import { atomicWriteFile, ensurePrivateDirectory, readOptionalFile } from './atomicFile.js';
@@ -12,6 +14,7 @@ const EVENT_PROTOCOL = 'metapi.local-connector.event.v1' as const;
 const RESULT_PROTOCOL = 'metapi.local-connector.result.v1' as const;
 const BRIDGE_RESULT_PROTOCOL = 'metapi.bridge-continuation.result.v1' as const;
 const BRIDGE_EVENT_PROTOCOL = 'metapi.bridge-continuation.event.v1' as const;
+const CODEX_MESSAGE_PROTOCOL = 'metapi.codex-message.v1' as const;
 
 export type QueuedLocalConnectorEvent = {
   protocol: typeof EVENT_PROTOCOL;
@@ -39,10 +42,21 @@ export type QueuedBridgeContinuationResult = {
   deliveryId: string;
   taskId: string;
   leaseToken: string;
-  outcome: 'accepted' | 'rejected' | 'unknown';
+  outcome: 'queued' | 'accepted' | 'rejected' | 'unknown';
   turnId: string | null;
   failure: Record<string, unknown> | null;
   createdAt: string;
+};
+
+export type QueuedCodexMessage = {
+  protocol: typeof CODEX_MESSAGE_PROTOCOL;
+  command: BridgeContinuationCommandWire;
+  phase: 'queued' | 'dispatching';
+  queuedAt: string;
+  updatedAt: string;
+  nextAttemptAt: string;
+  attemptCount: number;
+  lastFailure: string | null;
 };
 
 export type QueuedBridgeAppServerEvent = {
@@ -67,6 +81,15 @@ function bridgeResultQueueDir(dataDir: string): string {
 
 function bridgeEventQueueDir(dataDir: string): string {
   return join(resolve(dataDir), 'bridge-events');
+}
+
+function codexMessageQueueDir(dataDir: string): string {
+  return join(resolve(dataDir), 'codex-messages');
+}
+
+function codexMessagePath(dataDir: string, taskId: string): string {
+  const filename = createHash('sha256').update(taskId).digest('hex');
+  return join(codexMessageQueueDir(dataDir), `${filename}.json`);
 }
 
 function queueFilename(prefix: string): string {
@@ -146,7 +169,7 @@ export async function enqueueBridgeContinuationResult(input: {
   deliveryId?: string;
   taskId: string;
   leaseToken: string;
-  outcome: 'accepted' | 'rejected' | 'unknown';
+  outcome: 'queued' | 'accepted' | 'rejected' | 'unknown';
   turnId?: string | null;
   failure?: Record<string, unknown> | null;
 }): Promise<QueuedBridgeContinuationResult> {
@@ -171,6 +194,66 @@ export async function enqueueBridgeContinuationResult(input: {
   };
   await atomicWriteFile(join(directory, queueFilename(taskId)), `${JSON.stringify(queued)}\n`, 0o600);
   return queued;
+}
+
+export async function enqueueCodexMessage(input: {
+  dataDir: string;
+  command: BridgeContinuationCommandWire;
+  now?: Date;
+}): Promise<QueuedCodexMessage> {
+  const directory = codexMessageQueueDir(input.dataDir);
+  await ensurePrivateDirectory(directory);
+  const now = input.now || new Date();
+  const queued: QueuedCodexMessage = {
+    protocol: CODEX_MESSAGE_PROTOCOL,
+    command: input.command,
+    phase: 'queued',
+    queuedAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    nextAttemptAt: now.toISOString(),
+    attemptCount: 0,
+    lastFailure: null,
+  };
+  await atomicWriteFile(
+    codexMessagePath(input.dataDir, input.command.taskId),
+    `${JSON.stringify(queued)}\n`,
+    0o600,
+  );
+  return queued;
+}
+
+export async function updateQueuedCodexMessage(input: {
+  dataDir: string;
+  item: QueuedCodexMessage;
+  phase?: QueuedCodexMessage['phase'];
+  leaseExpiresAt?: string;
+  nextAttemptAt?: string;
+  attemptCount?: number;
+  lastFailure?: string | null;
+  now?: Date;
+}): Promise<QueuedCodexMessage> {
+  const updated: QueuedCodexMessage = {
+    ...input.item,
+    command: input.leaseExpiresAt
+      ? { ...input.item.command, leaseExpiresAt: input.leaseExpiresAt }
+      : input.item.command,
+    phase: input.phase || input.item.phase,
+    updatedAt: (input.now || new Date()).toISOString(),
+    nextAttemptAt: input.nextAttemptAt || input.item.nextAttemptAt,
+    attemptCount: input.attemptCount ?? input.item.attemptCount,
+    lastFailure: input.lastFailure === undefined ? input.item.lastFailure : input.lastFailure,
+  };
+  await ensurePrivateDirectory(codexMessageQueueDir(input.dataDir));
+  await atomicWriteFile(
+    codexMessagePath(input.dataDir, updated.command.taskId),
+    `${JSON.stringify(updated)}\n`,
+    0o600,
+  );
+  return updated;
+}
+
+export async function removeQueuedCodexMessage(dataDir: string, taskId: string): Promise<void> {
+  await rm(codexMessagePath(dataDir, normalizeSafeId(taskId, 'Bridge taskId')), { force: true });
 }
 
 export async function enqueueBridgeAppServerEvent(input: {
@@ -244,7 +327,7 @@ function parseQueuedBridgeResult(value: unknown): QueuedBridgeContinuationResult
     || !/^[a-zA-Z0-9._:-]{1,256}$/.test(item.taskId)
     || typeof item.leaseToken !== 'string'
     || !/^bcl_[a-zA-Z0-9_-]{20,256}$/.test(item.leaseToken)
-    || !['accepted', 'rejected', 'unknown'].includes(String(item.outcome))
+    || !['queued', 'accepted', 'rejected', 'unknown'].includes(String(item.outcome))
     || typeof item.createdAt !== 'string') {
     throw new Error('Bridge 结果队列记录无效');
   }
@@ -260,6 +343,24 @@ function parseQueuedBridgeResult(value: unknown): QueuedBridgeContinuationResult
     throw new Error('Bridge 结果队列记录无效');
   }
   return item as QueuedBridgeContinuationResult;
+}
+
+function parseQueuedCodexMessage(value: unknown): QueuedCodexMessage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Codex 消息队列记录无效');
+  const item = value as Partial<QueuedCodexMessage>;
+  const command = item.command;
+  if (item.protocol !== CODEX_MESSAGE_PROTOCOL
+    || !isBridgeContinuationCommandWire(command)
+    || (item.phase !== 'queued' && item.phase !== 'dispatching')
+    || typeof item.queuedAt !== 'string'
+    || typeof item.updatedAt !== 'string'
+    || typeof item.nextAttemptAt !== 'string'
+    || !Number.isInteger(item.attemptCount)
+    || Number(item.attemptCount) < 0
+    || (item.lastFailure !== null && typeof item.lastFailure !== 'string')) {
+    throw new Error('Codex 消息队列记录无效');
+  }
+  return item as QueuedCodexMessage;
 }
 
 function parseQueuedBridgeEvent(value: unknown): QueuedBridgeAppServerEvent {
@@ -287,6 +388,23 @@ async function readQueueItem<T>(path: string, parser: (value: unknown) => T): Pr
     if (error instanceof SyntaxError) throw new Error('队列记录 JSON 损坏');
     throw error;
   }
+}
+
+export async function listQueuedCodexMessages(dataDir: string): Promise<QueuedCodexMessage[]> {
+  let names: string[];
+  try {
+    names = (await readdir(codexMessageQueueDir(dataDir)))
+      .filter((name) => /^[a-f0-9]{64}\.json$/.test(name))
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
+    throw error;
+  }
+  const items = await Promise.all(names.map((name) => readQueueItem(
+    join(codexMessageQueueDir(dataDir), name),
+    parseQueuedCodexMessage,
+  )));
+  return items.sort((left, right) => left.queuedAt.localeCompare(right.queuedAt));
 }
 
 export async function flushLocalConnectorQueues(input: {

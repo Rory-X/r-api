@@ -272,7 +272,7 @@ export async function localConnectorRoutes(app: FastifyInstance) {
   });
 
   app.post<{
-    Body: { version?: unknown; capabilities?: unknown };
+    Body: { version?: unknown; capabilities?: unknown; health?: unknown };
   }>('/api/local-connector/public/heartbeat', async (request, reply) => {
     const authenticated = await requireConnectorIdentity(request, reply);
     if (!authenticated) return;
@@ -397,7 +397,7 @@ export async function localConnectorRoutes(app: FastifyInstance) {
     const identity = await requireConnectorIdentity(request, reply);
     if (!identity || !requireConnectorScope(identity, 'app_server.control', reply)) return;
     const outcome = request.body?.outcome;
-    if (outcome !== 'accepted' && outcome !== 'rejected' && outcome !== 'unknown') {
+    if (outcome !== 'queued' && outcome !== 'accepted' && outcome !== 'rejected' && outcome !== 'unknown') {
       return reply.code(400).send({ success: false, message: 'Bridge 结果 outcome 无效' });
     }
     try {

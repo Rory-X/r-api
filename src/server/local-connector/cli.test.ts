@@ -12,8 +12,10 @@ import { saveLocalConnectorConfig } from './config.js';
 import { writeLocalConnectorDashboardDiscovery } from './dashboardDiscovery.js';
 import { startLocalConnectorDashboardServer } from './dashboardServer.js';
 import { rememberLocalConnectorThreadMetadata } from './threadMetadata.js';
+import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
 const roots: string[] = [];
+const itWithLocalListener = canBindLocalTestListener() ? it : it.skip;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -207,7 +209,7 @@ describe('local connector CLI operations', () => {
     expect(doctorHelp.stdout).toContain('sets a non-zero exit code');
   });
 
-  it('reports the actual dashboard URL and passes doctor only when session control is ready', async () => {
+  itWithLocalListener('reports the actual dashboard URL and passes doctor only when session control is ready', async () => {
     const fixture = await createCliFixture();
     let dashboardClosed = false;
     try {
@@ -303,5 +305,5 @@ describe('local connector CLI operations', () => {
       if (!dashboardClosed) await fixture.dashboard.close();
       await Promise.all([closeServer(fixture.blocker), closeServer(fixture.remote)]);
     }
-  }, 10_000);
+  }, 20_000);
 });

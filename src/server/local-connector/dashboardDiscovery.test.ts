@@ -8,8 +8,10 @@ import {
   writeLocalConnectorDashboardDiscovery,
 } from './dashboardDiscovery.js';
 import { startLocalConnectorDashboardServer } from './dashboardServer.js';
+import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
 const roots: string[] = [];
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -57,7 +59,7 @@ async function startFixture(dataDir: string) {
   return dashboard;
 }
 
-describe('local Connector dashboard discovery', () => {
+describeWithLocalListener('local Connector dashboard discovery', () => {
   it('writes a private file and probes the actual dashboard endpoint', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'metapi-dashboard-discovery-'));
     roots.push(dataDir);

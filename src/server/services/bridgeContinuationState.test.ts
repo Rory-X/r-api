@@ -292,6 +292,66 @@ describe('bridge continuation task state', () => {
     });
   });
 
+  it('keeps a locally queued Prompt leased without scheduling repeated server dispatches', () => {
+    let state = createManualBridgePromptTaskState({
+      taskId: 'manual-local-queue',
+      sessionKey: 'device-a:thread-a',
+      threadId: 'thread-a',
+      policy: snapshotBridgeContinuationPolicy({ enabled: false }, 1_000),
+      submissionMode: 'auto',
+      prompt: '继续处理当前会话',
+      threadStatus: 'idle',
+      nowMs: 2_000,
+    });
+    const acquired = acquireBridgeContinuationLease(null, {
+      sessionKey: state.sessionKey,
+      ownerId: 'connector-a',
+      leaseToken: 'lease-local-queue',
+      ttlMs: 10_000,
+      nowMs: 2_000,
+    });
+    if (!acquired.acquired) return;
+    state = transitionBridgeContinuationTask(state, {
+      type: 'lease_acquired',
+      lease: acquired.lease,
+      nowMs: 2_000,
+    });
+    state = transitionBridgeContinuationTask(state, {
+      type: 'dispatch_queued',
+      leaseToken: 'lease-local-queue',
+      nowMs: 2_100,
+    });
+    expect(state).toMatchObject({
+      status: 'waiting',
+      reason: 'connector_queued',
+      nextRunAtMs: null,
+      pendingPrompt: '继续处理当前会话',
+      lease: { leaseToken: 'lease-local-queue' },
+    });
+
+    state = transitionBridgeContinuationTask(state, {
+      type: 'thread_state_changed',
+      threadStatus: 'active',
+      activeTurnId: 'turn-current',
+      nowMs: 3_000,
+    });
+    expect(state).toMatchObject({
+      status: 'waiting',
+      reason: 'connector_queued',
+      activeTurnId: 'turn-current',
+    });
+
+    state = transitionBridgeContinuationTask(state, { type: 'lease_expired', nowMs: 12_000 });
+    expect(state).toMatchObject({
+      status: 'backoff',
+      reason: 'backoff',
+      nextRunAtMs: 12_000,
+      continuationCount: 0,
+      pendingPrompt: '继续处理当前会话',
+      lease: null,
+    });
+  });
+
   it('reconciles a lost dispatch result from the authoritative turn/started event', () => {
     let state = transitionBridgeContinuationTask(createTask(), {
       type: 'failure_observed',

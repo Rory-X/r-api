@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { executeLocalConnectorAction, type LocalConnectorLaunchCommand } from './actionDriver.js';
+import { join } from 'node:path';
+import {
+  executeLocalConnectorAction,
+  resolveLocalConnectorTargetPaths,
+  type LocalConnectorLaunchCommand,
+} from './actionDriver.js';
 import {
   resolveCodexAppServerEndpoint,
   startCodexAppServerObserver,
@@ -11,6 +16,11 @@ import {
   type AppServerThreadSnapshot,
   type AppServerTurnCompletionSnapshot,
 } from './appServerControl.js';
+import {
+  classifyBridgeFailure,
+  isBridgeWriterContentionFailure,
+  type CodexThreadActiveFlag,
+} from '../services/bridgeContinuationContract.js';
 import { AppServerInteractionBridge } from './appServerInteractionBridge.js';
 import { LocalConnectorClient, LocalConnectorHttpError, retryDelayForConnectorError } from './client.js';
 import type { LocalConnectorConfig } from './config.js';
@@ -25,6 +35,7 @@ import {
   type CodexDesktopSessionSnapshot,
 } from './codexDesktopObserver.js';
 import { buildTurnCompletionNotification } from './completionNotification.js';
+import { inspectCodexNotifyHealth } from './codexNotifyHealth.js';
 import {
   readLocalConnectorThreadTitle,
   rememberLocalConnectorThreadMetadata,
@@ -34,10 +45,19 @@ import { CONNECTOR_VERSION, LOCAL_CONNECTOR_CAPABILITIES } from './identity.js';
 import {
   enqueueBridgeAppServerEvent,
   enqueueBridgeContinuationResult,
+  enqueueCodexMessage,
   enqueueLocalConnectorEvent,
   enqueueLocalConnectorResult,
   flushLocalConnectorQueues,
+  listQueuedCodexMessages,
+  removeQueuedCodexMessage,
+  updateQueuedCodexMessage,
+  type QueuedCodexMessage,
 } from './queue.js';
+
+const HEALTH_HEARTBEAT_INTERVAL_MS = 30_000;
+const BRIDGE_LEASE_RENEW_MARGIN_MS = 10_000;
+const BRIDGE_LOCAL_RETRY_MAX_MS = 30_000;
 
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || 'Connector action failed');
@@ -100,6 +120,8 @@ export class LocalConnectorRuntime {
   private readonly client: LocalConnectorClient;
   private readonly dashboardState: LocalConnectorDashboardState;
   private readonly controlThreadStatuses = new Map<string, AppServerThreadSnapshot['status']>();
+  private readonly controlThreadActiveFlags = new Map<string, readonly CodexThreadActiveFlag[]>();
+  private readonly controlThreadActiveTurnIds = new Map<string, string>();
   private readonly controlThreadEphemeral = new Map<string, boolean>();
   private readonly controlThreadTitles = new Map<string, string>();
   private readonly ephemeralActiveCompletions = new Map<string, { completionId: string }>();
@@ -112,6 +134,7 @@ export class LocalConnectorRuntime {
   private readonly desktopCompletionWatermarks = new Map<string, string>();
   private readonly startedAtMs = Date.now();
   private activeBridgeTaskId: string | null = null;
+  private bridgeDispatchPromise: Promise<Map<string, 'accepted' | 'rejected' | 'unknown'>> | null = null;
 
   constructor(
     private readonly config: LocalConnectorConfig,
@@ -126,6 +149,21 @@ export class LocalConnectorRuntime {
       serverUrl: config.serverUrl,
       dataDir: config.dataDir,
       pollIntervalMs: config.pollIntervalMs,
+    });
+  }
+
+  private async heartbeat(signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const targetPath = join(resolveLocalConnectorTargetPaths().codexHome, 'config.toml');
+    const health = await inspectCodexNotifyHealth({
+      targetPath,
+      launch: this.launch,
+      configPath: this.configPath,
+    });
+    return this.client.heartbeat({
+      version: CONNECTOR_VERSION,
+      capabilities: LOCAL_CONNECTOR_CAPABILITIES,
+      health: [health],
+      signal,
     });
   }
 
@@ -197,58 +235,188 @@ export class LocalConnectorRuntime {
   async runBridgeOnce(
     controlClient: CodexAppServerControlClient,
     signal?: AbortSignal,
-  ): Promise<{ taskId: string | null; outcome: 'accepted' | 'rejected' | 'unknown' | null }> {
+  ): Promise<{ taskId: string | null; outcome: 'queued' | 'accepted' | 'rejected' | 'unknown' | null }> {
+    await this.flushQueues();
+    await this.requestBridgeDispatch(controlClient);
     const command = await this.client.claimNextBridgeContinuation(signal);
-    if (!command) return { taskId: null, outcome: null };
-    const remainingLeaseMs = Math.max(1_000, Date.parse(command.leaseExpiresAt) - Date.now());
-    const heartbeatMs = Math.max(1_000, Math.min(10_000, Math.trunc(remainingLeaseMs / 3)));
-    const heartbeat = setInterval(() => {
-      void this.client.renewBridgeContinuationLease({
-        taskId: command.taskId,
-        leaseToken: command.leaseToken,
-      }).catch(() => undefined);
-    }, heartbeatMs);
-    heartbeat.unref?.();
-
-    let outcome: 'accepted' | 'rejected' | 'unknown';
-    let turnId: string | null = null;
-    let failure: Record<string, unknown> | null = null;
-    this.activeBridgeTaskId = command.taskId;
-    this.dashboardState.setActiveBridgeTask(command.taskId);
-    try {
-      const result = await controlClient.continueThread({
-        taskId: command.taskId,
-        method: command.method,
-        threadId: command.threadId,
-        expectedTurnId: command.expectedTurnId,
-        prompt: command.prompt,
-        routeAction: command.routeAction,
-        continuationNumber: command.continuationNumber,
-      });
-      outcome = 'accepted';
-      turnId = result.turnId;
-    } catch (error) {
-      if (error instanceof CodexAppServerResponseError) {
-        outcome = 'rejected';
-        failure = bridgeFailureFromResponseError(error) as Record<string, unknown>;
-      } else {
-        outcome = 'unknown';
-      }
-    } finally {
-      clearInterval(heartbeat);
-      this.activeBridgeTaskId = null;
-      this.dashboardState.setActiveBridgeTask(null);
+    if (!command) {
+      return { taskId: null, outcome: null };
     }
+    await enqueueCodexMessage({ dataDir: this.config.dataDir, command });
     await enqueueBridgeContinuationResult({
       dataDir: this.config.dataDir,
       taskId: command.taskId,
       leaseToken: command.leaseToken,
-      outcome,
-      turnId,
-      failure,
+      outcome: 'queued',
     });
     await this.flushQueues();
-    return { taskId: command.taskId, outcome };
+    const outcomes = await this.requestBridgeDispatch(controlClient);
+    return {
+      taskId: command.taskId,
+      outcome: outcomes.get(command.taskId) || 'queued',
+    };
+  }
+
+  private resolveQueuedBridgeCommand(item: QueuedCodexMessage): {
+    method: 'turn/start' | 'turn/steer';
+    expectedTurnId?: string;
+  } | null {
+    const { command } = item;
+    if (!this.controlThreadStatuses.has(command.threadId)) {
+      return command.method === 'turn/steer'
+        ? { method: 'turn/steer', ...(command.expectedTurnId ? { expectedTurnId: command.expectedTurnId } : {}) }
+        : { method: 'turn/start' };
+    }
+    const status = this.controlThreadStatuses.get(command.threadId) || 'unknown';
+    const activeFlags = this.controlThreadActiveFlags.get(command.threadId) || [];
+    if (activeFlags.length > 0 || status === 'unknown' || status === 'system_error') return null;
+
+    if (command.submissionMode === 'auto') {
+      if (status !== 'active') return { method: 'turn/start' };
+      const activeTurnId = this.controlThreadActiveTurnIds.get(command.threadId);
+      return activeTurnId ? { method: 'turn/steer', expectedTurnId: activeTurnId } : null;
+    }
+    if (command.method === 'turn/start') {
+      return status === 'active' ? null : { method: 'turn/start' };
+    }
+    if (status !== 'active') return null;
+    const expectedTurnId = this.controlThreadActiveTurnIds.get(command.threadId)
+      || command.expectedTurnId;
+    return expectedTurnId ? { method: 'turn/steer', expectedTurnId } : null;
+  }
+
+  private async renewQueuedBridgeLease(item: QueuedCodexMessage): Promise<QueuedCodexMessage | null> {
+    const remainingMs = Date.parse(item.command.leaseExpiresAt) - Date.now();
+    if (remainingMs > BRIDGE_LEASE_RENEW_MARGIN_MS) return item;
+    try {
+      const renewed = await this.client.renewBridgeContinuationLease({
+        taskId: item.command.taskId,
+        leaseToken: item.command.leaseToken,
+      });
+      if (!renewed.renewed || !renewed.expiresAt) {
+        await removeQueuedCodexMessage(this.config.dataDir, item.command.taskId);
+        return null;
+      }
+      return updateQueuedCodexMessage({
+        dataDir: this.config.dataDir,
+        item,
+        leaseExpiresAt: renewed.expiresAt,
+      });
+    } catch (error) {
+      if (error instanceof LocalConnectorHttpError && error.status === 409) {
+        await removeQueuedCodexMessage(this.config.dataDir, item.command.taskId);
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async dispatchQueuedBridgeMessages(
+    controlClient: CodexAppServerControlClient,
+  ): Promise<Map<string, 'accepted' | 'rejected' | 'unknown'>> {
+    const outcomes = new Map<string, 'accepted' | 'rejected' | 'unknown'>();
+    const queued = await listQueuedCodexMessages(this.config.dataDir);
+    for (const original of queued) {
+      if (original.phase === 'dispatching') {
+        await enqueueBridgeContinuationResult({
+          dataDir: this.config.dataDir,
+          taskId: original.command.taskId,
+          leaseToken: original.command.leaseToken,
+          outcome: 'unknown',
+        });
+        await removeQueuedCodexMessage(this.config.dataDir, original.command.taskId);
+        outcomes.set(original.command.taskId, 'unknown');
+        continue;
+      }
+      let item = await this.renewQueuedBridgeLease(original);
+      if (!item || Date.parse(item.nextAttemptAt) > Date.now()) continue;
+      const resolved = this.resolveQueuedBridgeCommand(item);
+      if (!resolved) continue;
+
+      item = await updateQueuedCodexMessage({
+        dataDir: this.config.dataDir,
+        item,
+        phase: 'dispatching',
+      });
+      this.activeBridgeTaskId = item.command.taskId;
+      this.dashboardState.setActiveBridgeTask(item.command.taskId);
+      try {
+        const result = await controlClient.continueThread({
+          taskId: item.command.taskId,
+          method: resolved.method,
+          threadId: item.command.threadId,
+          expectedTurnId: resolved.expectedTurnId,
+          prompt: item.command.prompt,
+          routeAction: resolved.method === 'turn/steer' ? 'preserve' : item.command.routeAction,
+          continuationNumber: item.command.continuationNumber,
+        });
+        await enqueueBridgeContinuationResult({
+          dataDir: this.config.dataDir,
+          taskId: item.command.taskId,
+          leaseToken: item.command.leaseToken,
+          outcome: 'accepted',
+          turnId: result.turnId,
+        });
+        await removeQueuedCodexMessage(this.config.dataDir, item.command.taskId);
+        outcomes.set(item.command.taskId, 'accepted');
+      } catch (error) {
+        if (error instanceof CodexAppServerResponseError) {
+          const failure = bridgeFailureFromResponseError(error);
+          const classified = classifyBridgeFailure(failure);
+          const retryLocally = isBridgeWriterContentionFailure(classified)
+            || (item.command.submissionMode === 'auto' && classified.failureClass === 'turn_conflict');
+          if (retryLocally) {
+            const attemptCount = item.attemptCount + 1;
+            const delayMs = Math.min(BRIDGE_LOCAL_RETRY_MAX_MS, 1_000 * (2 ** Math.min(attemptCount - 1, 5)));
+            await updateQueuedCodexMessage({
+              dataDir: this.config.dataDir,
+              item,
+              phase: 'queued',
+              attemptCount,
+              nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
+              lastFailure: typeof failure.message === 'string' && failure.message
+                ? failure.message
+                : error.message,
+            });
+            continue;
+          }
+          await enqueueBridgeContinuationResult({
+            dataDir: this.config.dataDir,
+            taskId: item.command.taskId,
+            leaseToken: item.command.leaseToken,
+            outcome: 'rejected',
+            failure: failure as Record<string, unknown>,
+          });
+          await removeQueuedCodexMessage(this.config.dataDir, item.command.taskId);
+          outcomes.set(item.command.taskId, 'rejected');
+        } else {
+          await enqueueBridgeContinuationResult({
+            dataDir: this.config.dataDir,
+            taskId: item.command.taskId,
+            leaseToken: item.command.leaseToken,
+            outcome: 'unknown',
+          });
+          await removeQueuedCodexMessage(this.config.dataDir, item.command.taskId);
+          outcomes.set(item.command.taskId, 'unknown');
+        }
+      } finally {
+        this.activeBridgeTaskId = null;
+        this.dashboardState.setActiveBridgeTask(null);
+      }
+    }
+    if (outcomes.size > 0) await this.flushQueues();
+    return outcomes;
+  }
+
+  private requestBridgeDispatch(
+    controlClient: CodexAppServerControlClient,
+  ): Promise<Map<string, 'accepted' | 'rejected' | 'unknown'>> {
+    if (this.bridgeDispatchPromise) return this.bridgeDispatchPromise;
+    const dispatching = this.dispatchQueuedBridgeMessages(controlClient).finally(() => {
+      if (this.bridgeDispatchPromise === dispatching) this.bridgeDispatchPromise = null;
+    });
+    this.bridgeDispatchPromise = dispatching;
+    return dispatching;
   }
 
   private async enqueueControlCompletion(turn: AppServerTurnCompletionSnapshot): Promise<boolean> {
@@ -429,6 +597,11 @@ export class LocalConnectorRuntime {
     }
     const previousStatus = this.controlThreadStatuses.get(threadId);
     this.controlThreadStatuses.set(threadId, status);
+    if (status === 'active') {
+      if (activeTurnId) this.controlThreadActiveTurnIds.set(threadId, activeTurnId);
+    } else {
+      this.controlThreadActiveTurnIds.delete(threadId);
+    }
     const isEphemeral = this.controlThreadEphemeral.get(threadId) === true;
     if (status === 'active' && isEphemeral) {
       this.trackEphemeralCompletion(threadId, activeTurnId);
@@ -460,6 +633,8 @@ export class LocalConnectorRuntime {
       if (!visibleThreadIds.has(threadId)) {
         if (this.ephemeralCompletionTimers.has(threadId)) continue;
         this.controlThreadStatuses.delete(threadId);
+        this.controlThreadActiveFlags.delete(threadId);
+        this.controlThreadActiveTurnIds.delete(threadId);
         this.controlThreadEphemeral.delete(threadId);
         this.controlTerminalNotificationAt.delete(threadId);
         this.controlTerminalCompletionsHandled.delete(threadId);
@@ -469,6 +644,7 @@ export class LocalConnectorRuntime {
     }
     for (const thread of threads) {
       if (thread.title.trim()) this.controlThreadTitles.set(thread.threadId, thread.title.trim());
+      this.controlThreadActiveFlags.set(thread.threadId, thread.activeFlags);
       if (thread.ephemeral === true || !this.controlThreadEphemeral.has(thread.threadId)) {
         this.controlThreadEphemeral.set(thread.threadId, thread.ephemeral === true);
       }
@@ -557,11 +733,7 @@ export class LocalConnectorRuntime {
       // crashed or upgraded Connector before publishing this process's endpoint.
       await clearLocalConnectorDashboardDiscovery(this.config.dataDir, null);
       try {
-        const heartbeat = await this.client.heartbeat({
-          version: CONNECTOR_VERSION,
-          capabilities: LOCAL_CONNECTOR_CAPABILITIES,
-          signal: input.signal,
-        });
+        const heartbeat = await this.heartbeat(input.signal);
         this.dashboardState.markServerSuccess();
         void heartbeat;
       } catch (error) {
@@ -603,6 +775,7 @@ export class LocalConnectorRuntime {
             }
             try {
               if (event.kind === 'thread_status') {
+                this.controlThreadActiveFlags.set(event.threadId, event.activeFlags);
                 await this.updateControlThreadStatus(
                   controlClient!,
                   event.threadId,
@@ -610,6 +783,7 @@ export class LocalConnectorRuntime {
                   event.activeTurnId || null,
                 );
               } else if (event.kind === 'turn_started') {
+                this.controlThreadActiveFlags.set(event.threadId, Object.freeze([]));
                 await this.updateControlThreadStatus(controlClient!, event.threadId, 'active', event.turnId);
               }
               if (event.kind === 'turn_completed') {
@@ -618,6 +792,8 @@ export class LocalConnectorRuntime {
                 this.controlTerminalNotificationAt.set(event.threadId, Date.now());
                 this.controlTerminalCompletionsHandled.add(event.threadId);
                 this.controlThreadStatuses.set(event.threadId, 'idle');
+                this.controlThreadActiveFlags.set(event.threadId, Object.freeze([]));
+                this.controlThreadActiveTurnIds.delete(event.threadId);
                 await this.enqueueControlCompletion({
                   threadId: event.threadId,
                   turnId: event.turnId,
@@ -631,6 +807,8 @@ export class LocalConnectorRuntime {
                 this.controlTerminalNotificationAt.set(event.threadId, Date.now());
                 this.controlTerminalCompletionsHandled.add(event.threadId);
                 this.controlThreadStatuses.set(event.threadId, 'system_error');
+                this.controlThreadActiveFlags.set(event.threadId, Object.freeze([]));
+                this.controlThreadActiveTurnIds.delete(event.threadId);
                 await this.enqueueControlCompletion({
                   threadId: event.threadId,
                   turnId: event.turnId,
@@ -707,10 +885,15 @@ export class LocalConnectorRuntime {
       let consecutiveFailures = 0;
       let nextThreadRefreshAt = 0;
       let nextDesktopRefreshAt = Date.now() + 5_000;
+      let nextHealthHeartbeatAt = Date.now() + HEALTH_HEARTBEAT_INTERVAL_MS;
       while (!input.signal?.aborted) {
         try {
           await this.runOnce(input.signal);
           if (controlClient) await this.runBridgeOnce(controlClient, input.signal);
+          if (Date.now() >= nextHealthHeartbeatAt) {
+            await this.heartbeat(input.signal);
+            nextHealthHeartbeatAt = Date.now() + HEALTH_HEARTBEAT_INTERVAL_MS;
+          }
           if (controlClient && Date.now() >= nextThreadRefreshAt) {
             try {
               await this.syncControlThreads(controlClient);

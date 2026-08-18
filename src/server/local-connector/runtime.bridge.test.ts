@@ -3,6 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexAppServerResponseError } from './appServerControl.js';
+import {
+  enqueueCodexMessage,
+  listQueuedCodexMessages,
+  updateQueuedCodexMessage,
+} from './queue.js';
 import { LocalConnectorRuntime } from './runtime.js';
 import type { LocalConnectorConfig } from './config.js';
 
@@ -26,7 +31,7 @@ function config(dataDir: string): LocalConnectorConfig {
   };
 }
 
-function command() {
+function command(overrides: Record<string, unknown> = {}) {
   return {
     protocol: 'metapi.bridge-continuation.command.v1' as const,
     taskId: 'task-a',
@@ -37,6 +42,7 @@ function command() {
     prompt: '继续',
     routeAction: 'preserve' as const,
     continuationNumber: 1,
+    ...overrides,
   };
 }
 
@@ -137,5 +143,88 @@ describe('local connector bridge runtime', () => {
     expect(flushed.bridgeResults).toBe(1);
     expect(complete.mock.calls[1]?.[0]?.deliveryId).toBe(firstDeliveryId);
     expect(await readdir(join(dataDir, 'bridge-results'))).toHaveLength(0);
+  });
+
+  it('re-resolves an automatic Feishu message to turn/steer when the turn is active', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'metapi-runtime-bridge-'));
+    roots.push(dataDir);
+    const complete = vi.fn(async () => undefined);
+    const runtime = runtimeWithClient({
+      claimNextBridgeContinuation: vi.fn(async () => command({ submissionMode: 'auto' })),
+      renewBridgeContinuationLease: vi.fn(async () => ({
+        renewed: true,
+        expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      })),
+      completeBridgeContinuation: complete,
+    }, dataDir);
+    (runtime as any).controlThreadStatuses.set('thread-a', 'active');
+    (runtime as any).controlThreadActiveFlags.set('thread-a', []);
+    (runtime as any).controlThreadActiveTurnIds.set('thread-a', 'turn-current');
+    const continueThread = vi.fn(async () => ({ turnId: 'turn-current' }));
+
+    await expect(runtime.runBridgeOnce({ continueThread } as any)).resolves.toEqual({
+      taskId: 'task-a',
+      outcome: 'accepted',
+    });
+    expect(continueThread).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'turn/steer',
+      expectedTurnId: 'turn-current',
+      routeAction: 'preserve',
+    }));
+    expect(complete.mock.calls.map(([input]) => input.outcome)).toEqual(['queued', 'accepted']);
+  });
+
+  it('keeps active-writer contention in the local queue without reporting repeated rejections', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'metapi-runtime-bridge-'));
+    roots.push(dataDir);
+    const complete = vi.fn(async () => undefined);
+    const runtime = runtimeWithClient({
+      claimNextBridgeContinuation: vi.fn(async () => command({ submissionMode: 'auto' })),
+      renewBridgeContinuationLease: vi.fn(async () => ({
+        renewed: true,
+        expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      })),
+      completeBridgeContinuation: complete,
+    }, dataDir);
+    (runtime as any).controlThreadStatuses.set('thread-a', 'idle');
+    (runtime as any).controlThreadActiveFlags.set('thread-a', []);
+
+    await expect(runtime.runBridgeOnce({
+      continueThread: vi.fn(async () => {
+        throw new CodexAppServerResponseError('active writer', {
+          data: { error: { message: 'thread thread-a already has an active writer' } },
+        });
+      }),
+    } as any)).resolves.toEqual({ taskId: 'task-a', outcome: 'queued' });
+    expect(complete.mock.calls.map(([input]) => input.outcome)).toEqual(['queued']);
+    await expect(listQueuedCodexMessages(dataDir)).resolves.toEqual([
+      expect.objectContaining({
+        phase: 'queued',
+        attemptCount: 1,
+        lastFailure: 'thread thread-a already has an active writer',
+      }),
+    ]);
+  });
+
+  it('reports a dispatching message as unknown after restart instead of duplicating it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'metapi-runtime-bridge-'));
+    roots.push(dataDir);
+    const queued = await enqueueCodexMessage({ dataDir, command: command() });
+    await updateQueuedCodexMessage({ dataDir, item: queued, phase: 'dispatching' });
+    const complete = vi.fn(async () => undefined);
+    const runtime = runtimeWithClient({
+      claimNextBridgeContinuation: vi.fn(async () => null),
+      renewBridgeContinuationLease: vi.fn(async () => ({ renewed: true, expiresAt: queued.command.leaseExpiresAt })),
+      completeBridgeContinuation: complete,
+    }, dataDir);
+    const continueThread = vi.fn(async () => ({ turnId: 'turn-duplicate' }));
+
+    await expect(runtime.runBridgeOnce({ continueThread } as any)).resolves.toEqual({ taskId: null, outcome: null });
+    expect(continueThread).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: 'task-a',
+      outcome: 'unknown',
+    }));
+    await expect(listQueuedCodexMessages(dataDir)).resolves.toEqual([]);
   });
 });

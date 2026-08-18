@@ -10,8 +10,10 @@ import {
   createSocketAppServerTransport,
   normalizeAppServerNotification,
 } from './appServerObserver.js';
+import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
 const unixSocketTempRoot = process.platform === 'darwin' ? '/tmp' : tmpdir();
+const itWithLocalListener = canBindLocalTestListener() ? it : it.skip;
 
 describe('local connector app server observer', () => {
   it('normalizes lifecycle metadata without forwarding diff or delta content', () => {
@@ -34,7 +36,7 @@ describe('local connector app server observer', () => {
     expect(spec.options).toMatchObject({ cwd: '/workspace', shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
   });
 
-  it('speaks WebSocket JSON messages over the Codex unix control socket', async () => {
+  itWithLocalListener('speaks WebSocket JSON messages over the Codex unix control socket', async () => {
     const directory = await mkdtemp(join(unixSocketTempRoot, 'metapi-ctl-'));
     const socketPath = join(directory, 'app-server-control.sock');
     const server = createServer();
@@ -75,7 +77,7 @@ describe('local connector app server observer', () => {
     }
   });
 
-  it('contains writable errors when the control socket closes during a request', async () => {
+  itWithLocalListener('contains writable errors when the control socket closes during a request', async () => {
     const directory = await mkdtemp(join(unixSocketTempRoot, 'metapi-ctl-close-'));
     const socketPath = join(directory, 'app-server-control.sock');
     const server = createServer();

@@ -27,7 +27,7 @@ describe('local connector npm package', () => {
     expect(connector.version).toBe(sourceVersion);
     expect(connector.bin).toEqual({ 'metapi-connector': 'dist/cli.js' });
     expect(connector.files).toEqual(['dist', 'README.md', 'LICENSE']);
-    expect(connector.engines).toEqual({ node: '>=25.0.0' });
+    expect(connector.engines).toEqual({ node: '>=22.15.0' });
     expect(Object.keys(connector.dependencies || {}).sort()).toEqual(['get-port', 'smol-toml', 'ws']);
     expect(readme).toContain('metapi-connector run --direct');
     expect(readme).toContain('metapi-connector doctor');

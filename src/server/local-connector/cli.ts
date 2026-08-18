@@ -22,6 +22,7 @@ import { enqueueLocalConnectorEvent } from './queue.js';
 import { LocalConnectorRuntime } from './runtime.js';
 import type { LocalConnectorAgent } from './protocol.js';
 import { reloadCodexRuntime, watchCodexRuntimeConfig } from './codexRuntimeReload.js';
+import { inspectCodexNotifyHealth } from './codexNotifyHealth.js';
 import { readLocalConnectorThreadTitle } from './threadMetadata.js';
 import { inspectConnectorRuntimeState } from './runtimeState.js';
 import { inspectLocalConnectorDashboard } from './dashboardDiscovery.js';
@@ -262,6 +263,25 @@ async function codexReloadOptions(values: Record<string, unknown>) {
 
 async function watchCodex(values: Record<string, unknown>): Promise<void> {
   const codexHome = required(values['codex-home'], '--codex-home').replace(/\/+$/, '');
+  const configPath = resolveLocalConnectorConfigPath(values.config as string | undefined);
+  const connectorConfig = await loadLocalConnectorConfig(configPath);
+  const client = new LocalConnectorClient(connectorConfig.serverUrl, connectorConfig.connectorToken);
+  const reportNotifyHealth = async () => {
+    try {
+      const health = await inspectCodexNotifyHealth({
+        targetPath: join(codexHome, 'config.toml'),
+        launch: connectorLaunchCommand(),
+        configPath,
+      });
+      await client.heartbeat({
+        version: CONNECTOR_VERSION,
+        capabilities: LOCAL_CONNECTOR_CAPABILITIES,
+        health: [health],
+      });
+    } catch (error) {
+      process.stderr.write(`[metapi-connector] Codex notify health report failed: ${(error as Error)?.message || 'unknown error'}\n`);
+    }
+  };
   const pollIntervalMs = values['watch-interval-ms'] === undefined
     ? undefined
     : Number(values['watch-interval-ms']);
@@ -276,6 +296,7 @@ async function watchCodex(values: Record<string, unknown>): Promise<void> {
   process.once('SIGTERM', stop);
   process.stdout.write(`[metapi-connector] Watching Codex config in ${codexHome}\n`);
   try {
+    await reportNotifyHealth();
     await watchCodexRuntimeConfig({
       configPaths: [`${codexHome}/auth.json`, `${codexHome}/config.toml`],
       reloadOptions,
@@ -283,6 +304,7 @@ async function watchCodex(values: Record<string, unknown>): Promise<void> {
       signal: controller.signal,
       onReload: ({ changedAt, result }) => {
         process.stdout.write(`${JSON.stringify({ event: 'codex_runtime_reloaded', changedAt, ...result })}\n`);
+        void reportNotifyHealth();
       },
       onError: (error) => {
         process.stderr.write(`[metapi-connector] Codex runtime reload failed: ${error.message}\n`);
@@ -372,6 +394,11 @@ async function connectorStatusReport(values: Record<string, unknown>) {
       : null,
   });
   const dashboard = await inspectLocalConnectorDashboard(config.dataDir, local.pid);
+  const notifyHealth = await inspectCodexNotifyHealth({
+    targetPath: join(process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'), 'config.toml'),
+    launch: connectorLaunchCommand(),
+    configPath,
+  });
   let heartbeat: Record<string, unknown> | null = null;
   let remoteError: string | null = null;
   try {
@@ -397,6 +424,7 @@ async function connectorStatusReport(values: Record<string, unknown>) {
     },
     local,
     dashboard,
+    notifyHealth,
   };
 }
 
@@ -456,6 +484,14 @@ async function connectorDoctorReport(values: Record<string, unknown>) {
     status: report.dashboard.runtimeVersion === CONNECTOR_VERSION ? 'pass' : 'fail',
     detail: `cli=${CONNECTOR_VERSION} runtime=${report.dashboard.runtimeVersion || '未知'}`,
   });
+  checks.push({
+    id: 'codex_notify',
+    label: 'Codex 完成通知链路',
+    status: report.notifyHealth.status === 'healthy' ? 'pass' : 'fail',
+    detail: report.notifyHealth.status === 'healthy'
+      ? '受管 notify 包装器有效'
+      : report.notifyHealth.reason || '通知链路不可用',
+  });
   const appServer = report.dashboard.snapshot?.appServer;
   checks.push({
     id: 'app_server',
@@ -478,7 +514,7 @@ async function connectorDoctorReport(values: Record<string, unknown>) {
     detail: report.remote.reachable ? report.serverUrl : report.remote.error || '不可达',
   });
   const readyForSessionControl = checks
-    .filter((check) => check.id !== 'pid_consistency')
+    .filter((check) => check.id !== 'pid_consistency' && check.id !== 'codex_notify')
     .every((check) => check.status === 'pass');
   return {
     success: readyForSessionControl,

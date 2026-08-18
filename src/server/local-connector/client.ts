@@ -5,6 +5,7 @@ import {
   type BridgeContinuationCommandWire,
   type LocalConnectorActionWire,
   type LocalConnectorEventKind,
+  type LocalConnectorHealthReportWire,
   type LocalConnectorThreadSnapshotSource,
   type LocalConnectorThreadSnapshotWire,
 } from './protocol.js';
@@ -167,17 +168,20 @@ export class LocalConnectorClient {
   async heartbeat(input: Readonly<{
     version?: string;
     capabilities?: readonly string[];
+    health?: readonly LocalConnectorHealthReportWire[];
     signal?: AbortSignal;
   }> = {}): Promise<Record<string, unknown>> {
     const version = input.version?.trim() || undefined;
     const capabilities = input.capabilities ? [...input.capabilities] : undefined;
+    const health = input.health ? [...input.health] : undefined;
     return this.request('/api/local-connector/public/heartbeat', {
       method: 'POST',
       signal: input.signal,
-      ...(version || capabilities ? {
+      ...(version || capabilities || health ? {
         body: {
           ...(version ? { version } : {}),
           ...(capabilities ? { capabilities } : {}),
+          ...(health ? { health } : {}),
         },
       } : {}),
     });
@@ -225,19 +229,22 @@ export class LocalConnectorClient {
   async renewBridgeContinuationLease(input: {
     taskId: string;
     leaseToken: string;
-  }): Promise<boolean> {
+  }): Promise<Readonly<{ renewed: boolean; expiresAt: string | null }>> {
     const body = await this.request(
       `/api/local-connector/public/bridge/commands/${encodeURIComponent(input.taskId)}/heartbeat`,
       { method: 'POST', body: { leaseToken: input.leaseToken } },
     );
-    return body.renewed === true;
+    return Object.freeze({
+      renewed: body.renewed === true,
+      expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : null,
+    });
   }
 
   async completeBridgeContinuation(input: {
     deliveryId: string;
     taskId: string;
     leaseToken: string;
-    outcome: 'accepted' | 'rejected' | 'unknown';
+    outcome: 'queued' | 'accepted' | 'rejected' | 'unknown';
     turnId?: string | null;
     failure?: Record<string, unknown> | null;
   }): Promise<void> {

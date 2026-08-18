@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
 const roots: string[] = [];
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
 
 async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -24,7 +26,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('local connector runtime lifecycle', () => {
+describeWithLocalListener('local connector runtime lifecycle', () => {
   it('keeps an idle connector process alive between polling passes', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'metapi-runtime-lifecycle-'));
     roots.push(dataDir);

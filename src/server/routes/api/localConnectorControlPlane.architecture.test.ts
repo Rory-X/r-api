@@ -43,4 +43,19 @@ describe('Local Connector control plane architecture', () => {
     expect(scheduler).not.toContain('schema.');
     expect(threadService).not.toContain('globalBridgeContinuationService');
   });
+
+  it('keeps Connector health persistence and monitoring outside the route adapter', () => {
+    const route = source('src/server/routes/api/localConnector.ts');
+    const healthService = source('src/server/services/localConnectorHealthService.ts');
+    const scheduler = source('src/server/services/localConnectorHealthScheduler.ts');
+    const localClient = source('src/server/local-connector/client.ts');
+
+    expect(route).toContain('updateLocalConnectorRuntimeMetadata(authenticated, request.body || {})');
+    expect(route).not.toContain('localConnectorHealthChecks');
+    expect(healthService).toContain('schema.localConnectorHealthChecks');
+    expect(healthService).toContain('sendNotification(');
+    expect(scheduler).toContain('runLocalConnectorHealthMonitorPass({');
+    expect(scheduler).not.toContain('schema.');
+    expect(localClient).toContain('health?: readonly LocalConnectorHealthReportWire[]');
+  });
 });

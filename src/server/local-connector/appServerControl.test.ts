@@ -188,6 +188,11 @@ describe('Codex App Server control client', () => {
       routeAction: 'preserve',
       continuationNumber: 1,
     })).resolves.toEqual({ turnId: 'turn-a' });
+    expect(messages.map((message) => message.method)).toEqual([
+      'initialize',
+      'initialized',
+      'turn/steer',
+    ]);
     expect(messages.at(-1)).toEqual(expect.objectContaining({
       method: 'turn/steer',
       params: {

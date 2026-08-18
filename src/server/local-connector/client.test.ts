@@ -20,6 +20,12 @@ describe('local connector client', () => {
     await expect(client.heartbeat({
       version: '1.0.1',
       capabilities: ['local-dashboard-v1'],
+      health: [{
+        checkId: 'codex_notify',
+        status: 'healthy',
+        reason: null,
+        observedAt: '2026-08-14T08:00:00.000Z',
+      }],
     })).resolves.toMatchObject({ success: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
@@ -34,6 +40,12 @@ describe('local connector client', () => {
       body: JSON.stringify({
         version: '1.0.1',
         capabilities: ['local-dashboard-v1'],
+        health: [{
+          checkId: 'codex_notify',
+          status: 'healthy',
+          reason: null,
+          observedAt: '2026-08-14T08:00:00.000Z',
+        }],
       }),
     });
   });

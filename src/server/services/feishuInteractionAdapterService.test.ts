@@ -603,7 +603,7 @@ describe('Feishu Interaction Adapter service', () => {
       state: {
         threadId: 'thread-a',
         status: 'backoff',
-        submissionMode: 'start_next',
+        submissionMode: 'auto',
         pendingMethod: 'turn/start',
         pendingPrompt: '继续检查话题通知链路',
       },
@@ -679,7 +679,7 @@ describe('Feishu Interaction Adapter service', () => {
     expect(tasks[0]).toMatchObject({
       state: {
         taskKind: 'manual_prompt',
-        submissionMode: 'start_next',
+        submissionMode: 'auto',
         status: 'backoff',
         pendingMethod: 'turn/start',
         pendingPrompt: '请继续检查这个会话的结果',

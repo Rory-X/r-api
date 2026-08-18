@@ -2,14 +2,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type ServiceModule = typeof import('./localConnectorService.js');
+type HealthServiceModule = typeof import('./localConnectorHealthService.js');
 
 describe('local connector service', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let service: ServiceModule;
+  let healthService: HealthServiceModule;
   let dataDir = '';
 
   beforeAll(async () => {
@@ -20,10 +23,12 @@ describe('local connector service', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     service = await import('./localConnectorService.js');
+    healthService = await import('./localConnectorHealthService.js');
   });
 
   beforeEach(async () => {
     await db.delete(schema.localConnectorActions).run();
+    await db.delete(schema.localConnectorHealthChecks).run();
     await db.delete(schema.localConnectorPairings).run();
     await db.delete(schema.localConnectorDevices).run();
     await db.delete(schema.events).run();
@@ -179,5 +184,98 @@ describe('local connector service', () => {
       kind: 'notify',
       operation: 'backup',
     })).rejects.toThrow(/未完成/);
+  });
+
+  it('queues an automatic repair when the Codex notify wrapper becomes unavailable', async () => {
+    const { claimed } = await pair();
+    const identity = await service.authenticateLocalConnectorToken(claimed.connectorToken);
+    expect(identity).not.toBeNull();
+
+    const reported = await service.updateLocalConnectorRuntimeMetadata(identity!, {
+      health: [{
+        checkId: 'codex_notify',
+        status: 'unavailable',
+        reason: 'managed_wrapper_missing',
+        observedAt: '2026-08-14T08:00:00.000Z',
+      }],
+    });
+    const health = await db.select().from(schema.localConnectorHealthChecks)
+      .where(eq(schema.localConnectorHealthChecks.checkId, 'codex_notify')).get();
+    expect(health).toMatchObject({
+      status: 'unavailable',
+      reason: 'managed_wrapper_missing',
+    });
+    expect(health?.autoRepairActionId).toBeTruthy();
+    await expect(db.select().from(schema.localConnectorActions).get()).resolves.toMatchObject({
+      id: health?.autoRepairActionId,
+      kind: 'notify',
+      operation: 'install',
+      status: 'pending',
+    });
+
+    await service.updateLocalConnectorRuntimeMetadata(reported, {
+      health: [{
+        checkId: 'codex_notify',
+        status: 'healthy',
+        reason: null,
+        observedAt: '2026-08-14T08:00:05.000Z',
+      }],
+    });
+    await expect(db.select().from(schema.localConnectorHealthChecks)
+      .where(eq(schema.localConnectorHealthChecks.checkId, 'codex_notify')).get())
+      .resolves.toMatchObject({ status: 'healthy' });
+  });
+
+  it('marks a failed automatic repair as alerted', async () => {
+    const { claimed } = await pair();
+    const identity = await service.authenticateLocalConnectorToken(claimed.connectorToken);
+    await service.updateLocalConnectorRuntimeMetadata(identity!, {
+      health: [{
+        checkId: 'codex_notify',
+        status: 'unavailable',
+        reason: 'managed_wrapper_missing',
+        observedAt: '2026-08-14T08:10:00.000Z',
+      }],
+    });
+    const action = await service.claimNextLocalConnectorAction(identity!);
+    expect(action).not.toBeNull();
+    await service.completeLocalConnectorAction({
+      identity: identity!,
+      actionId: action!.id,
+      status: 'failed',
+      errorMessage: 'config is locked',
+    });
+
+    await healthService.runLocalConnectorHealthMonitorPass({
+      now: new Date('2026-08-14T08:10:20.000Z'),
+      notifyRepairGraceMs: 10_000,
+      requestRepair: service.ensureLocalConnectorNotifyRepairAction,
+    });
+    const health = await db.select().from(schema.localConnectorHealthChecks)
+      .where(eq(schema.localConnectorHealthChecks.checkId, 'codex_notify')).get();
+    expect(health?.alertedAt).toBeTruthy();
+  });
+
+  it('detects a missing Connector heartbeat and records its recovery', async () => {
+    const { claimed } = await pair();
+    const identity = await service.authenticateLocalConnectorToken(claimed.connectorToken);
+    await db.update(schema.localConnectorDevices).set({
+      lastSeenAt: '2026-08-14T06:55:00.000Z',
+    }).where(eq(schema.localConnectorDevices.id, claimed.device.id)).run();
+
+    await healthService.runLocalConnectorHealthMonitorPass({
+      now: new Date('2026-08-14T07:00:00.000Z'),
+      offlineAfterMs: 30_000,
+      requestRepair: service.ensureLocalConnectorNotifyRepairAction,
+    });
+    await expect(db.select().from(schema.localConnectorHealthChecks)
+      .where(eq(schema.localConnectorHealthChecks.checkId, 'connector_runtime')).get())
+      .resolves.toMatchObject({ status: 'unavailable' });
+
+    await service.updateLocalConnectorRuntimeMetadata(identity!, { version: '0.1.0' });
+    const recovered = await db.select().from(schema.localConnectorHealthChecks)
+      .where(eq(schema.localConnectorHealthChecks.checkId, 'connector_runtime')).get();
+    expect(recovered).toMatchObject({ status: 'healthy' });
+    expect(recovered?.recoveryNotifiedAt).toBeTruthy();
   });
 });

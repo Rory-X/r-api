@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   enqueueBridgeAppServerEvent,
   enqueueBridgeContinuationResult,
+  enqueueCodexMessage,
   enqueueLocalConnectorEvent,
   enqueueLocalConnectorResult,
   flushLocalConnectorQueues,
+  listQueuedCodexMessages,
+  removeQueuedCodexMessage,
+  updateQueuedCodexMessage,
 } from './queue.js';
 
 const roots: string[] = [];
@@ -101,5 +105,45 @@ describe('local connector durable queues', () => {
     });
     expect(flushed).toEqual({ results: 0, events: 0, bridgeResults: 1, bridgeEvents: 1 });
     expect(deliveredIds).toEqual([result.deliveryId, result.deliveryId, event.deliveryId]);
+  });
+
+  it('persists one Codex message per Bridge task across retries and restart recovery', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'metapi-connector-queue-'));
+    roots.push(dataDir);
+    const item = await enqueueCodexMessage({
+      dataDir,
+      now: new Date('2026-08-14T09:00:00.000Z'),
+      command: {
+        protocol: 'metapi.bridge-continuation.command.v1',
+        taskId: 'task-message-a',
+        leaseToken: 'bcl_abcdefghijklmnopqrstuvwxyz012345',
+        leaseExpiresAt: '2026-08-14T09:00:30.000Z',
+        method: 'turn/start',
+        threadId: 'thread-a',
+        prompt: '继续排查',
+        routeAction: 'preserve',
+        continuationNumber: 1,
+        submissionMode: 'auto',
+      },
+    });
+    await updateQueuedCodexMessage({
+      dataDir,
+      item,
+      phase: 'dispatching',
+      attemptCount: 1,
+      nextAttemptAt: '2026-08-14T09:00:01.000Z',
+      lastFailure: 'active writer',
+    });
+
+    await expect(listQueuedCodexMessages(dataDir)).resolves.toEqual([
+      expect.objectContaining({
+        phase: 'dispatching',
+        attemptCount: 1,
+        lastFailure: 'active writer',
+        command: expect.objectContaining({ taskId: 'task-message-a', submissionMode: 'auto' }),
+      }),
+    ]);
+    await removeQueuedCodexMessage(dataDir, 'task-message-a');
+    await expect(listQueuedCodexMessages(dataDir)).resolves.toEqual([]);
   });
 });

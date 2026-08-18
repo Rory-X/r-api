@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=25.0.0"
+    "node": ">=22.15.0"
   },
   "dependencies": {
     "get-port": "^7.2.0",

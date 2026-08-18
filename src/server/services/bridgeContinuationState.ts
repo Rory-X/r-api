@@ -30,6 +30,7 @@ export type BridgeContinuationTaskReason =
   | 'awaiting_final_failure'
   | 'backoff'
   | 'running'
+  | 'connector_queued'
   | 'turn_active'
   | 'dispatch_outcome_unknown'
   | 'interaction_response_required'
@@ -94,6 +95,7 @@ export type BridgeContinuationTaskEvent =
     nowMs?: number;
   }
   | { type: 'lease_acquired'; lease: BridgeContinuationLease; nowMs?: number }
+  | { type: 'dispatch_queued'; leaseToken: string; nowMs?: number }
   | { type: 'continuation_dispatched'; leaseToken: string; turnId: string; nowMs?: number }
   | { type: 'turn_started_observed'; turnId: string; nowMs?: number }
   | {
@@ -461,6 +463,7 @@ export function transitionBridgeContinuationTask(
       activeTurnId: event.activeTurnId === undefined ? state.activeTurnId : event.activeTurnId,
       updatedAtMs: nowMs,
     });
+    if (updated.reason === 'connector_queued') return updated;
     if (updated.taskKind === 'manual_prompt' && updated.pendingPrompt) {
       return advanceManualPrompt(updated, nowMs);
     }
@@ -494,8 +497,23 @@ export function transitionBridgeContinuationTask(
     });
   }
 
-  if (event.type === 'continuation_dispatched') {
+  if (event.type === 'dispatch_queued') {
     if (state.status !== 'running' || !state.lease || state.lease.leaseToken !== event.leaseToken) {
+      throw new Error('Bridge queued dispatch requires the active lease');
+    }
+    return freezeState({
+      ...state,
+      status: 'waiting',
+      reason: 'connector_queued',
+      updatedAtMs: nowMs,
+      nextRunAtMs: null,
+    });
+  }
+
+  if (event.type === 'continuation_dispatched') {
+    const dispatchable = state.status === 'running'
+      || (state.status === 'waiting' && state.reason === 'connector_queued');
+    if (!dispatchable || !state.lease || state.lease.leaseToken !== event.leaseToken) {
       throw new Error('Bridge continuation dispatch requires the active lease');
     }
     return freezeState({
@@ -516,6 +534,15 @@ export function transitionBridgeContinuationTask(
 
   if (event.type === 'turn_started_observed') {
     const turnId = normalizedId(event.turnId, 'turn id');
+    if (state.reason === 'connector_queued') {
+      return freezeState({
+        ...state,
+        threadStatus: 'active',
+        activeFlags: Object.freeze([]),
+        activeTurnId: turnId,
+        updatedAtMs: nowMs,
+      });
+    }
     if (state.taskKind === 'manual_prompt' && state.pendingPrompt && state.status !== 'running') {
       return advanceManualPrompt(freezeState({
         ...state,
@@ -548,7 +575,9 @@ export function transitionBridgeContinuationTask(
   }
 
   if (event.type === 'dispatch_rejected') {
-    if (state.status !== 'running' || !state.lease || state.lease.leaseToken !== event.leaseToken) {
+    const dispatchable = state.status === 'running'
+      || (state.status === 'waiting' && state.reason === 'connector_queued');
+    if (!dispatchable || !state.lease || state.lease.leaseToken !== event.leaseToken) {
       throw new Error('Bridge continuation rejected dispatch requires the active lease');
     }
     const writerContention = state.taskKind === 'manual_prompt'
@@ -584,7 +613,9 @@ export function transitionBridgeContinuationTask(
   }
 
   if (event.type === 'dispatch_outcome_unknown') {
-    if (state.status !== 'running' || !state.lease || state.lease.leaseToken !== event.leaseToken) {
+    const dispatchable = state.status === 'running'
+      || (state.status === 'waiting' && state.reason === 'connector_queued');
+    if (!dispatchable || !state.lease || state.lease.leaseToken !== event.leaseToken) {
       throw new Error('Bridge continuation unknown dispatch requires the active lease');
     }
     return freezeState({
@@ -601,6 +632,16 @@ export function transitionBridgeContinuationTask(
   }
 
   if (event.type === 'lease_expired') {
+    if (state.reason === 'connector_queued' && state.pendingPrompt && state.pendingMethod) {
+      return freezeState({
+        ...state,
+        status: 'backoff',
+        reason: 'backoff',
+        updatedAtMs: nowMs,
+        nextRunAtMs: nowMs,
+        lease: null,
+      });
+    }
     if (state.status !== 'running') return state;
     return freezeState({
       ...state,
@@ -616,6 +657,18 @@ export function transitionBridgeContinuationTask(
   }
 
   if (event.type === 'turn_completed') {
+    if (state.reason === 'connector_queued') {
+      if (state.submissionMode === 'steer_current') {
+        return stopState(state, 'stopped', event.status === 'interrupted' ? 'turn_interrupted' : 'turn_completed', nowMs);
+      }
+      return freezeState({
+        ...state,
+        threadStatus: 'idle',
+        activeFlags: Object.freeze([]),
+        activeTurnId: null,
+        updatedAtMs: nowMs,
+      });
+    }
     if (state.taskKind === 'manual_prompt' && state.pendingPrompt) {
       if (state.submissionMode === 'steer_current') {
         return stopState(state, 'stopped', event.status === 'interrupted' ? 'turn_interrupted' : 'turn_completed', nowMs);

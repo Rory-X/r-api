@@ -432,6 +432,96 @@ describe('bridge continuation service', () => {
     expect(events.filter((event) => event.eventType === 'continuation_dispatched')).toHaveLength(1);
   });
 
+  it('holds a Connector-local message under one lease until the authoritative Codex dispatch arrives', async () => {
+    await db.insert(schema.localConnectorDevices).values({
+      id: 'device-local-queue',
+      name: 'Desktop Mac',
+      platform: 'macos',
+      status: 'active',
+      tokenHash: 'hash-device-local-queue',
+      scopes: '["app_server.control"]',
+      pairedAt: '1970-01-01T00:00:01.000Z',
+      createdAt: '1970-01-01T00:00:01.000Z',
+      updatedAt: '1970-01-01T00:00:01.000Z',
+    }).run();
+    const manual = await service.createManualBridgePromptTask({
+      deviceId: 'device-local-queue',
+      threadId: 'thread-local-queue',
+      threadStatus: 'idle',
+      prompt: '从飞书继续当前会话',
+      submissionMode: 'auto',
+      source: 'im',
+      operatorId: 'feishu:open_id:ou_allowed',
+      sourceAdapterId: 'adapter-a',
+      idempotencyKey: 'local-codex-message-queue',
+      now: 2_000,
+    });
+    const claim = await service.claimNextBridgeContinuationTask({
+      ownerId: 'connector:device-local-queue',
+      deviceId: 'device-local-queue',
+      leaseTtlMs: 1_000,
+      now: 2_000,
+    });
+    expect(claim?.command).toMatchObject({
+      method: 'turn/start',
+      submissionMode: 'auto',
+      prompt: '从飞书继续当前会话',
+    });
+    if (!claim) return;
+
+    const queued = await service.completeBridgeContinuationDispatch({
+      taskId: manual.task.state.taskId,
+      deliveryId: 'local-queue-persisted',
+      leaseToken: claim.leaseToken,
+      deviceId: 'device-local-queue',
+      outcome: 'queued',
+      now: 2_100,
+    });
+    expect(queued).toMatchObject({
+      updated: true,
+      reason: 'queued',
+      task: { state: { status: 'waiting', reason: 'connector_queued', continuationCount: 0 } },
+    });
+    expect(await db.select().from(schema.bridgeContinuationLeases).all()).toHaveLength(1);
+    await expect(service.claimNextBridgeContinuationTask({
+      ownerId: 'connector:device-local-queue',
+      deviceId: 'device-local-queue',
+      now: 2_900,
+    })).resolves.toBeNull();
+
+    const active = await service.recordBridgeThreadState({
+      taskId: manual.task.state.taskId,
+      threadStatus: 'active',
+      activeTurnId: 'turn-current',
+      now: 2_500,
+    });
+    expect(active.state).toMatchObject({
+      status: 'waiting',
+      reason: 'connector_queued',
+      activeTurnId: 'turn-current',
+    });
+    expect(active.lease).not.toBeNull();
+
+    const accepted = await service.completeBridgeContinuationDispatch({
+      taskId: manual.task.state.taskId,
+      deliveryId: 'local-queue-dispatched',
+      leaseToken: claim.leaseToken,
+      deviceId: 'device-local-queue',
+      outcome: 'accepted',
+      turnId: 'turn-current',
+      now: 3_100,
+    });
+    expect(accepted).toMatchObject({
+      updated: true,
+      reason: 'accepted',
+      task: { state: { status: 'waiting', reason: 'turn_active', continuationCount: 1 } },
+    });
+    expect(await db.select().from(schema.bridgeContinuationLeases).all()).toHaveLength(0);
+    const events = await service.listBridgeContinuationEvents(manual.task.state.taskId);
+    expect(events.filter((event) => event.eventType === 'dispatch_queued')).toHaveLength(1);
+    expect(events.filter((event) => event.eventType === 'lease_acquired')).toHaveLength(1);
+  });
+
   it('waits for an already leased dispatch to reconcile before sending a replacement Prompt', async () => {
     await db.insert(schema.localConnectorDevices).values({
       id: 'device-a',

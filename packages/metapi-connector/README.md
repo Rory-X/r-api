@@ -10,7 +10,7 @@ metapi-connector --version
 metapi-connector --help
 ```
 
-Node.js 25 or later is required.
+Node.js 22.15 or later is required.
 
 ## Pair And Install
 

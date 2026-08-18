@@ -12,7 +12,7 @@ import {
   type LocalConnectorAgent,
 } from './protocol.js';
 
-const MANAGED_SOURCE = 'metapi-local-connector';
+export const LOCAL_CONNECTOR_MANAGED_SOURCE = 'metapi-local-connector';
 const CODEX_HOOK_EVENTS = new Set([
   'PreToolUse',
   'PermissionRequest',
@@ -111,11 +111,11 @@ function buildEmitArgv(
     '--config',
     resolve(configPath),
     '--source',
-    MANAGED_SOURCE,
+    LOCAL_CONNECTOR_MANAGED_SOURCE,
   ];
 }
 
-function buildCodexNotifyArgv(
+export function buildCodexNotifyArgv(
   launch: LocalConnectorLaunchCommand,
   configPath: string,
   forwardNotify?: readonly string[] | null,
@@ -126,7 +126,7 @@ function buildCodexNotifyArgv(
     '--config',
     resolve(configPath),
     '--source',
-    MANAGED_SOURCE,
+    LOCAL_CONNECTOR_MANAGED_SOURCE,
     ...(forwardNotify?.length
       ? ['--forward-notify', JSON.stringify(forwardNotify)]
       : []),
@@ -151,9 +151,9 @@ function buildHookCommands(
 
 function managedCommand(value: unknown): boolean {
   if (typeof value !== 'string') return false;
-  return value.includes(`--source ${MANAGED_SOURCE}`)
-    || value.includes(`--source" "${MANAGED_SOURCE}`)
-    || value.includes(`--source' '${MANAGED_SOURCE}`);
+  return value.includes(`--source ${LOCAL_CONNECTOR_MANAGED_SOURCE}`)
+    || value.includes(`--source" "${LOCAL_CONNECTOR_MANAGED_SOURCE}`)
+    || value.includes(`--source' '${LOCAL_CONNECTOR_MANAGED_SOURCE}`);
 }
 
 function parseJsonConfig(snapshot: Awaited<ReturnType<typeof readOptionalFile>>, label: string): JsonRecord {
@@ -272,12 +272,14 @@ function sameStringArray(value: unknown, expected: string[]): boolean {
     && value.every((item, index) => item === expected[index]);
 }
 
-function isManagedNotifyArgv(value: unknown): boolean {
+export function isManagedNotifyArgv(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
-  return value.some((item, index) => item === '--source' && value[index + 1] === MANAGED_SOURCE);
+  return value.some(
+    (item, index) => item === '--source' && value[index + 1] === LOCAL_CONNECTOR_MANAGED_SOURCE,
+  );
 }
 
-function parseArgvJson(value: unknown): string[] | null {
+export function parseArgvJson(value: unknown): string[] | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   try {
     const parsed = JSON.parse(value);

@@ -7,6 +7,7 @@ import {
   config,
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
+import { DEMO_MODE_BLOCK_RESPONSE, isDemoModeRequestBlocked } from './middleware/demoMode.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
 import { checkinRoutes } from './routes/api/checkin.js';
@@ -96,6 +97,10 @@ import {
   startFeishuInteractionAdapterScheduler,
   stopFeishuInteractionAdapterScheduler,
 } from './services/feishuInteractionAdapterScheduler.js';
+import {
+  startLocalConnectorHealthScheduler,
+  stopLocalConnectorHealthScheduler,
+} from './services/localConnectorHealthScheduler.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { ensureAdminAuthReady, pruneAdminSessions } from './services/adminAuthService.js';
 import { pruneAdminAuthChallenges } from './services/adminTotpService.js';
@@ -265,6 +270,12 @@ const app = Fastify(buildFastifyOptions(config));
 await app.register(cookie);
 await app.register(cors);
 
+app.addHook('onRequest', async (request, reply) => {
+  if (config.demoMode && isDemoModeRequestBlocked(request.method, request.url)) {
+    return reply.code(403).send(DEMO_MODE_BLOCK_RESPONSE);
+  }
+});
+
 // Auth middleware for /api routes
 app.addHook('onRequest', async (request, reply) => {
   if (request.url.startsWith('/api/') && !isPublicApiRoute(request.url)) {
@@ -335,29 +346,34 @@ if (existsSync(webDir)) {
   });
 }
 
-// Start scheduler
-await startScheduler();
-await reloadBackupWebdavScheduler();
-startSiteAnnouncementPolling();
-startModelAvailabilityProbeScheduler();
-startChannelRecoveryProbeScheduler();
-startSub2ApiManagedRefreshScheduler();
-startUpdateCenterPolling();
-startUsageAggregationProjectorScheduler();
-startAdminSnapshotWarmScheduler();
-startNotificationOutboxWorker();
-await startBrowserRecoveryTaskSweeper();
-await startBridgeContinuationRecoveryScheduler();
-await startGlobalBridgeContinuationScheduler();
-await startInteractionRequestExpiryScheduler();
-await startFeishuInteractionAdapterScheduler();
-try {
-  await startOAuthLoopbackCallbackServers();
-} catch (error) {
-  console.warn(`Failed to start OAuth callback listeners: ${(error as Error)?.message || 'unknown error'}`);
+// Public demos are intentionally inert: no probes, schedulers, callbacks, or outbound workers.
+if (!config.demoMode) {
+  await startScheduler();
+  await reloadBackupWebdavScheduler();
+  startSiteAnnouncementPolling();
+  startModelAvailabilityProbeScheduler();
+  startChannelRecoveryProbeScheduler();
+  startSub2ApiManagedRefreshScheduler();
+  startUpdateCenterPolling();
+  startUsageAggregationProjectorScheduler();
+  startAdminSnapshotWarmScheduler();
+  startNotificationOutboxWorker();
+  await startBrowserRecoveryTaskSweeper();
+  await startBridgeContinuationRecoveryScheduler();
+  await startGlobalBridgeContinuationScheduler();
+  await startInteractionRequestExpiryScheduler();
+  await startFeishuInteractionAdapterScheduler();
+  await startLocalConnectorHealthScheduler();
+  try {
+    await startOAuthLoopbackCallbackServers();
+  } catch (error) {
+    console.warn(`Failed to start OAuth callback listeners: ${(error as Error)?.message || 'unknown error'}`);
+  }
+} else {
+  console.log('[demo-mode] read-only request policy enabled; background workers are disabled');
 }
-setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
-startProxyFileRetentionService();
+setLegacyProxyLogRetentionFallbackEnabled(!config.demoMode && !config.logCleanupConfigured);
+if (!config.demoMode) startProxyFileRetentionService();
 app.addHook('onClose', async () => {
   stopSiteAnnouncementPolling();
   stopUpdateCenterPolling();
@@ -373,6 +389,7 @@ app.addHook('onClose', async () => {
   await stopGlobalBridgeContinuationScheduler();
   await stopInteractionRequestExpiryScheduler();
   await stopFeishuInteractionAdapterScheduler();
+  await stopLocalConnectorHealthScheduler();
   await stopSub2ApiManagedRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
 });

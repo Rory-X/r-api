@@ -1,8 +1,11 @@
 import getPort from 'get-port';
 import { describe, expect, it } from 'vitest';
 import { startLocalConnectorDashboardServer } from './dashboardServer.js';
+import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
-describe('Local Connector dashboard server', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('Local Connector dashboard server', () => {
   it('serves the standalone responsive dashboard and local status API', async () => {
     const port = await getPort({ host: '127.0.0.1' });
     const dashboard = await startLocalConnectorDashboardServer({

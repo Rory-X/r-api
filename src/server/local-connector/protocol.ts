@@ -27,6 +27,29 @@ export type LocalConnectorActionStatus = typeof LOCAL_CONNECTOR_ACTION_STATUSES[
 
 export type LocalConnectorEventKind = 'hook' | 'notify' | 'app_server' | 'browser_recovery';
 
+export const LOCAL_CONNECTOR_HEALTH_CHECK_IDS = ['codex_notify'] as const;
+export type LocalConnectorHealthCheckId = typeof LOCAL_CONNECTOR_HEALTH_CHECK_IDS[number];
+
+export const LOCAL_CONNECTOR_HEALTH_STATUSES = ['healthy', 'unavailable'] as const;
+export type LocalConnectorHealthStatus = typeof LOCAL_CONNECTOR_HEALTH_STATUSES[number];
+
+export const LOCAL_CONNECTOR_HEALTH_REASONS = [
+  'config_missing',
+  'config_invalid',
+  'managed_wrapper_missing',
+  'managed_command_mismatch',
+  'forward_notify_invalid',
+  'runtime_missing',
+] as const;
+export type LocalConnectorHealthReason = typeof LOCAL_CONNECTOR_HEALTH_REASONS[number];
+
+export type LocalConnectorHealthReportWire = Readonly<{
+  checkId: LocalConnectorHealthCheckId;
+  status: LocalConnectorHealthStatus;
+  reason: LocalConnectorHealthReason | null;
+  observedAt: string;
+}>;
+
 export type LocalConnectorThreadSnapshotSource = 'connector_app_server' | 'codex_desktop';
 
 export type LocalConnectorThreadSnapshotWire = Readonly<{
@@ -50,6 +73,7 @@ export type BridgeContinuationCommandWire = {
   prompt: string;
   routeAction: 'preserve' | 'rotate_credential' | 'switch_channel';
   continuationNumber: number;
+  submissionMode?: 'auto' | 'steer_current' | 'start_next' | null;
 };
 
 export type BridgeAppServerEventWire =
@@ -203,7 +227,12 @@ export function isBridgeContinuationCommandWire(value: unknown): value is Bridge
     && value.prompt.length <= 4_000
     && (value.routeAction === 'preserve' || value.routeAction === 'rotate_credential' || value.routeAction === 'switch_channel')
     && Number.isInteger(value.continuationNumber)
-    && Number(value.continuationNumber) > 0;
+    && Number(value.continuationNumber) > 0
+    && (value.submissionMode === undefined
+      || value.submissionMode === null
+      || value.submissionMode === 'auto'
+      || value.submissionMode === 'steer_current'
+      || value.submissionMode === 'start_next');
 }
 
 export function normalizeBridgeAppServerEventWire(value: unknown): BridgeAppServerEventWire | null {

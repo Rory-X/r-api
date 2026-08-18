@@ -65,6 +65,7 @@ export type BridgeContinuationTaskClaim = Readonly<{
     prompt: string;
     routeAction: BridgeRouteAction;
     continuationNumber: number;
+    submissionMode: BridgeManualPromptSubmissionMode | null;
   }>;
 }>;
 
@@ -518,7 +519,7 @@ async function transitionById(
         return recordFromRows(row, await loadLeaseForTask(tx, taskId));
       }
       const updated = await persistTransition(tx, row, next, { ...input, deliveryId, now });
-      if (next.status !== 'running') {
+      if (next.status !== 'running' && next.reason !== 'connector_queued') {
         await tx.delete(schema.bridgeContinuationLeases)
           .where(eq(schema.bridgeContinuationLeases.taskId, taskId))
           .run();
@@ -1104,12 +1105,15 @@ export async function recoverExpiredBridgeContinuationLeases(nowInput?: Date | n
       )).get();
       if (!lease) return false;
       const row = await loadTaskRow(tx, lease.taskId);
-      if (row && row.status === 'running') {
+      if (row && (row.status === 'running' || row.reason === 'connector_queued')) {
         const current = stateFromRow(row);
         const next = transitionBridgeContinuationTask(current, { type: 'lease_expired', nowMs: now.getTime() });
         await persistTransition(tx, row, next, {
           eventType: 'lease_expired',
-          metadata: { outcome: 'dispatch_unknown', ownerId: lease.ownerId },
+          metadata: {
+            outcome: row.reason === 'connector_queued' ? 'requeue_local_message' : 'dispatch_unknown',
+            ownerId: lease.ownerId,
+          },
           now,
         });
       }
@@ -1213,6 +1217,7 @@ export async function claimNextBridgeContinuationTask(input: {
             prompt: next.pendingPrompt || next.policy.continuePrompt,
             routeAction: next.pendingRouteAction || 'preserve',
             continuationNumber: next.continuationCount + 1,
+            submissionMode: next.submissionMode,
           }),
         });
       });
@@ -1255,7 +1260,7 @@ export async function completeBridgeContinuationDispatch(input: {
   deliveryId?: unknown;
   leaseToken: unknown;
   deviceId?: unknown;
-  outcome: 'accepted' | 'rejected' | 'unknown';
+  outcome: 'queued' | 'accepted' | 'rejected' | 'unknown';
   turnId?: unknown;
   failure?: BridgeFailureInput;
   threadStatus?: CodexThreadStatus;
@@ -1265,7 +1270,7 @@ export async function completeBridgeContinuationDispatch(input: {
   now?: Date | number;
 }): Promise<Readonly<{
   updated: boolean;
-  reason: 'accepted' | 'rejected' | 'unknown' | 'missing_or_expired';
+  reason: 'queued' | 'accepted' | 'rejected' | 'unknown' | 'missing_or_expired';
   task: BridgeContinuationTaskRecord | null;
 }>> {
   const taskId = normalizedId(input.taskId, 'Bridge 任务 ID');
@@ -1293,8 +1298,14 @@ export async function completeBridgeContinuationDispatch(input: {
       eq(schema.bridgeContinuationLeases.taskId, taskId),
       eq(schema.bridgeContinuationLeases.leaseTokenHash, leaseTokenHash),
       )).get();
-      if (!leaseRow || leaseRow.expiresAt <= nowIso) {
-        const currentRow = await loadTaskRow(tx, taskId);
+      const currentRow = await loadTaskRow(tx, taskId);
+      const expiredLeaseCanReconcile = Boolean(
+        leaseRow
+        && leaseRow.expiresAt <= nowIso
+        && currentRow
+        && (currentRow.status === 'running' || currentRow.reason === 'connector_queued'),
+      );
+      if (!leaseRow || (leaseRow.expiresAt <= nowIso && !expiredLeaseCanReconcile)) {
         const currentTask = currentRow ? recordFromRows(currentRow, leaseRow || null) : null;
         if (
           currentTask
@@ -1313,7 +1324,7 @@ export async function completeBridgeContinuationDispatch(input: {
           task: currentTask,
         });
       }
-      const row = await loadTaskRow(tx, taskId);
+      const row = currentRow;
       if (!row) return Object.freeze({ updated: false, reason: 'missing_or_expired' as const, task: null });
       const lease: BridgeContinuationLease = Object.freeze({
         sessionKey: leaseRow.sessionKey,
@@ -1327,48 +1338,56 @@ export async function completeBridgeContinuationDispatch(input: {
         && current.taskKind === 'manual_prompt'
         && Boolean(current.pendingPrompt)
         && isBridgeWriterContentionFailure(rejectedFailure!);
-      const event: BridgeContinuationTaskEvent = input.outcome === 'accepted'
-        ? { type: 'continuation_dispatched', leaseToken, turnId: turnId!, nowMs: now.getTime() }
-        : input.outcome === 'rejected'
-          ? {
-            type: 'dispatch_rejected',
-            leaseToken,
-            failure: rejectedFailure!,
-            threadStatus: input.threadStatus,
-            activeFlags: input.activeFlags,
-            retryAfterMs: input.retryAfterMs,
-            jitterUnit: input.jitterUnit,
-            nowMs: now.getTime(),
-          }
-          : { type: 'dispatch_outcome_unknown', leaseToken, nowMs: now.getTime() };
+      const event: BridgeContinuationTaskEvent = input.outcome === 'queued'
+        ? { type: 'dispatch_queued', leaseToken, nowMs: now.getTime() }
+        : input.outcome === 'accepted'
+          ? { type: 'continuation_dispatched', leaseToken, turnId: turnId!, nowMs: now.getTime() }
+          : input.outcome === 'rejected'
+            ? {
+              type: 'dispatch_rejected',
+              leaseToken,
+              failure: rejectedFailure!,
+              threadStatus: input.threadStatus,
+              activeFlags: input.activeFlags,
+              retryAfterMs: input.retryAfterMs,
+              jitterUnit: input.jitterUnit,
+              nowMs: now.getTime(),
+            }
+            : { type: 'dispatch_outcome_unknown', leaseToken, nowMs: now.getTime() };
       const next = transitionBridgeContinuationTask(current, event);
       const updated = await persistTransition(tx, row, next, {
         deliveryId,
-        eventType: input.outcome === 'accepted'
-          ? 'continuation_dispatched'
-          : input.outcome === 'rejected'
-            ? writerContentionDeferred ? 'dispatch_deferred' : 'dispatch_rejected'
-            : 'dispatch_outcome_unknown',
-        metadata: input.outcome === 'accepted'
-          ? { turnId, method: current.pendingMethod || 'turn/start', taskKind: current.taskKind }
-          : input.outcome === 'rejected'
-            ? {
-              failureClass: rejectedFailure?.failureClass,
-              codexErrorCode: rejectedFailure?.codexErrorCode,
-              httpStatusCode: rejectedFailure?.httpStatusCode,
-              deferred: writerContentionDeferred,
-              nextRunAt: writerContentionDeferred && next.nextRunAtMs !== null
-                ? new Date(next.nextRunAtMs).toISOString()
-                : null,
-            }
-            : { outcome: 'dispatch_unknown' },
+        eventType: input.outcome === 'queued'
+          ? 'dispatch_queued'
+          : input.outcome === 'accepted'
+            ? 'continuation_dispatched'
+            : input.outcome === 'rejected'
+              ? writerContentionDeferred ? 'dispatch_deferred' : 'dispatch_rejected'
+              : 'dispatch_outcome_unknown',
+        metadata: input.outcome === 'queued'
+          ? { method: current.pendingMethod || 'turn/start', taskKind: current.taskKind }
+          : input.outcome === 'accepted'
+            ? { turnId, method: current.pendingMethod || 'turn/start', taskKind: current.taskKind }
+            : input.outcome === 'rejected'
+              ? {
+                failureClass: rejectedFailure?.failureClass,
+                codexErrorCode: rejectedFailure?.codexErrorCode,
+                httpStatusCode: rejectedFailure?.httpStatusCode,
+                deferred: writerContentionDeferred,
+                nextRunAt: writerContentionDeferred && next.nextRunAtMs !== null
+                  ? new Date(next.nextRunAtMs).toISOString()
+                  : null,
+              }
+              : { outcome: 'dispatch_unknown' },
         now,
       });
-      await tx.delete(schema.bridgeContinuationLeases)
-        .where(and(
-          eq(schema.bridgeContinuationLeases.taskId, taskId),
-          eq(schema.bridgeContinuationLeases.leaseTokenHash, leaseTokenHash),
-        )).run();
+      if (input.outcome !== 'queued') {
+        await tx.delete(schema.bridgeContinuationLeases)
+          .where(and(
+            eq(schema.bridgeContinuationLeases.taskId, taskId),
+            eq(schema.bridgeContinuationLeases.leaseTokenHash, leaseTokenHash),
+          )).run();
+      }
       return Object.freeze({
         updated: true,
         reason: input.outcome,
