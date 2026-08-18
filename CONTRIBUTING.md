@@ -16,8 +16,8 @@ r-api 是 AI API 聚合平台（New API、One API、OneHub 等）的元聚合层
 
 ### Prerequisites / 前置要求
 
-- Node.js 20+ / Node.js 20 或更高版本
-- npm or compatible package manager / npm 或兼容的包管理器
+- Node.js 22.15+ / Node.js 22.15 或更高版本
+- npm 10+（`package-lock.json` 是 CI、Docker 与发布流程的依赖基线） / npm 10+ (`package-lock.json` is the dependency baseline for CI, Docker, and releases)
 
 ### Setup Steps / 设置步骤
 

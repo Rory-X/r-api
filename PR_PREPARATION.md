@@ -238,8 +238,8 @@ curl -H "Authorization: Bearer test-admin-token" \
 
 ## 测试环境
 
-- Node.js: v20.x
-- pnpm: 8.x
+- Node.js: v22.15+
+- npm: 10+
 - SQLite: 3.x
 - 测试服务器: http://localhost:4000
 - 真实模型数据已验证

@@ -1,5 +1,5 @@
-# Keep the Docker base on Node 22 because the official Node 24/25 slim images
-# no longer publish linux/arm/v7 manifests, which breaks our armv7 Docker jobs.
+# Node 22.15+ is the supported runtime baseline. Keep the floating Node 22 LTS
+# image so armv7 remains available while patch/security updates keep flowing.
 FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app

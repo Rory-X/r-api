@@ -66,16 +66,15 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 
 ## 🌐 Live Demo
 
-> Try r-api without deploying — full-featured demo instance:
+> Explore the r-api management UI, model routing, and observability data without deploying it first.
 
 | | |
-|---|---|
-| 🔗 **Demo URL** | [metapi-t9od.onrender.com](https://metapi-t9od.onrender.com/) |
-| 🔑 **Admin Token** | `123456` |
+| --- | --- |
+| 🔗 **Demo URL** | [demo.rory-x.me](https://demo.rory-x.me/) |
+| 🔑 **Admin credential** | `r-api-demo` |
 
-> **⚠️ Security Notice**: This is a public demo. **Do NOT enter any real API keys, credentials, or site information.** Data may be reset at any time.
-
-> **ℹ️ Note**: Demo runs on Render free tier + OpenRouter free models (only `:free` suffixed models available). First visit may take 30-60s to wake up.
+> [!IMPORTANT]
+> This is our isolated, self-hosted demo. It contains synthetic sites, credentials, and logs only. Server-enforced read-only mode blocks configuration changes and all proxy traffic.
 
 ---
 

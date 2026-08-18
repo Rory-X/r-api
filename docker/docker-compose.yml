@@ -6,6 +6,7 @@ services:
     volumes:
       - ./data:/app/data
     environment:
+      DEMO_MODE: ${DEMO_MODE:-false}
       ACCOUNT_CREDENTIAL_SECRET: ${ACCOUNT_CREDENTIAL_SECRET:?ACCOUNT_CREDENTIAL_SECRET is required}
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       AUTH_TOKEN_HASH: ${AUTH_TOKEN_HASH:-}

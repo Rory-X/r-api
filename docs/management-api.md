@@ -669,7 +669,46 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/connections?limit=50&offset=0" \
 | 接口 | 作用 |
 |------|------|
 | `POST /api/oauth/connections/:accountId/rebind` | 为已有 OAuth 账号重新发起授权 |
+| `PATCH /api/oauth/connections/:accountId/proxy` | 保存凭证级代理，立即验证模型发现并重建路由 |
+| `PATCH /api/oauth/connections/proxy` | 为最多 100 个凭证批量保存同一出口，逐项验证后统一重建路由 |
 | `DELETE /api/oauth/connections/:accountId` | 删除 OAuth 连接 |
+
+凭证级代理请求体支持 `proxyUrl`（`http(s)` / `socks` / `socks5h`）和 `useSystemProxy`，二者同时存在时以显式代理为准。保存后响应中的 `modelRefresh` 是实际官方上游验证结果；`modelRefresh.success: false` 表示代理已保存但凭证仍不可调度，不能只根据响应顶层的 `success: true` 判断可用。
+
+```bash
+curl -sS -X PATCH "${METAPI_ADMIN_BASE_URL}/api/oauth/connections/<ACCOUNT_ID>/proxy" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"proxyUrl":"socks5h://user:pass@sg-egress.example:1080","useSystemProxy":false}'
+```
+
+成功保存但出口仍被 Codex 拒绝时，响应会保留账号并返回类似：
+
+```json
+{
+  "success": true,
+  "refreshedRoutes": true,
+  "modelRefresh": {
+    "success": false,
+    "status": "failed",
+    "errorCode": "unauthorized",
+    "errorMessage": "Codex 模型获取失败（HTTP 403：上游拒绝当前服务器网络访问）",
+    "modelCount": 0,
+    "modelsPreview": []
+  }
+}
+```
+
+批量配置出口时传入 `accountIds`；服务端以最多 3 个并发逐项保存和验证，全部完成后只重建一次路由。顶层 `success` 表示所有凭证的配置都成功保存，真正能否参与调度仍以各条 `items[].modelRefresh.success` 为准。
+
+```bash
+curl -sS -X PATCH "${METAPI_ADMIN_BASE_URL}/api/oauth/connections/proxy" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"accountIds":[101,102,103,104],"proxyUrl":"socks5h://user:pass@sg-egress.example:1080","useSystemProxy":false}'
+```
+
+批量响应会返回 `requested`、`updated`、`failed` 和逐凭证 `items`。单条凭证不存在或不是官方 OAuth 凭证时，只把该条标记为失败，不会中断其他凭证的复测。
 
 ## 安全凭证库接口
 

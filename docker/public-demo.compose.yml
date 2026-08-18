@@ -1,0 +1,23 @@
+services:
+  metapi-public-demo:
+    image: ${DEMO_IMAGE:-metapi-public-demo:latest}
+    container_name: metapi-public-demo
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${DEMO_HOST_PORT:-4500}:4000"
+    volumes:
+      - ./data:/app/data
+    networks:
+      caddy:
+        aliases:
+          - metapi-public-demo
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.5
+    pids_limit: 256
+
+networks:
+  caddy:
+    external: true
+    name: agent_default

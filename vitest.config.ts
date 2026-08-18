@@ -2,6 +2,10 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Full-suite runs initialize many isolated SQLite databases in parallel.
+    // Keep enough headroom for imports and migrations on slower CI workers.
+    testTimeout: 15_000,
+    hookTimeout: 30_000,
     exclude: [
       ...configDefaults.exclude,
       '.worktrees/**',

@@ -21,13 +21,13 @@ cd D:/Code/Projects/r-api/metapi-routing-ux-optimization
 ### 2. 安装依赖（首次运行）
 
 ```bash
-pnpm install
+npm install
 ```
 
 ### 3. 构建项目
 
 ```bash
-pnpm build
+npm run build
 ```
 
 ### 4. 启动测试服务器
@@ -152,13 +152,13 @@ kill <PID>
 ### 修改代码后重新构建
 
 ```bash
-pnpm build
+npm run build
 ```
 
 ### 运行测试
 
 ```bash
-pnpm test
+npm test
 ```
 
 ### 提交代码

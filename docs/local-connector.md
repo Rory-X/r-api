@@ -27,7 +27,7 @@ Local Connector 是本项目的本地优先控制面协议。服务器负责配�
 
 ## 本机参考实现
 
-Connector 使用独立 npm 包 `metapi-connector` 发布，不发布整个 r-api 服务仓库。Node.js 25 或更高版本可全局安装：
+Connector 使用独立 npm 包 `metapi-connector` 发布，不发布整个 r-api 服务仓库。Node.js 22.15 或更高版本可全局安装：
 
 ```bash
 npm install --global metapi-connector
