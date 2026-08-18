@@ -4,6 +4,7 @@ import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import {
   EMPTY_DOWNSTREAM_ROUTING_POLICY,
+  type DownstreamCredentialRef,
   type DownstreamExcludedCredentialRef,
   type DownstreamRoutingPolicy,
 } from './downstreamPolicyTypes.js';
@@ -30,6 +31,7 @@ export type DownstreamApiKeyPolicyView = {
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
+  allowedCredentialRefs: DownstreamCredentialRef[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
   lastUsedAt: string | null;
   createdAt: string | null;
@@ -175,8 +177,12 @@ function freezeRoutingPolicy(policy: DownstreamRoutingPolicy): DownstreamRouting
     ...normalizeSiteWeightMultipliersInput(policy.siteWeightMultipliers),
   });
   const excludedSiteIds = Object.freeze([...normalizeExcludedSiteIdsInput(policy.excludedSiteIds)]);
+  const allowedCredentialRefs = Object.freeze(
+    normalizeCredentialRefsInput(policy.allowedCredentialRefs)
+      .map((ref) => Object.freeze({ ...ref })),
+  );
   const excludedCredentialRefs = Object.freeze(
-    normalizeExcludedCredentialRefsInput(policy.excludedCredentialRefs)
+    normalizeCredentialRefsInput(policy.excludedCredentialRefs)
       .map((ref) => Object.freeze({ ...ref })),
   );
 
@@ -185,6 +191,7 @@ function freezeRoutingPolicy(policy: DownstreamRoutingPolicy): DownstreamRouting
     allowedRouteIds,
     siteWeightMultipliers,
     excludedSiteIds,
+    allowedCredentialRefs,
     excludedCredentialRefs,
     ...(policy.denyAllWhenEmpty === true ? { denyAllWhenEmpty: true } : {}),
   }) as DownstreamRoutingPolicy;
@@ -369,20 +376,20 @@ export function normalizeExcludedSiteIdsInput(input: unknown): number[] {
   return siteIds.sort((left, right) => left - right);
 }
 
-function buildExcludedCredentialRefKey(ref: DownstreamExcludedCredentialRef): string {
+function buildCredentialRefKey(ref: DownstreamCredentialRef): string {
   return ref.kind === 'account_token'
     ? `${ref.kind}:${ref.siteId}:${ref.accountId}:${ref.tokenId}`
     : `${ref.kind}:${ref.siteId}:${ref.accountId}`;
 }
 
-function compareExcludedCredentialRefs(
-  left: DownstreamExcludedCredentialRef,
-  right: DownstreamExcludedCredentialRef,
+function compareCredentialRefs(
+  left: DownstreamCredentialRef,
+  right: DownstreamCredentialRef,
 ): number {
-  return buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right));
+  return buildCredentialRefKey(left).localeCompare(buildCredentialRefKey(right));
 }
 
-export function normalizeExcludedCredentialRefsInput(input: unknown): DownstreamExcludedCredentialRef[] {
+export function normalizeCredentialRefsInput(input: unknown): DownstreamCredentialRef[] {
   const raw = typeof input === 'string'
     ? parseJson(input)
     : input;
@@ -391,7 +398,7 @@ export function normalizeExcludedCredentialRefsInput(input: unknown): Downstream
     return [];
   }
 
-  const refs: DownstreamExcludedCredentialRef[] = [];
+  const refs: DownstreamCredentialRef[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
@@ -402,7 +409,7 @@ export function normalizeExcludedCredentialRefsInput(input: unknown): Downstream
       continue;
     }
 
-    let normalizedRef: DownstreamExcludedCredentialRef | null = null;
+    let normalizedRef: DownstreamCredentialRef | null = null;
     if (kind === 'account_token') {
       const tokenId = Math.trunc(Number((item as Record<string, unknown>).tokenId));
       if (!Number.isFinite(tokenId) || tokenId <= 0) continue;
@@ -418,17 +425,31 @@ export function normalizeExcludedCredentialRefsInput(input: unknown): Downstream
         siteId,
         accountId,
       };
+    } else if (kind === 'account_credential') {
+      normalizedRef = {
+        kind: 'account_credential',
+        siteId,
+        accountId,
+      };
     }
 
     if (!normalizedRef) continue;
-    const dedupeKey = buildExcludedCredentialRefKey(normalizedRef);
+    const dedupeKey = buildCredentialRefKey(normalizedRef);
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     refs.push(normalizedRef);
     if (refs.length >= 1000) break;
   }
 
-  return refs.sort(compareExcludedCredentialRefs);
+  return refs.sort(compareCredentialRefs);
+}
+
+export function normalizeAllowedCredentialRefsInput(input: unknown): DownstreamCredentialRef[] {
+  return normalizeCredentialRefsInput(input);
+}
+
+export function normalizeExcludedCredentialRefsInput(input: unknown): DownstreamExcludedCredentialRef[] {
+  return normalizeCredentialRefsInput(input);
 }
 
 export function matchesDownstreamModelPattern(model: string, pattern: string): boolean {
@@ -495,6 +516,7 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
   const allowedRouteIds = normalizeAllowedRouteIdsInput(parseJson(row.allowedRouteIds));
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(parseJson(row.siteWeightMultipliers));
   const excludedSiteIds = normalizeExcludedSiteIdsInput(parseJson(row.excludedSiteIds));
+  const allowedCredentialRefs = normalizeAllowedCredentialRefsInput(parseJson(row.allowedCredentialRefs));
   const excludedCredentialRefs = normalizeExcludedCredentialRefsInput(parseJson(row.excludedCredentialRefs));
 
   return {
@@ -517,6 +539,7 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
     allowedRouteIds,
     siteWeightMultipliers,
     excludedSiteIds,
+    allowedCredentialRefs,
     excludedCredentialRefs,
     lastUsedAt: row.lastUsedAt || null,
     createdAt: row.createdAt || null,
@@ -524,12 +547,13 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
   };
 }
 
-export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedRouteIds' | 'siteWeightMultipliers' | 'excludedSiteIds' | 'excludedCredentialRefs'>): DownstreamRoutingPolicy {
+export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedRouteIds' | 'siteWeightMultipliers' | 'excludedSiteIds' | 'allowedCredentialRefs' | 'excludedCredentialRefs'>): DownstreamRoutingPolicy {
   return {
     supportedModels: normalizeSupportedModelsInput(view.supportedModels),
     allowedRouteIds: normalizeAllowedRouteIdsInput(view.allowedRouteIds),
     siteWeightMultipliers: normalizeSiteWeightMultipliersInput(view.siteWeightMultipliers),
     excludedSiteIds: normalizeExcludedSiteIdsInput(view.excludedSiteIds),
+    allowedCredentialRefs: normalizeAllowedCredentialRefsInput(view.allowedCredentialRefs),
     excludedCredentialRefs: normalizeExcludedCredentialRefsInput(view.excludedCredentialRefs),
     denyAllWhenEmpty: true,
   };
@@ -893,6 +917,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   allowedRouteIds?: unknown;
   siteWeightMultipliers?: unknown;
   excludedSiteIds?: unknown;
+  allowedCredentialRefs?: unknown;
   excludedCredentialRefs?: unknown;
 }) {
   const name = typeof input.name === 'string' ? input.name.trim() : '';
@@ -923,6 +948,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   const allowedRouteIds = normalizeAllowedRouteIdsInput(input.allowedRouteIds);
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(input.siteWeightMultipliers);
   const excludedSiteIds = normalizeExcludedSiteIdsInput(input.excludedSiteIds);
+  const allowedCredentialRefs = normalizeAllowedCredentialRefsInput(input.allowedCredentialRefs);
   const excludedCredentialRefs = normalizeExcludedCredentialRefsInput(input.excludedCredentialRefs);
 
   return {
@@ -940,6 +966,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
     allowedRouteIds,
     siteWeightMultipliers,
     excludedSiteIds,
+    allowedCredentialRefs,
     excludedCredentialRefs,
   };
 }

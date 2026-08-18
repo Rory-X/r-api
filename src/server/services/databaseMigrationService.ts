@@ -663,7 +663,7 @@ function buildStatements(
   for (const row of snapshot.accounts.downstreamApiKeys) {
     statements.push({
       table: 'downstream_api_keys',
-      columns: ['id', 'name', 'key', 'description', 'enabled', 'expires_at', 'max_cost', 'used_cost', 'max_requests', 'used_requests', 'supported_models', 'allowed_route_ids', 'site_weight_multipliers', 'excluded_site_ids', 'excluded_credential_refs', 'last_used_at', 'created_at', 'updated_at'],
+      columns: ['id', 'name', 'key', 'description', 'enabled', 'expires_at', 'max_cost', 'used_cost', 'max_requests', 'used_requests', 'supported_models', 'allowed_route_ids', 'site_weight_multipliers', 'excluded_site_ids', 'allowed_credential_refs', 'excluded_credential_refs', 'last_used_at', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.name),
@@ -679,6 +679,7 @@ function buildStatements(
         serializeColumnValue('downstream_api_keys', 'allowed_route_ids', row.allowedRouteIds, contract),
         serializeColumnValue('downstream_api_keys', 'site_weight_multipliers', row.siteWeightMultipliers, contract),
         serializeColumnValue('downstream_api_keys', 'excluded_site_ids', row.excludedSiteIds, contract),
+        serializeColumnValue('downstream_api_keys', 'allowed_credential_refs', row.allowedCredentialRefs, contract),
         serializeColumnValue('downstream_api_keys', 'excluded_credential_refs', row.excludedCredentialRefs, contract),
         asNullableString(row.lastUsedAt),
         asNullableString(row.createdAt),

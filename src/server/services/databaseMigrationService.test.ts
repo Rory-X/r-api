@@ -479,6 +479,7 @@ describe('databaseMigrationService', () => {
           supportedModels: ['gpt-5', 'gpt-5-mini'],
           allowedRouteIds: [10, 11],
           siteWeightMultipliers: { 1: 2, 2: 0.5 },
+          allowedCredentialRefs: [{ kind: 'default_api_key', siteId: 1, accountId: 3 }],
         }],
         events: [],
       },
@@ -508,6 +509,7 @@ describe('databaseMigrationService', () => {
     expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('supported_models')]).toBe('["gpt-5","gpt-5-mini"]');
     expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('allowed_route_ids')]).toBe('[10,11]');
     expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":2,"2":0.5}');
+    expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('allowed_credential_refs')]).toBe('[{"kind":"default_api_key","siteId":1,"accountId":3}]');
   });
 
   it('serializes JSON logical-type columns from object and array values', () => {

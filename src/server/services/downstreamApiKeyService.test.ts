@@ -92,6 +92,9 @@ describe('downstreamApiKeyService', () => {
       supportedModels: JSON.stringify(['re:^claude-(opus|sonnet)-4-6$', 'gpt-4o-mini']),
       allowedRouteIds: JSON.stringify([101, 102]),
       siteWeightMultipliers: JSON.stringify({ '1': 2.5, '7': 0.4 }),
+      allowedCredentialRefs: JSON.stringify([
+        { kind: 'default_api_key', siteId: 1, accountId: 11 },
+      ]),
     }).returning().get();
 
     const result = await service.authorizeDownstreamToken(row.key);
@@ -102,6 +105,9 @@ describe('downstreamApiKeyService', () => {
     expect(result.policy.allowedRouteIds).toEqual([101, 102]);
     expect(result.policy.siteWeightMultipliers[1]).toBeCloseTo(2.5);
     expect(result.policy.siteWeightMultipliers[7]).toBeCloseTo(0.4);
+    expect(result.policy.allowedCredentialRefs).toEqual([
+      { kind: 'default_api_key', siteId: 1, accountId: 11 },
+    ]);
 
     expect(service.isModelAllowedByPolicy('claude-opus-4-6', result.policy)).toBe(true);
     expect(service.isModelAllowedByPolicy('gpt-4o-mini', result.policy)).toBe(true);

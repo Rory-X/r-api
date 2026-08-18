@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const downstreamExcludedCredentialRefSchema = z.union([
+const downstreamCredentialRefSchema = z.union([
   z.object({
     kind: z.literal('account_token'),
     siteId: z.union([z.number(), z.string()]),
@@ -9,6 +9,11 @@ const downstreamExcludedCredentialRefSchema = z.union([
   }),
   z.object({
     kind: z.literal('default_api_key'),
+    siteId: z.union([z.number(), z.string()]),
+    accountId: z.union([z.number(), z.string()]),
+  }),
+  z.object({
+    kind: z.literal('account_credential'),
     siteId: z.union([z.number(), z.string()]),
     accountId: z.union([z.number(), z.string()]),
   }),
@@ -32,7 +37,8 @@ const downstreamApiKeyPayloadSchema = z.object({
     z.record(z.string(), z.union([z.number(), z.string()])),
   ]).optional(),
   excludedSiteIds: z.union([z.string(), z.array(z.union([z.number(), z.string()]))]).optional(),
-  excludedCredentialRefs: z.union([z.string(), z.array(downstreamExcludedCredentialRefSchema)]).optional(),
+  allowedCredentialRefs: z.union([z.string(), z.array(downstreamCredentialRefSchema)]).optional(),
+  excludedCredentialRefs: z.union([z.string(), z.array(downstreamCredentialRefSchema)]).optional(),
 }).passthrough();
 
 const downstreamApiKeyBatchPayloadSchema = z.object({
@@ -98,6 +104,9 @@ function formatDownstreamApiKeyPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'excludedSiteIds') {
     return 'Invalid excludedSiteIds. Expected string or array.';
+  }
+  if (firstPath === 'allowedCredentialRefs') {
+    return 'Invalid allowedCredentialRefs. Expected JSON string or array.';
   }
   if (firstPath === 'excludedCredentialRefs') {
     return 'Invalid excludedCredentialRefs. Expected JSON string or array.';

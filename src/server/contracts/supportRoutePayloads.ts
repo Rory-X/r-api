@@ -29,6 +29,7 @@ const oauthConnectionRebindPayloadSchema = z.object({
 }).passthrough();
 
 const oauthConnectionProxyUpdatePayloadSchema = z.object({
+  accountIds: z.array(z.number().int().positive()).optional(),
   proxyUrl: z.union([z.string(), z.null()]).optional(),
   useSystemProxy: z.boolean().optional(),
 }).passthrough();

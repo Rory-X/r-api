@@ -239,6 +239,9 @@ describe('backupService', () => {
       allowedRouteIds: `[${route.id}]`,
       siteWeightMultipliers: `{"${site.id}":1.5}`,
       excludedSiteIds: `[${site.id}]`,
+      allowedCredentialRefs: JSON.stringify([
+        { kind: 'default_api_key', siteId: site.id, accountId: account.id },
+      ]),
       excludedCredentialRefs: JSON.stringify([
         { kind: 'account_token', siteId: site.id, accountId: account.id, tokenId: accountToken.id },
       ]),
@@ -280,6 +283,7 @@ describe('backupService', () => {
         allowedRouteIds: `[${route.id}]`,
         siteWeightMultipliers: `{"${site.id}":1.5}`,
         excludedSiteIds: `[${site.id}]`,
+        allowedCredentialRefs: `[{"kind":"default_api_key","siteId":${site.id},"accountId":${account.id}}]`,
         excludedCredentialRefs: `[{"kind":"account_token","siteId":${site.id},"accountId":${account.id},"tokenId":${accountToken.id}}]`,
       }),
     ]);
@@ -380,6 +384,7 @@ describe('backupService', () => {
         allowedRouteIds: `[${route.id}]`,
         siteWeightMultipliers: `{"${site.id}":1.5}`,
         excludedSiteIds: `[${site.id}]`,
+        allowedCredentialRefs: `[{"kind":"default_api_key","siteId":${site.id},"accountId":${account.id}}]`,
         excludedCredentialRefs: `[{"kind":"account_token","siteId":${site.id},"accountId":${account.id},"tokenId":${accountToken.id}}]`,
         lastUsedAt: now,
       }),

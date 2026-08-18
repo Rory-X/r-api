@@ -932,4 +932,57 @@ describe('downstream api keys routes', () => {
       items: [],
     });
   });
+
+  it('persists credential allowlists and rejects contradictory credential policies', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'allowlist-site',
+      url: 'https://allowlist.example.com',
+      status: 'active',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'allowlist-account',
+      accessToken: '',
+      apiToken: 'sk-upstream-allowlist',
+      status: 'active',
+    }).returning().get();
+    const ref = {
+      kind: 'default_api_key' as const,
+      siteId: site.id,
+      accountId: account.id,
+    };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'credential-allowlist',
+        key: 'sk-credential-allowlist-001',
+        allowedCredentialRefs: [ref],
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json().item.allowedCredentialRefs).toEqual([ref]);
+    const keyId = created.json().item.id as number;
+    const stored = await db.select().from(schema.downstreamApiKeys)
+      .where(eq(schema.downstreamApiKeys.id, keyId))
+      .get();
+    expect(JSON.parse(stored?.allowedCredentialRefs || '[]')).toEqual([ref]);
+
+    const contradictory = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${keyId}`,
+      payload: {
+        allowedCredentialRefs: [ref],
+        excludedCredentialRefs: [ref],
+      },
+    });
+    expect(contradictory.statusCode).toBe(400);
+    expect(contradictory.json()).toMatchObject({
+      success: false,
+      message: '同一站点凭证不能同时出现在允许列表和排除列表',
+    });
+  });
 });

@@ -2262,6 +2262,124 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('uses discovered account models for quota probes and falls back after an unsupported model', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'quota-model-fallback@example.com',
+      accessToken: 'oauth-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-model-fallback',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-model-fallback',
+          email: 'quota-model-fallback@example.com',
+        },
+      }),
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: account.id, modelName: 'gpt-5.4', available: true },
+      { accountId: account.id, modelName: 'gpt-5.3-codex', available: true },
+    ]).run();
+
+    fetchMock
+      .mockResolvedValueOnce(buildCodexQuotaProbeResponse({
+        status: 400,
+        text: JSON.stringify({
+          detail: "The 'gpt-5.4' model is not supported when using this account.",
+        }),
+      }))
+      .mockResolvedValueOnce(buildCodexQuotaProbeResponse({
+        headers: {
+          'x-codex-primary-used-percent': '42',
+          'x-codex-primary-reset-after-seconds': '7200',
+          'x-codex-primary-window-minutes': '300',
+          'x-codex-secondary-used-percent': '18',
+          'x-codex-secondary-reset-after-seconds': '86400',
+          'x-codex-secondary-window-minutes': '10080',
+        },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/connections/${account.id}/quota/refresh`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      quota: expect.objectContaining({
+        status: 'supported',
+        windows: {
+          fiveHour: expect.objectContaining({ used: 42, remaining: 58 }),
+          sevenDay: expect.objectContaining({ used: 18, remaining: 82 }),
+        },
+      }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ model: 'gpt-5.4' });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({ model: 'gpt-5.3-codex' });
+  });
+
+  it('stores a compact quota error when every discovered probe model is unsupported', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'quota-model-unsupported@example.com',
+      accessToken: 'oauth-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-model-unsupported',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-model-unsupported',
+          email: 'quota-model-unsupported@example.com',
+        },
+      }),
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.4',
+      available: true,
+    }).run();
+    fetchMock.mockResolvedValueOnce(buildCodexQuotaProbeResponse({
+      status: 400,
+      text: JSON.stringify({
+        detail: "The 'gpt-5.4' model is not supported when using this account.",
+      }),
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/connections/${account.id}/quota/refresh`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      quota: expect.objectContaining({
+        status: 'error',
+        lastError: 'codex quota probe model gpt-5.4 is not supported by this account',
+      }),
+    });
+    expect(JSON.stringify(response.json())).not.toContain('"detail"');
+  });
+
   it('supports batch quota refresh for oauth connections', async () => {
     const codexSite = await db.insert(schema.sites).values({
       name: 'ChatGPT Codex OAuth',
@@ -2734,7 +2852,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
-      message: 'oauth credentials missing access_token',
+      message: '缺少 access_token/session_token',
     });
   });
 
@@ -2849,6 +2967,50 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('imports an untyped Sub2API accounts envelope by structure', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ id: 'gpt-5.4' }] }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          exported_at: '2026-08-14T12:02:19Z',
+          proxies: [],
+          accounts: [{
+            name: 'Untyped Sub2 Codex',
+            platform: 'openai',
+            type: 'oauth',
+            credentials: {
+              access_token: 'untyped-sub2-access',
+              refresh_token: 'untyped-sub2-refresh',
+              chatgpt_account_id: 'untyped-sub2-account',
+              expires_at: 1_800_000_000,
+            },
+          }],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      imported: 1,
+      failed: 0,
+    });
+    expect(await db.select().from(schema.accounts).all()).toEqual([
+      expect.objectContaining({
+        username: 'Untyped Sub2 Codex',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'untyped-sub2-account',
+      }),
+    ]);
+  });
+
   it('requires explicit plaintext confirmation for the Sub2API export endpoint', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -2938,7 +3100,13 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
-  it('rejects oauth import arrays', async () => {
+  it('imports a Cockpit bare array of native oauth objects', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ id: 'gpt-5.4' }] }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
     const response = await app.inject({
       method: 'POST',
       url: '/api/oauth/import',
@@ -2952,13 +3120,21 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      message: 'data must be a native oauth json object',
+      success: true,
+      imported: 1,
+      failed: 0,
     });
+    expect(await db.select().from(schema.accounts).all()).toEqual([
+      expect.objectContaining({
+        oauthProvider: 'codex',
+        accessToken: 'imported-access-token',
+      }),
+    ]);
   });
 
-  it('returns 500 and rolls back a newly imported oauth account when initial model discovery fails', async () => {
+  it('retains a newly imported oauth account when initial model discovery fails', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 503,
@@ -2985,11 +3161,24 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    expect(response.statusCode).toBe(500);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      message: 'Codex 模型获取失败（HTTP 503: unavailable）',
+      success: true,
+      imported: 1,
+      failed: 0,
+      items: [{
+        status: 'imported',
+        message: 'Codex 模型获取失败（HTTP 503: unavailable）',
+      }],
     });
-    expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({
+      oauth: {
+        modelDiscoveryStatus: 'abnormal',
+        lastModelSyncError: 'Codex 模型获取失败（HTTP 503: unavailable）',
+      },
+    });
     expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(0);
   });
 
@@ -3045,9 +3234,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      success: false,
-      imported: 1,
-      failed: 1,
+      success: true,
+      imported: 2,
+      failed: 0,
       items: [
         expect.objectContaining({
           name: 'batch-success@example.com',
@@ -3055,15 +3244,18 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         }),
         expect.objectContaining({
           name: 'batch-failed@example.com',
-          status: 'failed',
+          status: 'imported',
           message: 'Codex 模型获取失败（HTTP 503: unavailable）',
         }),
       ],
     });
 
     const accounts = await db.select().from(schema.accounts).all();
-    expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.username).toBe('batch-success@example.com');
+    expect(accounts).toHaveLength(2);
+    expect(accounts.map((account) => account.username)).toEqual(expect.arrayContaining([
+      'batch-success@example.com',
+      'batch-failed@example.com',
+    ]));
     expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(1);
   });
 
@@ -3803,6 +3995,14 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       useSystemProxy: true,
       proxyUrl: null,
       refreshedRoutes: true,
+      modelRefresh: {
+        success: true,
+        status: 'success',
+        errorCode: null,
+        errorMessage: null,
+        modelCount: 1,
+        modelsPreview: ['gpt-5.4'],
+      },
     });
 
     const stored = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
@@ -3828,6 +4028,153 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]));
     const routeChannels = await db.select().from(schema.routeChannels).all();
     expect(routeChannels).toHaveLength(1);
+  });
+
+  it('retains the oauth account and reports a Cloudflare egress block when proxy verification fails', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      headers: new Headers({ 'content-type': 'text/html; charset=UTF-8', 'cf-ray': 'test-HKG' }),
+      text: async () => '<!doctype html><html><body>Unable to load site · Cloudflare · IP:101.36.117.253</body></html>',
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth blocked',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-blocked@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'codex-blocked-account',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'codex-blocked-account',
+          accountKey: 'codex-blocked-account',
+          email: 'codex-blocked@example.com',
+        },
+      }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/api/oauth/connections/${account.id}/proxy`,
+      payload: {
+        proxyUrl: 'socks5h://sg-egress.example:1080',
+        useSystemProxy: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      proxyUrl: 'socks5h://sg-egress.example:1080',
+      modelRefresh: {
+        success: false,
+        status: 'failed',
+        errorCode: 'unauthorized',
+        errorMessage: expect.stringContaining('Codex 上游拒绝当前服务器网络访问'),
+        modelCount: 0,
+        modelsPreview: [],
+      },
+    });
+
+    const stored = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    expect(stored?.status).toBe('active');
+    expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
+      proxyUrl: 'socks5h://sg-egress.example:1080',
+      useSystemProxy: false,
+    });
+  });
+
+  it('applies one proxy to a selected oauth batch and reports per-account discovery results', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ id: 'gpt-5.4' }] }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ id: 'gpt-5.4' }] }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth batch',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const accounts = await Promise.all(['one', 'two'].map((suffix) => db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: `codex-batch-${suffix}@example.com`,
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: `codex-batch-${suffix}`,
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: `codex-batch-${suffix}`,
+          accountKey: `codex-batch-${suffix}`,
+          email: `codex-batch-${suffix}@example.com`,
+        },
+      }),
+    }).returning().get()));
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/oauth/connections/proxy',
+      payload: {
+        accountIds: accounts.map((account) => account.id),
+        proxyUrl: 'socks5h://sg-egress.example:1080',
+        useSystemProxy: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      requested: 2,
+      updated: 2,
+      failed: 0,
+      refreshedRoutes: true,
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          accountId: accounts[0].id,
+          success: true,
+          modelRefresh: expect.objectContaining({ success: true, modelCount: 1 }),
+        }),
+        expect.objectContaining({
+          accountId: accounts[1].id,
+          success: true,
+          modelRefresh: expect.objectContaining({ success: true, modelCount: 1 }),
+        }),
+      ]),
+    });
+    const storedAccounts = await db.select().from(schema.accounts).all();
+    expect(storedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: accounts[0].id,
+        extraConfig: expect.stringContaining('socks5h://sg-egress.example:1080'),
+      }),
+      expect.objectContaining({
+        id: accounts[1].id,
+        extraConfig: expect.stringContaining('socks5h://sg-egress.example:1080'),
+      }),
+    ]));
   });
 
   it('imports multiple native oauth json objects in one batch request and applies shared system proxy settings', async () => {

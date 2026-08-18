@@ -15,6 +15,7 @@ import {
   startOauthProviderFlow,
   startOauthRebindFlow,
   submitOauthManualCallback,
+  updateOauthConnectionProxySettingsBatch,
   updateOauthConnectionProxySettings,
 } from '../../services/oauth/service.js';
 import {
@@ -90,7 +91,7 @@ let oauthExportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sens
 let oauthRouteUnitCreateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-create');
 let oauthRouteUnitUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-update');
 let oauthRouteUnitDeleteLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-delete');
-const MAX_OAUTH_QUOTA_BATCH_SIZE = 100;
+const MAX_OAUTH_CONNECTION_BATCH_SIZE = 100;
 
 export function resetOauthSensitiveRouteLimiterForTests(options: {
   points?: number;
@@ -366,6 +367,43 @@ export async function oauthRoutes(app: FastifyInstance) {
     },
   );
 
+  app.patch<{ Body: unknown }>(
+    '/api/oauth/connections/proxy',
+    { preHandler: [limitOauthConnectionMutate] },
+    async (request, reply) => {
+      try {
+        await oauthProxyUpdateLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
+      const parsedBody = parseOauthConnectionProxyUpdatePayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+      const accountIds = Array.isArray(parsedBody.data.accountIds)
+        ? Array.from(new Set(parsedBody.data.accountIds.filter((id) => Number.isInteger(id) && id > 0)))
+        : [];
+      if (accountIds.length === 0) {
+        return reply.code(400).send({ message: 'accountIds is required' });
+      }
+      if (accountIds.length > MAX_OAUTH_CONNECTION_BATCH_SIZE) {
+        return reply.code(400).send({
+          message: `accountIds must contain at most ${MAX_OAUTH_CONNECTION_BATCH_SIZE} items`,
+        });
+      }
+      const normalizedProxyUrl = parseSiteProxyUrlInput(parsedBody.data.proxyUrl);
+      if (normalizedProxyUrl.present && !normalizedProxyUrl.valid) {
+        return reply.code(400).send({ message: 'invalid proxy url' });
+      }
+      return updateOauthConnectionProxySettingsBatch({
+        accountIds,
+        proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
+        useSystemProxy: parsedBody.data.useSystemProxy,
+      });
+    },
+  );
+
   app.delete<{ Params: { accountId: string } }>(
     '/api/oauth/connections/:accountId',
     { preHandler: [limitOauthConnectionMutate] },
@@ -410,9 +448,9 @@ export async function oauthRoutes(app: FastifyInstance) {
       if (accountIds.length === 0) {
         return reply.code(400).send({ message: 'accountIds is required' });
       }
-      if (accountIds.length > MAX_OAUTH_QUOTA_BATCH_SIZE) {
+      if (accountIds.length > MAX_OAUTH_CONNECTION_BATCH_SIZE) {
         return reply.code(400).send({
-          message: `accountIds must contain at most ${MAX_OAUTH_QUOTA_BATCH_SIZE} items`,
+          message: `accountIds must contain at most ${MAX_OAUTH_CONNECTION_BATCH_SIZE} items`,
         });
       }
       return refreshOauthConnectionQuotaBatch(accountIds);
@@ -435,8 +473,8 @@ export async function oauthRoutes(app: FastifyInstance) {
       }
       const hasBatchItems = Array.isArray(parsedBody.data.items) && parsedBody.data.items.length > 0;
       const data = parsedBody.data.data;
-      if (!hasBatchItems && (!data || typeof data !== 'object' || Array.isArray(data))) {
-        return reply.code(400).send({ message: 'data must be a native oauth json object' });
+      if (!hasBatchItems && data === undefined) {
+        return reply.code(400).send({ message: 'data must contain OAuth credentials' });
       }
       const normalizedProxyUrl = parseSiteProxyUrlInput(parsedBody.data.proxyUrl);
       if (normalizedProxyUrl.present && !normalizedProxyUrl.valid) {

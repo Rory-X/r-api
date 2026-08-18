@@ -46,10 +46,15 @@ import {
   listOauthRouteUnitsByAccountIds,
 } from './routeUnitService.js';
 import { publishTokenRouterCacheInvalidation } from '../tokenRouterCacheInvalidation.js';
+import {
+  normalizeOauthCredentialImport,
+  OauthCredentialImportFormatError,
+} from '../../../shared/oauthCredentialImport.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
 const OAUTH_QUOTA_BATCH_REFRESH_CONCURRENCY = 4;
+const OAUTH_PROXY_BATCH_UPDATE_CONCURRENCY = 3;
 const MAX_OAUTH_IMPORT_BATCH_SIZE = 100;
 type OauthProviderHeaderAccountInput = OauthIdentityCarrierLike & {
   extraConfig?: OauthExtraConfigInput;
@@ -75,15 +80,6 @@ type ImportedNativeOauthJson = {
   expired?: unknown;
   disabled?: unknown;
   last_refresh?: unknown;
-};
-
-type ImportedSub2ApiAccount = {
-  name?: unknown;
-  platform?: unknown;
-  type?: unknown;
-  credentials?: unknown;
-  extra?: unknown;
-  disabled?: unknown;
 };
 
 export class OauthImportValidationError extends Error {
@@ -451,48 +447,38 @@ async function mapWithConcurrency<T, TResult>(
 function normalizeImportedOauthJsonItems(input: {
   data?: unknown;
   items?: unknown[];
-}): unknown[] {
-  const extractItem = (value: unknown): unknown[] => {
-    if (!isRecord(value) || !Array.isArray(value.accounts)) return [value];
-    const envelopeType = asNonEmptyString(value.type);
-    if (envelopeType && envelopeType !== 'sub2api-data' && envelopeType !== 'sub2api-bundle') {
-      throwOauthImportValidationError(`unsupported oauth import envelope: ${envelopeType}`);
-    }
-    const extracted = value.accounts.flatMap((rawAccount): ImportedNativeOauthJson[] => {
-      if (!isRecord(rawAccount)) return [];
-      const account = rawAccount as ImportedSub2ApiAccount;
-      if (asNonEmptyString(account.type)?.toLowerCase() !== 'oauth') return [];
-      if (!isRecord(account.credentials)) {
-        return [{ type: asNonEmptyString(account.platform) || 'unknown' }];
-      }
-      const credentials = account.credentials as Record<string, unknown>;
-      const extra = isRecord(account.extra) ? account.extra as Record<string, unknown> : null;
-      return [{
-        ...credentials,
-        type: asNonEmptyString(extra?.auth_provider)
-          || asNonEmptyString(account.platform)
-          || 'unknown',
-        email: asNonEmptyString(credentials.email) || asNonEmptyString(account.name),
-        account_id: asNonEmptyString(credentials.chatgpt_account_id)
-          || asNonEmptyString(credentials.account_id),
-        expired: credentials.expires_at,
-        disabled: account.disabled === true,
-      }];
-    });
-    if (extracted.length <= 0) {
-      throwOauthImportValidationError('sub2api package does not contain official oauth accounts');
-    }
-    return extracted;
-  };
-
+}): {
+  payloadItems: ImportedNativeOauthJson[];
+  isBatch: boolean;
+  skippedItems: Array<{ name: string; message: string }>;
+} {
   const batchItems = Array.isArray(input.items) ? input.items : [];
-  if (batchItems.length > 0) {
-    return batchItems.flatMap(extractItem);
+  const sources = batchItems.length > 0
+    ? batchItems
+    : (input.data === undefined ? [] : [input.data]);
+  const payloadItems: ImportedNativeOauthJson[] = [];
+  const skippedItems: Array<{ name: string; message: string }> = [];
+  let isBatch = batchItems.length > 0;
+
+  for (const [sourceIndex, source] of sources.entries()) {
+    try {
+      const normalized = normalizeOauthCredentialImport(source);
+      payloadItems.push(...normalized.records);
+      isBatch = isBatch || normalized.format !== 'native' || normalized.records.length > 1;
+      skippedItems.push(...normalized.issues.map((issue) => ({
+        name: batchItems.length > 0 ? `items[${sourceIndex}]${issue.path.slice(1)}` : issue.path,
+        message: issue.message,
+      })));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '无法识别 OAuth 凭证格式';
+      if (sources.length === 1 || !(error instanceof OauthCredentialImportFormatError)) {
+        throwOauthImportValidationError(message);
+      }
+      skippedItems.push({ name: `items[${sourceIndex}]`, message });
+    }
   }
-  if (input.data === undefined) {
-    return [];
-  }
-  return extractItem(input.data);
+
+  return { payloadItems, isBatch, skippedItems };
 }
 
 async function activatePersistedOauthAccount(input: {
@@ -514,6 +500,7 @@ async function activatePersistedOauthAccount(input: {
   useSystemProxy?: boolean;
   persistedStatus?: 'active' | 'disabled';
   activateExistingAfterRefresh?: boolean;
+  retainOnModelDiscoveryFailure?: boolean;
 }) {
   const rollbackSnapshotByRebindAccountId = typeof input.rebindAccountId === 'number' && input.rebindAccountId > 0
     ? await db.select().from(schema.modelAvailability)
@@ -543,20 +530,25 @@ async function activatePersistedOauthAccount(input: {
 
   const shouldRefreshModels = input.activateExistingAfterRefresh === true
     || (persisted.account.status || 'active') === 'active';
+  let modelDiscoveryWarning: string | undefined;
   if (shouldRefreshModels) {
     const refreshResult = await refreshModelsForAccount(
       persisted.account.id,
       persisted.previousAccount ? { allowInactive: true } : undefined,
     );
     if (refreshResult.status !== 'success') {
-      await revertPersistedOauthAccount({
-        accountId: persisted.account.id,
-        created: persisted.created,
-        previousAccount: persisted.previousAccount,
-        previousModelAvailability,
-      });
-      await routeRefreshWorkflow.rebuildRoutesOnly();
-      throw new Error(refreshResult.errorMessage || `${input.definition.metadata.provider} model discovery failed`);
+      modelDiscoveryWarning = refreshResult.errorMessage
+        || `${input.definition.metadata.provider} model discovery failed`;
+      if (!input.retainOnModelDiscoveryFailure) {
+        await revertPersistedOauthAccount({
+          accountId: persisted.account.id,
+          created: persisted.created,
+          previousAccount: persisted.previousAccount,
+          previousModelAvailability,
+        });
+        await routeRefreshWorkflow.rebuildRoutesOnly();
+        throw new Error(modelDiscoveryWarning);
+      }
     }
   }
 
@@ -572,7 +564,7 @@ async function activatePersistedOauthAccount(input: {
     }
 
     await routeRefreshWorkflow.rebuildRoutesOnly();
-    return persisted;
+    return { ...persisted, modelDiscoveryWarning };
   } catch (error) {
     await revertPersistedOauthAccount({
       accountId: persisted.account.id,
@@ -1165,9 +1157,9 @@ export async function importOauthConnectionsFromNativeJson(input: {
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
 }) {
-  const payloadItems = normalizeImportedOauthJsonItems(input);
-  const continueOnItemFailure = Array.isArray(input.items)
-    || (isRecord(input.data) && Array.isArray(input.data.accounts));
+  const normalizedImport = normalizeImportedOauthJsonItems(input);
+  const { payloadItems } = normalizedImport;
+  const continueOnItemFailure = normalizedImport.isBatch;
   if (payloadItems.length <= 0) {
     throwOauthImportValidationError('data must be a native oauth json object');
   }
@@ -1180,7 +1172,11 @@ export async function importOauthConnectionsFromNativeJson(input: {
     accountId?: number;
     provider?: string;
     message?: string;
-  }> = [];
+  }> = normalizedImport.skippedItems.map((item) => ({
+    name: item.name,
+    status: 'skipped',
+    message: item.message,
+  }));
   let imported = 0;
 
   for (const rawPayload of payloadItems) {
@@ -1202,6 +1198,7 @@ export async function importOauthConnectionsFromNativeJson(input: {
         proxyUrl: input.proxyUrl,
         useSystemProxy: input.useSystemProxy,
         persistedStatus: resolvedIdentity.disabled ? 'disabled' : 'active',
+        retainOnModelDiscoveryFailure: true,
       });
       imported += 1;
       items.push({
@@ -1209,6 +1206,7 @@ export async function importOauthConnectionsFromNativeJson(input: {
         status: 'imported',
         provider: resolvedIdentity.provider,
         accountId: persisted.account?.id,
+        message: persisted.modelDiscoveryWarning,
       });
     } catch (error: any) {
       items.push({
@@ -1229,21 +1227,26 @@ export async function importOauthConnectionsFromNativeJson(input: {
   }
 
   const failed = items.filter((item) => item.status === 'failed').length;
+  const skipped = items.filter((item) => item.status === 'skipped').length;
 
   return {
     success: failed === 0,
     imported,
-    skipped: 0,
+    skipped,
     failed,
     items,
   };
 }
 
-export async function updateOauthConnectionProxySettings(input: {
+type OauthConnectionProxySettingsInput = {
   accountId: number;
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
-}) {
+};
+
+async function updateOauthConnectionProxySettingsWithoutRouteRebuild(
+  input: OauthConnectionProxySettingsInput,
+) {
   const account = await db.select().from(schema.accounts)
     .where(eq(schema.accounts.id, input.accountId))
     .get();
@@ -1267,7 +1270,6 @@ export async function updateOauthConnectionProxySettings(input: {
   }).where(eq(schema.accounts.id, input.accountId)).run();
 
   const refreshResult = await refreshModelsForAccount(input.accountId, { allowInactive: true });
-  await routeRefreshWorkflow.rebuildRoutesOnly();
 
   return {
     success: true as const,
@@ -1278,10 +1280,60 @@ export async function updateOauthConnectionProxySettings(input: {
     modelRefresh: {
       success: refreshResult.status === 'success',
       status: refreshResult.status,
+      errorCode: refreshResult.errorCode,
       errorMessage: refreshResult.status === 'success'
         ? null
         : (refreshResult.errorMessage || '模型刷新失败'),
+      modelCount: refreshResult.modelCount,
+      modelsPreview: refreshResult.modelsPreview,
     },
+  };
+}
+
+export async function updateOauthConnectionProxySettings(input: OauthConnectionProxySettingsInput) {
+  const result = await updateOauthConnectionProxySettingsWithoutRouteRebuild(input);
+  await routeRefreshWorkflow.rebuildRoutesOnly();
+  return result;
+}
+
+export async function updateOauthConnectionProxySettingsBatch(input: {
+  accountIds: number[];
+  proxyUrl?: string | null;
+  useSystemProxy?: boolean;
+}) {
+  const uniqueIds = Array.from(new Set(input.accountIds.filter((id) => Number.isFinite(id) && id > 0)));
+  const items = await mapWithConcurrency(uniqueIds, OAUTH_PROXY_BATCH_UPDATE_CONCURRENCY, async (accountId) => {
+    try {
+      const result = await updateOauthConnectionProxySettingsWithoutRouteRebuild({
+        accountId,
+        proxyUrl: input.proxyUrl,
+        useSystemProxy: input.useSystemProxy,
+      });
+      return {
+        accountId,
+        success: true as const,
+        proxyUrl: result.proxyUrl,
+        useSystemProxy: result.useSystemProxy,
+        modelRefresh: result.modelRefresh,
+      };
+    } catch (error: any) {
+      return {
+        accountId,
+        success: false as const,
+        error: error?.message || 'oauth proxy update failed',
+      };
+    }
+  });
+
+  await routeRefreshWorkflow.rebuildRoutesOnly();
+  const updated = items.filter((item) => item.success).length;
+  return {
+    success: items.every((item) => item.success),
+    requested: uniqueIds.length,
+    updated,
+    failed: items.length - updated,
+    refreshedRoutes: true as const,
+    items,
   };
 }
 

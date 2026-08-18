@@ -3,8 +3,11 @@ import {
   startOAuthLoopbackCallbackServer,
   stopOAuthLoopbackCallbackServers,
 } from './localCallbackServer.js';
+import { canBindLocalTestListener } from '../../test-fixtures/localListenerCapability.js';
 
-describe('oauth loopback callback server', () => {
+const describeWithLocalListener = canBindLocalTestListener() ? describe : describe.skip;
+
+describeWithLocalListener('oauth loopback callback server', () => {
   afterEach(async () => {
     await stopOAuthLoopbackCallbackServers();
   });

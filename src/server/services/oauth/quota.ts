@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { fetch } from 'undici';
 import { db, schema } from '../../db/index.js';
 import { mergeAccountExtraConfig } from '../accountExtraConfig.js';
@@ -48,7 +48,8 @@ type NormalizedCodexQuotaHeaders = {
   };
 };
 
-const CODEX_QUOTA_PROBE_MODEL = 'gpt-5.4';
+const CODEX_QUOTA_PROBE_FALLBACK_MODEL = 'gpt-5.4';
+const CODEX_QUOTA_PROBE_MAX_MODELS = 5;
 const CODEX_QUOTA_PROBE_VERSION = '0.101.0';
 const CODEX_QUOTA_PROBE_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464';
 const CODEX_QUOTA_PROBE_BETA = 'responses-2025-03-11';
@@ -532,9 +533,9 @@ export async function recordOauthQuotaHeadersSnapshot(input: {
   }
 }
 
-function buildCodexQuotaProbePayload(): Record<string, unknown> {
+function buildCodexQuotaProbePayload(modelName: string): Record<string, unknown> {
   return {
-    model: CODEX_QUOTA_PROBE_MODEL,
+    model: modelName,
     input: [
       {
         role: 'user',
@@ -550,6 +551,66 @@ function buildCodexQuotaProbePayload(): Record<string, unknown> {
     store: false,
     instructions: CODEX_QUOTA_PROBE_INSTRUCTIONS,
   };
+}
+
+function appendUniqueModel(target: string[], seen: Set<string>, value: unknown): void {
+  const modelName = asTrimmedString(value);
+  const key = modelName?.toLowerCase();
+  if (!modelName || !key || seen.has(key)) return;
+  seen.add(key);
+  target.push(modelName);
+}
+
+async function resolveCodexQuotaProbeModels(
+  accountId: number,
+  oauth: Pick<OauthInfo, 'lastDiscoveredModels'>,
+): Promise<string[]> {
+  const rows = await db.select({
+    id: schema.modelAvailability.id,
+    modelName: schema.modelAvailability.modelName,
+  }).from(schema.modelAvailability)
+    .where(and(
+      eq(schema.modelAvailability.accountId, accountId),
+      eq(schema.modelAvailability.available, true),
+    ))
+    .orderBy(asc(schema.modelAvailability.id))
+    .all();
+
+  const models: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) appendUniqueModel(models, seen, row.modelName);
+  for (const modelName of oauth.lastDiscoveredModels || []) {
+    appendUniqueModel(models, seen, modelName);
+  }
+  if (models.length <= 0) {
+    appendUniqueModel(models, seen, CODEX_QUOTA_PROBE_FALLBACK_MODEL);
+  }
+  return models.slice(0, CODEX_QUOTA_PROBE_MAX_MODELS);
+}
+
+function extractCodexQuotaProbeErrorMessage(errorText: string, status: number): string {
+  const text = errorText.replace(/\s+/g, ' ').trim();
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const nestedError = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+        ? parsed.error as Record<string, unknown>
+        : null;
+      const message = asTrimmedString(parsed.detail)
+        || asTrimmedString(parsed.message)
+        || asTrimmedString(nestedError?.message)
+        || asTrimmedString(nestedError?.detail);
+      if (message) return message;
+    } catch {
+      // Fall through to the compact plain-text fallback.
+    }
+  }
+  return text || `codex quota probe failed with status ${status}`;
+}
+
+function isUnsupportedCodexQuotaProbeModel(status: number, message: string): boolean {
+  if (status < 400 || status >= 500) return false;
+  return /(?:model[^.]{0,120}(?:is\s+)?not\s+supported|unsupported[^.]{0,40}model)/i.test(message);
 }
 
 function buildCodexQuotaProbeUrl(baseUrl: string): string {
@@ -591,25 +652,57 @@ async function probeCodexQuotaSnapshot(input: {
     siteId: input.account.siteId,
     extraConfig: input.account.extraConfig,
   });
-  const requestBody = JSON.stringify(buildCodexQuotaProbePayload());
+  const probeModels = await resolveCodexQuotaProbeModels(input.account.id, input.oauth);
 
   return runWithSiteApiEndpointPool(site, async (target) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CODEX_QUOTA_PROBE_TIMEOUT_MS);
-    let response: Awaited<ReturnType<typeof fetch>>;
     try {
-      response = await fetch(
-        buildCodexQuotaProbeUrl(target.baseUrl),
-        withExplicitProxyRequestInit(proxyUrl, {
-          method: 'POST',
-          headers: buildCodexQuotaProbeHeaders({
-            accessToken,
-            accountId: input.oauth.accountId || input.oauth.accountKey,
+      for (const [index, modelName] of probeModels.entries()) {
+        const response = await fetch(
+          buildCodexQuotaProbeUrl(target.baseUrl),
+          withExplicitProxyRequestInit(proxyUrl, {
+            method: 'POST',
+            headers: buildCodexQuotaProbeHeaders({
+              accessToken,
+              accountId: input.oauth.accountId || input.oauth.accountKey,
+            }),
+            body: JSON.stringify(buildCodexQuotaProbePayload(modelName)),
+            signal: controller.signal,
           }),
-          body: requestBody,
-          signal: controller.signal,
-        }),
-      );
+        );
+
+        const snapshot = buildCodexQuotaSnapshotFromHeaders(input.oauth, response.headers, input.syncedAt);
+        if (snapshot) {
+          const responseBody = response as { body?: { cancel?: () => Promise<void> | void } };
+          void Promise.resolve(responseBody.body?.cancel?.()).catch(() => {});
+          return snapshot;
+        }
+
+        const errorText = await response.text().catch(() => '');
+        const errorMessage = extractCodexQuotaProbeErrorMessage(errorText, response.status);
+        if (!response.ok) {
+          const unsupportedModel = isUnsupportedCodexQuotaProbeModel(response.status, errorMessage);
+          if (unsupportedModel && index < probeModels.length - 1) {
+            continue;
+          }
+          const resetHint = parseCodexQuotaResetHint(response.status, errorText, Date.now());
+          return buildQuotaErrorSnapshot({
+            oauth: input.oauth,
+            message: unsupportedModel
+              ? `codex quota probe model ${modelName} is not supported by this account`
+              : errorMessage,
+            syncedAt: input.syncedAt,
+            ...(resetHint ? { lastLimitResetAt: resetHint.resetAt } : {}),
+          });
+        }
+
+        return buildQuotaErrorSnapshot({
+          oauth: input.oauth,
+          message: 'codex quota probe response did not expose x-codex rate limit headers',
+          syncedAt: input.syncedAt,
+        });
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(`codex quota probe timeout (${Math.round(CODEX_QUOTA_PROBE_TIMEOUT_MS / 1000)}s)`);
@@ -618,28 +711,9 @@ async function probeCodexQuotaSnapshot(input: {
     } finally {
       clearTimeout(timeout);
     }
-
-    const snapshot = buildCodexQuotaSnapshotFromHeaders(input.oauth, response.headers, input.syncedAt);
-    if (snapshot) {
-      const responseBody = response as { body?: { cancel?: () => Promise<void> | void } };
-      void Promise.resolve(responseBody.body?.cancel?.()).catch(() => {});
-      return snapshot;
-    }
-
-    const errorText = await response.text().catch(() => '');
-    if (!response.ok) {
-      const resetHint = parseCodexQuotaResetHint(response.status, errorText, Date.now());
-      return buildQuotaErrorSnapshot({
-        oauth: input.oauth,
-        message: errorText || `codex quota probe failed with status ${response.status}`,
-        syncedAt: input.syncedAt,
-        ...(resetHint ? { lastLimitResetAt: resetHint.resetAt } : {}),
-      });
-    }
-
     return buildQuotaErrorSnapshot({
       oauth: input.oauth,
-      message: 'codex quota probe response did not expose x-codex rate limit headers',
+      message: 'codex quota probe did not find an available model',
       syncedAt: input.syncedAt,
     });
   });

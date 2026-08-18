@@ -114,6 +114,7 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
   | 'allowedRouteIds'
   | 'siteWeightMultipliers'
   | 'excludedSiteIds'
+  | 'allowedCredentialRefs'
   | 'excludedCredentialRefs'
 > & Partial<Pick<DownstreamApiKeyRow, 'usedCost' | 'usedRequests' | 'lastUsedAt'>>;
 
@@ -1836,6 +1837,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           allowedRouteIds: row.allowedRouteIds ?? null,
           siteWeightMultipliers: row.siteWeightMultipliers ?? null,
           excludedSiteIds: row.excludedSiteIds ?? null,
+          allowedCredentialRefs: row.allowedCredentialRefs ?? null,
           excludedCredentialRefs: row.excludedCredentialRefs ?? null,
           lastUsedAt: runtimeDownstream?.lastUsedAt ?? row.lastUsedAt ?? null,
         }).run();
