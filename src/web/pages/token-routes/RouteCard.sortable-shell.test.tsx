@@ -99,7 +99,6 @@ describe('RouteCard sortable shell', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,

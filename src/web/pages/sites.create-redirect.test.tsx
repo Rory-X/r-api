@@ -76,7 +76,7 @@ async function createSiteAndClickModalChoice(
             <Routes>
               <Route path="/sites" element={<Sites />} />
               <Route path="/channels/connections" element={<LocationProbe />} />
-              <Route path="/official-credentials" element={<LocationProbe />} />
+              <Route path="/channels/official" element={<LocationProbe />} />
             </Routes>
           </MemoryRouter>
         </ToastProvider>,
@@ -181,14 +181,14 @@ describe('Sites create redirect', () => {
     const rendered = await createSiteAndClickModalChoice({ id: 23, name: 'Demo Site', platform: 'codex' }, 'later');
 
     // User chose "later", so should stay on sites page.
-    expect(rendered).not.toContain('/official-credentials?');
+    expect(rendered).not.toContain('/channels/official?');
     expect(rendered).not.toContain('/channels/connections?');
   });
 
-  it('opens the independent official credential pool without carrying site ownership', async () => {
+  it('opens the official channel tab without carrying site ownership', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 24, name: 'Demo Site', platform: 'codex' }, 'session');
 
-    expect(rendered).toContain('/official-credentials?');
+    expect(rendered).toContain('/channels/official?');
     expect(rendered).toContain('provider=codex');
     expect(rendered).toContain('create=1');
     expect(rendered).not.toContain('siteId=24');

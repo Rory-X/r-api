@@ -12,7 +12,7 @@ import { tr } from '../i18n.js';
 import DownstreamKeyEditorModal, {
   TagInput,
   type DownstreamCredentialOption,
-  type DownstreamExcludedCredentialRef,
+  type DownstreamCredentialRef,
   type DownstreamKeyEditorForm,
   type DownstreamSiteOption,
 } from './downstream-keys/DownstreamKeyEditorModal.js';
@@ -50,7 +50,8 @@ type DownstreamApiKeyItem = {
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
-  excludedCredentialRefs: DownstreamExcludedCredentialRef[];
+  allowedCredentialRefs: DownstreamCredentialRef[];
+  excludedCredentialRefs: DownstreamCredentialRef[];
   lastUsedAt: string | null;
 };
 
@@ -133,7 +134,7 @@ function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
 }
 
-function buildExcludedCredentialRefKey(ref: DownstreamExcludedCredentialRef): string {
+function buildCredentialRefKey(ref: DownstreamCredentialRef): string {
   return ref.kind === 'account_token'
     ? `${ref.kind}:${ref.siteId}:${ref.accountId}:${ref.tokenId}`
     : `${ref.kind}:${ref.siteId}:${ref.accountId}`;
@@ -143,29 +144,29 @@ function normalizeExcludedSiteIds(values: number[]): number[] {
   return uniqIds(values).sort((left, right) => left - right);
 }
 
-function normalizeExcludedCredentialRefs(values: DownstreamExcludedCredentialRef[]): DownstreamExcludedCredentialRef[] {
-  const deduped = new Map<string, DownstreamExcludedCredentialRef>();
+function normalizeCredentialRefs(values: DownstreamCredentialRef[]): DownstreamCredentialRef[] {
+  const deduped = new Map<string, DownstreamCredentialRef>();
   for (const value of values) {
     if (!value || !Number.isFinite(value.siteId) || !Number.isFinite(value.accountId)) continue;
     if (value.kind === 'account_token') {
       if (!Number.isFinite(value.tokenId)) continue;
-      const normalized: DownstreamExcludedCredentialRef = {
+      const normalized: DownstreamCredentialRef = {
         kind: 'account_token',
         siteId: Math.trunc(value.siteId),
         accountId: Math.trunc(value.accountId),
         tokenId: Math.trunc(value.tokenId),
       };
-      deduped.set(buildExcludedCredentialRefKey(normalized), normalized);
+      deduped.set(buildCredentialRefKey(normalized), normalized);
       continue;
     }
-    const normalized: DownstreamExcludedCredentialRef = {
-      kind: 'default_api_key',
+    const normalized: DownstreamCredentialRef = {
+      kind: value.kind,
       siteId: Math.trunc(value.siteId),
       accountId: Math.trunc(value.accountId),
     };
-    deduped.set(buildExcludedCredentialRefKey(normalized), normalized);
+    deduped.set(buildCredentialRefKey(normalized), normalized);
   }
-  return Array.from(deduped.values()).sort((left, right) => buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right)));
+  return Array.from(deduped.values()).sort((left, right) => buildCredentialRefKey(left).localeCompare(buildCredentialRefKey(right)));
 }
 
 function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
@@ -354,7 +355,8 @@ function buildEditorForm(
     selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
     excludedSiteIds: normalizeExcludedSiteIds(Array.isArray(item?.excludedSiteIds) ? item.excludedSiteIds : []),
-    excludedCredentialRefs: normalizeExcludedCredentialRefs(Array.isArray(item?.excludedCredentialRefs) ? item.excludedCredentialRefs : []),
+    allowedCredentialRefs: normalizeCredentialRefs(Array.isArray(item?.allowedCredentialRefs) ? item.allowedCredentialRefs : []),
+    excludedCredentialRefs: normalizeCredentialRefs(Array.isArray(item?.excludedCredentialRefs) ? item.excludedCredentialRefs : []),
   };
 }
 
@@ -380,6 +382,11 @@ function summarizeSiteWeightMultipliers(weights: Record<number, number> | undefi
   if (entries.length === 0) return '默认倍率';
   if (entries.length === 1) return `${entries[0][0]} => ${entries[0][1]}`;
   return `${entries[0][0]} => ${entries[0][1]} +${entries.length - 1}`;
+}
+
+function summarizeCredentialScope(refs: DownstreamCredentialRef[] | undefined): string {
+  const count = Array.isArray(refs) ? refs.length : 0;
+  return count > 0 ? `仅 ${count} 个凭证` : '所有可用凭证';
 }
 
 function summarizeTags(tags: string[]): string {
@@ -556,7 +563,20 @@ export default function DownstreamKeys() {
         const siteId = Number(account?.site?.id);
         const accountId = Number(account?.id);
         const apiToken = String(account?.apiToken || '').trim();
-        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0 || !apiToken) continue;
+        const oauthProvider = String(account?.oauthProvider || '').trim();
+        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0) continue;
+        if (oauthProvider) {
+          credentialOptions.push({
+            key: `account_credential:${siteId}:${accountId}`,
+            ref: { kind: 'account_credential', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId) },
+            siteName: String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
+            accountName: String(account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
+            label: `${oauthProvider} OAuth`,
+            detail: '账号级 OAuth 凭证',
+          });
+          continue;
+        }
+        if (!apiToken) continue;
         credentialOptions.push({
           key: `default_api_key:${siteId}:${accountId}`,
           ref: { kind: 'default_api_key', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId) },
@@ -632,6 +652,7 @@ export default function DownstreamKeys() {
         allowedRouteIds: raw?.allowedRouteIds ?? item.allowedRouteIds,
         siteWeightMultipliers: raw?.siteWeightMultipliers ?? item.siteWeightMultipliers,
         excludedSiteIds: raw?.excludedSiteIds ?? item.excludedSiteIds,
+        allowedCredentialRefs: raw?.allowedCredentialRefs ?? item.allowedCredentialRefs,
         excludedCredentialRefs: raw?.excludedCredentialRefs ?? item.excludedCredentialRefs,
         lastUsedAt: raw?.lastUsedAt ?? item.lastUsedAt,
       };
@@ -843,7 +864,8 @@ export default function DownstreamKeys() {
         allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
         siteWeightMultipliers,
         excludedSiteIds: normalizeExcludedSiteIds(editorForm.excludedSiteIds),
-        excludedCredentialRefs: normalizeExcludedCredentialRefs(editorForm.excludedCredentialRefs),
+        allowedCredentialRefs: normalizeCredentialRefs(editorForm.allowedCredentialRefs),
+        excludedCredentialRefs: normalizeCredentialRefs(editorForm.excludedCredentialRefs),
       };
       if (editingId) {
         await api.updateDownstreamApiKey(editingId, payload);
@@ -1185,6 +1207,7 @@ export default function DownstreamKeys() {
                   <MobileField label="标签" value={summarizeTags(row.tags || [])} stacked />
                   <MobileField label="模型" value={summarizeModelLimit(row.supportedModels || [])} stacked />
                   <MobileField label="群组" value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
+                  <MobileField label="凭证范围" value={summarizeCredentialScope(row.allowedCredentialRefs)} stacked />
                   <MobileField label="倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
                   <MobileField label="额度" value={`${row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? '成本不限' : formatMoney(row.maxCost)}`} stacked />
                   <MobileField label="并发" value={row.maxConcurrency == null ? '不限' : row.maxConcurrency.toLocaleString()} />
@@ -1242,6 +1265,7 @@ export default function DownstreamKeys() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelLimit(row.supportedModels || [])}</span></div>
                           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>凭证：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeCredentialScope(row.allowedCredentialRefs)}</span></div>
                           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeTags(row.tags || [])}</span></div>
                           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>倍率：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>

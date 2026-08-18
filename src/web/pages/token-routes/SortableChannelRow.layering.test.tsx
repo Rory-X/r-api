@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { create } from 'react-test-renderer';
+import { act, create } from 'react-test-renderer';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableChannelRow } from './SortableChannelRow.js';
@@ -43,6 +43,91 @@ function collectText(node: { children?: Array<string | { children?: unknown[] }>
 }
 
 describe('SortableChannelRow layering', () => {
+  it('hides credential configuration for direct API Key channels while keeping channel actions', () => {
+    const channel = buildChannel({
+      account: {
+        username: 'direct-key',
+        accessToken: null,
+        extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+        credentialMode: 'apikey',
+      },
+    });
+
+    for (const mobile of [false, true]) {
+      const root = create(
+        <DndContext>
+          <SortableContext items={[channel.id]} strategy={verticalListSortingStrategy}>
+            <SortableChannelRow
+              channel={channel}
+              mobile={mobile}
+              decisionCandidate={undefined}
+              isExactRoute
+              loadingDecision={false}
+              isSavingPriority={false}
+              tokenOptions={[]}
+              activeTokenId={0}
+              isUpdatingToken={false}
+              onTokenDraftChange={vi.fn()}
+              onSaveToken={vi.fn()}
+              onDeleteChannel={vi.fn()}
+              onToggleEnabled={vi.fn()}
+            />
+          </SortableContext>
+        </DndContext>,
+      );
+      const text = collectText(root.root);
+
+      expect(text).toContain('API Key直连');
+      expect(text).not.toContain('配置通道');
+      expect(text).not.toContain('收起配置');
+      expect(text).not.toContain('当前生效：direct-key');
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).includes('保存'))).toHaveLength(0);
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).includes('禁用'))).toHaveLength(1);
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).includes('站点屏蔽'))).toHaveLength(0);
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).includes('移除'))).toHaveLength(1);
+    }
+  });
+
+  it('keeps credential configuration for session channels with token choices', () => {
+    const channel = buildChannel({
+      account: {
+        username: 'panel-account',
+        accessToken: 'session-token',
+        extraConfig: JSON.stringify({ credentialMode: 'session' }),
+        credentialMode: 'session',
+      },
+    });
+    const root = create(
+      <DndContext>
+        <SortableContext items={[channel.id]} strategy={verticalListSortingStrategy}>
+          <SortableChannelRow
+            channel={channel}
+            mobile
+            decisionCandidate={undefined}
+            isExactRoute
+            loadingDecision={false}
+            isSavingPriority={false}
+            tokenOptions={[{ id: 501, name: 'shared-token', isDefault: true }]}
+            activeTokenId={0}
+            isUpdatingToken={false}
+            onTokenDraftChange={vi.fn()}
+            onSaveToken={vi.fn()}
+            onDeleteChannel={vi.fn()}
+            onToggleEnabled={vi.fn()}
+          />
+        </SortableContext>
+      </DndContext>,
+    );
+
+    const configureButton = root.root.find((node) => (
+      node.type === 'button' && collectText(node) === '配置通道'
+    ));
+    act(() => configureButton.props.onClick());
+
+    expect(collectText(root.root)).toContain('收起配置');
+    expect(root.root.findAll((node) => node.type === 'button' && collectText(node).includes('保存'))).toHaveLength(1);
+  });
+
   it('does not force a base z-index on desktop rows when they are not being dragged', () => {
     const channel = buildChannel();
     const root = create(
@@ -67,7 +152,6 @@ describe('SortableChannelRow layering', () => {
             onSaveToken={vi.fn()}
             onDeleteChannel={vi.fn()}
             onToggleEnabled={vi.fn()}
-            onSiteBlockModel={vi.fn()}
           />
         </SortableContext>
       </DndContext>,
@@ -107,7 +191,6 @@ describe('SortableChannelRow layering', () => {
             onSaveToken={vi.fn()}
             onDeleteChannel={vi.fn()}
             onToggleEnabled={vi.fn()}
-            onSiteBlockModel={vi.fn()}
           />
         </SortableContext>
       </DndContext>,
@@ -142,7 +225,6 @@ describe('SortableChannelRow layering', () => {
             onSaveToken={vi.fn()}
             onDeleteChannel={vi.fn()}
             onToggleEnabled={vi.fn()}
-            onSiteBlockModel={vi.fn()}
           />
         </SortableContext>
       </DndContext>,
@@ -389,5 +471,64 @@ describe('SortableChannelRow layering', () => {
     const text = collectText(root.root);
     expect(text).toContain('调度状态冷却中主用层 · 第 1 顺位 · 当前跳过');
     expect(text).not.toContain('选中概率');
+  });
+
+  it('shows failure, cooldown, observation-pool and sticky status on every channel row', () => {
+    const channel = buildChannel({
+      failCount: 6,
+      consecutiveFailCount: 2,
+      cooldownUntil: '2999-01-01T00:00:00.000Z',
+    });
+    const root = create(
+      <DndContext>
+        <SortableContext items={[channel.id]} strategy={verticalListSortingStrategy}>
+          <SortableChannelRow
+            channel={channel}
+            routingStrategy="stable_first"
+            decisionCandidate={{
+              channelId: channel.id,
+              accountId: channel.accountId,
+              username: 'cc',
+              siteName: 'codelab',
+              tokenName: 'default',
+              priority: 0,
+              sortOrder: 0,
+              weight: channel.weight,
+              eligible: false,
+              recentlyFailed: true,
+              avoidedByRecentFailure: true,
+              failureCount: 6,
+              consecutiveFailureCount: 2,
+              cooldownUntil: channel.cooldownUntil,
+              observationPool: 'observation',
+              observationRemainingRequests: 8,
+              observationDueNow: false,
+              stickyMode: 'session',
+              stickyHit: true,
+              stickyBindingCount: 2,
+              probability: 0,
+              reason: '冷却中',
+            }}
+            isExactRoute
+            loadingDecision={false}
+            isSavingPriority={false}
+            tokenOptions={[]}
+            activeTokenId={0}
+            isUpdatingToken={false}
+            onTokenDraftChange={vi.fn()}
+            onSaveToken={vi.fn()}
+            onDeleteChannel={vi.fn()}
+            onToggleEnabled={vi.fn()}
+          />
+        </SortableContext>
+      </DndContext>,
+    );
+
+    const status = root.root.findByProps({ 'data-testid': 'channel-runtime-status' });
+    const text = collectText(status);
+    expect(text).toContain('失败 6 · 连续 2');
+    expect(text).toContain('冷却至');
+    expect(text).toContain('观察池 · 剩 8 请求');
+    expect(text).toContain('粘黏命中 2');
   });
 });

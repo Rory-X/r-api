@@ -21,9 +21,15 @@ export type SummaryItem = {
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
+  allowedCredentialRefs: Array<
+    | { kind: 'account_token'; siteId: number; accountId: number; tokenId: number }
+    | { kind: 'default_api_key'; siteId: number; accountId: number }
+    | { kind: 'account_credential'; siteId: number; accountId: number }
+  >;
   excludedCredentialRefs: Array<
     | { kind: 'account_token'; siteId: number; accountId: number; tokenId: number }
     | { kind: 'default_api_key'; siteId: number; accountId: number }
+    | { kind: 'account_credential'; siteId: number; accountId: number }
   >;
   lastUsedAt: string | null;
   createdAt: string | null;

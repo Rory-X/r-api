@@ -67,7 +67,7 @@ function buildDirectBindingPresentation(
 
   return {
     isFollowingAccountDefault: false,
-    bindingModeLabel: 'API令牌',
+    bindingModeLabel: 'API Key直连',
     badgeTone: 'warning',
     effectiveTokenName: accountName,
     helperText: `当前直接使用连接「${accountName}」保存的 API Key，不依赖上游 API Token。`,

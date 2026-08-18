@@ -240,6 +240,12 @@ export default function Dashboard({
   >({});
   const [trendDays, setTrendDays] = useState(7);
   const [showInactiveSites, setShowInactiveSites] = useState(false);
+  const [mobileAnalyticsOpen, setMobileAnalyticsOpen] = useState(false);
+  const [mobileChartView, setMobileChartView] = useState<
+    "distribution" | "trend"
+  >("distribution");
+  const [mobileModelAnalysisOpen, setMobileModelAnalysisOpen] = useState(false);
+  const [mobileSiteInfoOpen, setMobileSiteInfoOpen] = useState(false);
   const toast = useToast();
   const normalizedAdminName = (adminName || "").trim() || "\u7ba1\u7406\u5458";
 
@@ -382,7 +388,7 @@ export default function Dashboard({
 
   if (loading && !data) {
     return (
-      <div className="animate-fade-in">
+      <div className="animate-fade-in" aria-busy="true">
         <div
           className="skeleton"
           style={{
@@ -392,55 +398,108 @@ export default function Dashboard({
             borderRadius: "var(--radius-sm)",
           }}
         />
-        <div className="dashboard-stat-grid">
-          {[...Array(5)].map((_, i) => (
-            <div
-              key={i}
-              className={`stat-card animate-slide-up stagger-${i + 1}`}
-            >
-              <div
-                className="skeleton"
-                style={{ width: 80, height: 14, marginBottom: 16 }}
-              />
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: 12 }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div
+        {isMobile ? (
+          <div className="dashboard-mobile-overview dashboard-mobile-overview-loading">
+            <div className="dashboard-mobile-health">
+              <div className="dashboard-mobile-health-copy">
+                <div className="skeleton" style={{ width: 110, height: 10 }} />
+                <div className="skeleton" style={{ width: 72, height: 29 }} />
+                <div className="skeleton" style={{ width: 132, height: 10 }} />
+              </div>
+              <div className="dashboard-mobile-live-metrics">
+                {[0, 1].map((item) => (
+                  <span key={item}>
+                    <span
+                      className="skeleton"
+                      style={{ width: 28, height: 10 }}
+                    />
+                    <span
+                      className="skeleton"
+                      style={{ width: 38, height: 15 }}
+                    />
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="dashboard-mobile-shortcuts">
+              {[0, 1, 2, 3].map((item) => (
+                <span key={item} className="dashboard-mobile-shortcut-skeleton">
+                  <span
                     className="skeleton"
-                    style={{ width: 36, height: 36, borderRadius: "50%" }}
+                    style={{ width: 20, height: 20 }}
                   />
-                  <div>
-                    <div
-                      className="skeleton"
-                      style={{ width: 60, height: 10, marginBottom: 6 }}
-                    />
-                    <div
-                      className="skeleton"
-                      style={{ width: 80, height: 20 }}
-                    />
-                  </div>
+                  <span className="skeleton" style={{ width: 42, height: 9 }} />
+                </span>
+              ))}
+            </div>
+            <div className="dashboard-mobile-metric-grid">
+              {[0, 1, 2, 3, 4, 5].map((item) => (
+                <div key={item}>
+                  <span className="skeleton" style={{ width: 52, height: 9 }} />
+                  <span
+                    className="skeleton"
+                    style={{ width: 76, height: 17 }}
+                  />
+                  <span className="skeleton" style={{ width: 64, height: 9 }} />
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="dashboard-stat-grid">
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                className={`stat-card animate-slide-up stagger-${i + 1}`}
+              >
+                <div
+                  className="skeleton"
+                  style={{ width: 80, height: 14, marginBottom: 16 }}
+                />
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 12 }}
+                >
                   <div
-                    className="skeleton"
-                    style={{ width: 36, height: 36, borderRadius: "50%" }}
-                  />
-                  <div>
+                    style={{ display: "flex", alignItems: "center", gap: 12 }}
+                  >
                     <div
                       className="skeleton"
-                      style={{ width: 60, height: 10, marginBottom: 6 }}
+                      style={{ width: 36, height: 36, borderRadius: "50%" }}
                     />
+                    <div>
+                      <div
+                        className="skeleton"
+                        style={{ width: 60, height: 10, marginBottom: 6 }}
+                      />
+                      <div
+                        className="skeleton"
+                        style={{ width: 80, height: 20 }}
+                      />
+                    </div>
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 12 }}
+                  >
                     <div
                       className="skeleton"
-                      style={{ width: 80, height: 20 }}
+                      style={{ width: 36, height: 36, borderRadius: "50%" }}
                     />
+                    <div>
+                      <div
+                        className="skeleton"
+                        style={{ width: 60, height: 10, marginBottom: 6 }}
+                      />
+                      <div
+                        className="skeleton"
+                        style={{ width: 80, height: 20 }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -507,6 +566,8 @@ export default function Dashboard({
   const todayTotal = safeNumber(data?.todayCheckin?.total);
   const proxy24hSuccess = safeNumber(data?.proxy24h?.success);
   const proxy24hTotal = safeNumber(data?.proxy24h?.total);
+  const proxy24hSuccessRate =
+    proxy24hTotal > 0 ? Math.round((proxy24hSuccess / proxy24hTotal) * 100) : 0;
   const totalTokens = safeNumber(data?.proxy24h?.totalTokens);
   const performanceWindowSeconds = Math.max(
     1,
@@ -582,19 +643,38 @@ export default function Dashboard({
     );
   };
 
+  const runAllSiteSpeedTests = async () => {
+    await Promise.all(
+      sites.map(async (site: any, idx: number) => {
+        const siteKey = getSiteSpeedKey(site, idx);
+        setSiteSpeedState(siteKey, { status: "loading" });
+        try {
+          const start = performance.now();
+          await fetch(`${site.url}/v1/models`, {
+            method: "GET",
+            mode: "no-cors",
+          });
+          const ms = Math.round(performance.now() - start);
+          setSiteSpeedState(siteKey, { status: "done", ms });
+        } catch {
+          setSiteSpeedState(siteKey, { status: "timeout" });
+        }
+      }),
+    );
+    toast.success("全部测速完成");
+  };
+
   return (
     <div className="animate-fade-in">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 24,
-        }}
-      >
-        <h2 className="greeting">
-          {getGreeting() + "\uFF0C" + normalizedAdminName}
-        </h2>
+      <div className="dashboard-header">
+        <div>
+          <h2 className="greeting">
+            {getGreeting() + "\uFF0C" + normalizedAdminName}
+          </h2>
+          {isMobile ? (
+            <div className="dashboard-mobile-subtitle">API 运行概览</div>
+          ) : null}
+        </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => {
@@ -628,116 +708,297 @@ export default function Dashboard({
         </div>
       </div>
 
-      <div className="dashboard-stat-grid">
-        <div className="stat-card animate-slide-up stagger-1">
-          <div className="stat-card-header">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-              />
-            </svg>
-            账户数据
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-blue">
+      {isMobile ? (
+        <div className="dashboard-mobile-overview">
+          <section
+            className="dashboard-mobile-health"
+            aria-label="24 小时 API 运行状态"
+          >
+            <div className="dashboard-mobile-health-copy">
+              <span>24 小时请求成功率</span>
+              <strong>{proxy24hSuccessRate}%</strong>
+              <small>
+                {Math.round(proxy24hSuccess).toLocaleString()} /{" "}
+                {Math.round(proxy24hTotal).toLocaleString()} 次请求成功
+              </small>
+            </div>
+            <div className="dashboard-mobile-live-metrics">
+              <span>
+                <small>RPM</small>
+                <strong>
+                  {Math.round(requestsPerMinute).toLocaleString()}
+                </strong>
+              </span>
+              <span>
+                <small>TPM</small>
+                <strong>{formatCompactTokenMetric(tokensPerMinute)}</strong>
+              </span>
+            </div>
+          </section>
+
+          <nav className="dashboard-mobile-shortcuts" aria-label="首页快捷管理">
+            <Link to="/channels">
               <svg
-                width="16"
-                height="16"
-                fill="none"
                 viewBox="0 0 24 24"
+                fill="none"
                 stroke="currentColor"
+                aria-hidden="true"
               >
                 <path
+                  d="M4 6h16M4 12h16M4 18h10"
+                  strokeWidth="1.8"
                   strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">当前余额</div>
-              <div className="stat-value animate-count-up">
-                ${totalBalance.toFixed(2)}
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color:
-                    todayReward > 0
-                      ? "var(--color-success)"
-                      : "var(--color-text-muted)",
-                  fontWeight: 500,
-                  marginTop: 2,
-                }}
-              >
-                今日 +{todayReward.toFixed(2)}
-              </div>
-            </div>
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-green">
+              <span>管理渠道</span>
+            </Link>
+            <Link to="/routes">
               <svg
-                width="16"
-                height="16"
-                fill="none"
                 viewBox="0 0 24 24"
+                fill="none"
                 stroke="currentColor"
+                aria-hidden="true"
               >
                 <path
+                  d="M7 7h12m0 0-3-3m3 3-3 3M17 17H5m0 0 3 3m-3-3 3-3"
+                  strokeWidth="1.8"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
                 />
               </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">累计消耗</div>
-              <div className="stat-value animate-count-up">
-                ${totalUsed.toFixed(2)}
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color:
-                    todaySpend > 0
-                      ? "var(--color-danger)"
-                      : "var(--color-text-muted)",
-                  fontWeight: 500,
-                  marginTop: 2,
-                }}
+              <span>调整路由</span>
+            </Link>
+            <Link to="/downstream-keys">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                aria-hidden="true"
               >
-                今日 -{todaySpend.toFixed(2)}
-              </div>
+                <circle cx="9" cy="10" r="4" strokeWidth="1.8" />
+                <path
+                  d="m12 13 7 7m-2-2 2-2"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </svg>
+              <span>管理密钥</span>
+            </Link>
+            <Link to="/logs">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span>查看日志</span>
+            </Link>
+          </nav>
+
+          <div className="dashboard-mobile-metric-grid">
+            <div>
+              <span>当前余额</span>
+              <strong>${totalBalance.toFixed(2)}</strong>
+              <small>今日 +{todayReward.toFixed(2)}</small>
+            </div>
+            <div>
+              <span>今日消耗</span>
+              <strong>${todaySpend.toFixed(2)}</strong>
+              <small>累计 ${totalUsed.toFixed(2)}</small>
+            </div>
+            <div>
+              <span>活跃账户</span>
+              <strong>
+                {Math.round(activeAccounts)}/{Math.round(totalAccounts)}
+              </strong>
+              <small>当前可用资源</small>
+            </div>
+            <div>
+              <span>24h Tokens</span>
+              <strong>{formatCompactTokenMetric(totalTokens)}</strong>
+              <small>过去 24 小时</small>
+            </div>
+            <div>
+              <span>今日签到</span>
+              <strong>
+                {Math.round(todaySuccess)}/{Math.round(todayTotal)}
+              </strong>
+              <small>
+                {todayTotal > 0
+                  ? Math.round((todaySuccess / todayTotal) * 100)
+                  : 0}
+                % 成功
+              </small>
+            </div>
+            <div>
+              <span>性能窗口</span>
+              <strong>{performanceWindowSeconds}s</strong>
+              <small>实时采样范围</small>
             </div>
           </div>
         </div>
-
-        <div className="stat-card animate-slide-up stagger-2">
-          <div className="stat-card-header">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-              />
-            </svg>
-            使用统计
+      ) : (
+        <div className="dashboard-stat-grid">
+          <div className="stat-card animate-slide-up stagger-1">
+            <div className="stat-card-header">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+                />
+              </svg>
+              账户数据
+            </div>
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-blue">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">当前余额</div>
+                <div className="stat-value animate-count-up">
+                  ${totalBalance.toFixed(2)}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color:
+                      todayReward > 0
+                        ? "var(--color-success)"
+                        : "var(--color-text-muted)",
+                    fontWeight: 500,
+                    marginTop: 2,
+                  }}
+                >
+                  今日 +{todayReward.toFixed(2)}
+                </div>
+              </div>
+            </div>
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-green">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">累计消耗</div>
+                <div className="stat-value animate-count-up">
+                  ${totalUsed.toFixed(2)}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color:
+                      todaySpend > 0
+                        ? "var(--color-danger)"
+                        : "var(--color-text-muted)",
+                    fontWeight: 500,
+                    marginTop: 2,
+                  }}
+                >
+                  今日 -{todaySpend.toFixed(2)}
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-yellow">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+
+          <div className="stat-card animate-slide-up stagger-2">
+            <div className="stat-card-header">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                />
+              </svg>
+              使用统计
+            </div>
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-yellow">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">24h 请求</div>
+                <div className="stat-value animate-count-up">
+                  {Math.round(proxy24hTotal).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-cyan">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">成功请求</div>
+                <div className="stat-value animate-count-up">
+                  {Math.round(proxy24hSuccess).toLocaleString()}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="stat-card animate-slide-up stagger-3">
+            <div className="stat-card-header">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -745,256 +1006,196 @@ export default function Dashboard({
                   d="M13 10V3L4 14h7v7l9-11h-7z"
                 />
               </svg>
+              资源消耗
             </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">24h 请求</div>
-              <div className="stat-value animate-count-up">
-                {Math.round(proxy24hTotal).toLocaleString()}
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-pink">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">活跃账户</div>
+                <div className="stat-value animate-count-up">
+                  {Math.round(activeAccounts)}/{Math.round(totalAccounts)}
+                </div>
+              </div>
+            </div>
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-red">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">24h Tokens</div>
+                <div className="stat-value animate-count-up">
+                  {formatCompactTokenMetric(totalTokens)}
+                </div>
               </div>
             </div>
           </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-cyan">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
-                />
-              </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">成功请求</div>
-              <div className="stat-value animate-count-up">
-                {Math.round(proxy24hSuccess).toLocaleString()}
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <div className="stat-card animate-slide-up stagger-3">
-          <div className="stat-card-header">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-            资源消耗
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-pink">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+          <div className="stat-card animate-slide-up stagger-4">
+            <div className="stat-card-header">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
                 />
               </svg>
+              签到状态
             </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">活跃账户</div>
-              <div className="stat-value animate-count-up">
-                {Math.round(activeAccounts)}/{Math.round(totalAccounts)}
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-purple">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">今日签到</div>
+                <div className="stat-value animate-count-up">
+                  {Math.round(todaySuccess)}/{Math.round(todayTotal)}
+                </div>
+              </div>
+            </div>
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-orange">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">成功率</div>
+                <div className="stat-value animate-count-up">
+                  {todayTotal > 0
+                    ? Math.round((todaySuccess / todayTotal) * 100)
+                    : 0}
+                  %
+                </div>
               </div>
             </div>
           </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-red">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                />
-              </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">24h Tokens</div>
-              <div className="stat-value animate-count-up">
-                {formatCompactTokenMetric(totalTokens)}
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <div className="stat-card animate-slide-up stagger-4">
-          <div className="stat-card-header">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-            签到状态
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-purple">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+          <div className="stat-card animate-slide-up stagger-5">
+            <div className="stat-card-header">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                  d="M13 3v10h8M5 12h3m-3 4h6m-6 4h10a2 2 0 002-2V8.828a2 2 0 00-.586-1.414l-4.828-4.828A2 2 0 0010.172 2H5a2 2 0 00-2 2v14a2 2 0 002 2z"
                 />
               </svg>
+              性能指标
             </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">今日签到</div>
-              <div className="stat-value animate-count-up">
-                {Math.round(todaySuccess)}/{Math.round(todayTotal)}
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-blue">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 13h4v7H4zm6-9h4v16h-4zm6 5h4v11h-4z"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">RPM</div>
+                <div className="stat-value animate-count-up">
+                  {Math.round(requestsPerMinute).toLocaleString()}
+                </div>
+                <div className="dashboard-stat-note">
+                  最近 {performanceWindowSeconds} 秒请求
+                </div>
               </div>
             </div>
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-orange">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">成功率</div>
-              <div className="stat-value animate-count-up">
-                {todayTotal > 0
-                  ? Math.round((todaySuccess / todayTotal) * 100)
-                  : 0}
-                %
+            <div className="stat-card-row">
+              <div className="stat-icon stat-icon-cyan">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 4v16m8-8H4m13-5l3 3-3 3M8 7L5 10l3 3"
+                  />
+                </svg>
+              </div>
+              <div className="dashboard-stat-content">
+                <div className="stat-label">TPM</div>
+                <div className="stat-value animate-count-up">
+                  {formatCompactTokenMetric(tokensPerMinute)}
+                </div>
+                <div className="dashboard-stat-note">
+                  最近 {performanceWindowSeconds} 秒 Tokens
+                </div>
               </div>
             </div>
           </div>
         </div>
-
-        <div className="stat-card animate-slide-up stagger-5">
-          <div className="stat-card-header">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 3v10h8M5 12h3m-3 4h6m-6 4h10a2 2 0 002-2V8.828a2 2 0 00-.586-1.414l-4.828-4.828A2 2 0 0010.172 2H5a2 2 0 00-2 2v14a2 2 0 002 2z"
-              />
-            </svg>
-            性能指标
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-blue">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 13h4v7H4zm6-9h4v16h-4zm6 5h4v11h-4z"
-                />
-              </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">RPM</div>
-              <div className="stat-value animate-count-up">
-                {Math.round(requestsPerMinute).toLocaleString()}
-              </div>
-              <div className="dashboard-stat-note">
-                最近 {performanceWindowSeconds} 秒请求
-              </div>
-            </div>
-          </div>
-          <div className="stat-card-row">
-            <div className="stat-icon stat-icon-cyan">
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 4v16m8-8H4m13-5l3 3-3 3M8 7L5 10l3 3"
-                />
-              </svg>
-            </div>
-            <div className="dashboard-stat-content">
-              <div className="stat-label">TPM</div>
-              <div className="stat-value animate-count-up">
-                {formatCompactTokenMetric(tokensPerMinute)}
-              </div>
-              <div className="dashboard-stat-note">
-                最近 {performanceWindowSeconds} 秒 Tokens
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* 站点级分析 */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 12,
-          marginTop: 8,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 14,
-            fontWeight: 600,
-            color: "var(--color-text-primary)",
-          }}
-        >
+      <div className="dashboard-section-header">
+        <div className="dashboard-section-title">
           <svg
             width="16"
             height="16"
@@ -1011,53 +1212,104 @@ export default function Dashboard({
           </svg>
           站点分析
         </div>
-        <div style={{ display: "flex", gap: 4 }}>
-          {[7, 30, 90].map((d) => (
+        <div className="dashboard-section-actions">
+          {isMobile ? (
             <button
-              key={d}
-              onClick={() => setTrendDays(d)}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 500,
-                border: "none",
-                cursor: "pointer",
-                background:
-                  trendDays === d ? "var(--color-primary)" : "var(--color-bg)",
-                color:
-                  trendDays === d ? "white" : "var(--color-text-secondary)",
-                transition: "all 0.2s ease",
-              }}
+              type="button"
+              className="dashboard-mobile-analytics-toggle"
+              aria-expanded={mobileAnalyticsOpen}
+              onClick={() => setMobileAnalyticsOpen((current) => !current)}
             >
-              {d}天
+              {mobileAnalyticsOpen ? "收起趋势" : "展开趋势"}
             </button>
-          ))}
+          ) : null}
+          {(!isMobile || mobileAnalyticsOpen) && (
+            <div style={{ display: "flex", gap: 4 }}>
+              {[7, 30, 90].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setTrendDays(d)}
+                  style={{
+                    padding: "4px 12px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    border: "none",
+                    cursor: "pointer",
+                    background:
+                      trendDays === d
+                        ? "var(--color-primary)"
+                        : "var(--color-bg)",
+                    color:
+                      trendDays === d ? "white" : "var(--color-text-secondary)",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  {d}天
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-          gap: 16,
-          marginBottom: 24,
-        }}
-      >
-        <div className="chart-panel-enter animate-slide-up stagger-6" style={{ display: "flex", minWidth: 0 }}>
-          <Suspense fallback={<ChartFallback height={320} />}>
-            <SiteDistributionChart
-              data={siteDistribution}
-              loading={siteLoading}
-            />
-          </Suspense>
+      {isMobile && mobileAnalyticsOpen ? (
+        <div
+          className="dashboard-mobile-chart-switch"
+          role="group"
+          aria-label="站点分析图表"
+        >
+          <button
+            type="button"
+            className={mobileChartView === "distribution" ? "active" : ""}
+            onClick={() => setMobileChartView("distribution")}
+          >
+            站点分布
+          </button>
+          <button
+            type="button"
+            className={mobileChartView === "trend" ? "active" : ""}
+            onClick={() => setMobileChartView("trend")}
+          >
+            使用趋势
+          </button>
         </div>
-        <div className="chart-panel-enter animate-slide-up stagger-7" style={{ display: "flex", minWidth: 0 }}>
-          <Suspense fallback={<ChartFallback height={320} />}>
-            <SiteTrendChart data={siteTrend} loading={siteLoading} />
-          </Suspense>
+      ) : null}
+
+      {(!isMobile || mobileAnalyticsOpen) && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+            gap: 16,
+            marginBottom: 24,
+          }}
+        >
+          {(!isMobile || mobileChartView === "distribution") && (
+            <div
+              className="chart-panel-enter animate-slide-up stagger-6"
+              style={{ display: "flex", minWidth: 0 }}
+            >
+              <Suspense fallback={<ChartFallback height={320} />}>
+                <SiteDistributionChart
+                  data={siteDistribution}
+                  loading={siteLoading}
+                />
+              </Suspense>
+            </div>
+          )}
+          {(!isMobile || mobileChartView === "trend") && (
+            <div
+              className="chart-panel-enter animate-slide-up stagger-7"
+              style={{ display: "flex", minWidth: 0 }}
+            >
+              <Suspense fallback={<ChartFallback height={320} />}>
+                <SiteTrendChart data={siteTrend} loading={siteLoading} />
+              </Suspense>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       <div className="chart-container animate-slide-up stagger-8 site-observability-panel">
         <div className="site-observability-header">
@@ -1256,19 +1508,20 @@ export default function Dashboard({
       </div>
 
       <div
+        className="dashboard-insights-grid"
         style={{
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr" : "1fr 300px",
           gap: 16,
         }}
       >
-        <div className="chart-container animate-slide-up stagger-8">
+        <div className="chart-container dashboard-model-analysis-card animate-slide-up stagger-8">
           <div
+            className="dashboard-insight-section-header"
             style={{
               display: "flex",
               alignItems: "center",
               gap: 12,
-              marginBottom: 14,
             }}
           >
             <div
@@ -1297,25 +1550,63 @@ export default function Dashboard({
               </svg>
               模型数据分析
             </div>
+            {isMobile && (
+              <button
+                type="button"
+                className="dashboard-mobile-section-toggle"
+                aria-expanded={mobileModelAnalysisOpen}
+                aria-controls="dashboard-model-analysis-content"
+                onClick={() => setMobileModelAnalysisOpen((open) => !open)}
+              >
+                <span>{mobileModelAnalysisOpen ? "收起" : "展开"}</span>
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                  style={{
+                    transform: mobileModelAnalysisOpen
+                      ? "rotate(180deg)"
+                      : undefined,
+                  }}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 9l6 6 6-6"
+                  />
+                </svg>
+              </button>
+            )}
           </div>
-          {insightsLoading && !insightsData ? (
-            <ChartFallback height={260} />
-          ) : (
-            <Suspense fallback={<ChartFallback height={260} />}>
-              <ModelAnalysisPanel data={insightsData?.modelAnalysis} />
-            </Suspense>
+          {(!isMobile || mobileModelAnalysisOpen) && (
+            <div
+              id="dashboard-model-analysis-content"
+              className="dashboard-model-analysis-content"
+            >
+              {insightsLoading && !insightsData ? (
+                <ChartFallback height={260} />
+              ) : (
+                <Suspense fallback={<ChartFallback height={260} />}>
+                  <ModelAnalysisPanel data={insightsData?.modelAnalysis} />
+                </Suspense>
+              )}
+            </div>
           )}
         </div>
 
         <div
-          className="chart-container animate-slide-up stagger-9"
+          className="chart-container dashboard-site-info-card animate-slide-up stagger-9"
           style={{ display: "flex", flexDirection: "column" }}
         >
           <div
+            className="dashboard-insight-section-header"
             style={{
               fontSize: 14,
               fontWeight: 600,
-              marginBottom: 16,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -1339,7 +1630,7 @@ export default function Dashboard({
               </svg>
               站点信息
             </span>
-            {sites.length > 0 && (
+            {!isMobile && sites.length > 0 && (
               <button
                 className="btn btn-ghost"
                 style={{
@@ -1351,26 +1642,7 @@ export default function Dashboard({
                   alignItems: "center",
                   gap: 4,
                 }}
-                onClick={async () => {
-                  await Promise.all(
-                    sites.map(async (s: any, idx: number) => {
-                      const siteKey = getSiteSpeedKey(s, idx);
-                      setSiteSpeedState(siteKey, { status: "loading" });
-                      try {
-                        const start = performance.now();
-                        await fetch(`${s.url}/v1/models`, {
-                          method: "GET",
-                          mode: "no-cors",
-                        });
-                        const ms = Math.round(performance.now() - start);
-                        setSiteSpeedState(siteKey, { status: "done", ms });
-                      } catch {
-                        setSiteSpeedState(siteKey, { status: "timeout" });
-                      }
-                    }),
-                  );
-                  toast.success("全部测速完成");
-                }}
+                onClick={runAllSiteSpeedTests}
               >
                 <svg
                   width="12"
@@ -1389,246 +1661,308 @@ export default function Dashboard({
                 一键测速
               </button>
             )}
-          </div>
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
-            {sites.length > 0 ? (
-              <>
-                {dashboardSitePreview.map((site: any, idx: number) => (
-                  <div
-                    key={site.id || idx}
-                    className="dashboard-site-preview-item"
-                    style={{
-                      padding: "10px 12px",
-                      border: "1px solid var(--color-border-light)",
-                      borderRadius: "var(--radius-md)",
-                      background: "var(--color-bg)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 6,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, fontSize: 13 }}>
-                        {site.name}
-                      </span>
-                      <button
-                        className="btn btn-ghost"
-                        style={{
-                          fontSize: 11,
-                          padding: "2px 8px",
-                          border: "1px solid var(--color-border)",
-                          borderRadius: 6,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 3,
-                        }}
-                        onClick={async () => {
-                          const siteKey = getSiteSpeedKey(site, idx);
-                          setSiteSpeedState(siteKey, { status: "loading" });
-                          try {
-                            const start = performance.now();
-                            await fetch(`${site.url}/v1/models`, {
-                              method: "GET",
-                              mode: "no-cors",
-                            });
-                            const ms = Math.round(performance.now() - start);
-                            setSiteSpeedState(siteKey, { status: "done", ms });
-                            toast.success(`${site.name}: ${ms}ms`);
-                          } catch {
-                            setSiteSpeedState(siteKey, { status: "timeout" });
-                            toast.error(`${site.name}: 测速失败`);
-                          }
-                        }}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M13 10V3L4 14h7v7l9-11h-7z"
-                          />
-                        </svg>
-                        <span>{renderSiteSpeedLabel(site, idx)}</span>
-                      </button>
-                      <a
-                        href={site.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-ghost"
-                        style={{
-                          fontSize: 11,
-                          padding: "2px 8px",
-                          border: "1px solid var(--color-border)",
-                          borderRadius: 6,
-                          textDecoration: "none",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 3,
-                        }}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                          />
-                        </svg>
-                        跳转
-                      </a>
-                    </div>
-                    <a
-                      href={site.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        fontSize: 12,
-                        color: "var(--color-info)",
-                        wordBreak: "break-all",
-                      }}
-                    >
-                      {site.url}
-                    </a>
-                  </div>
-                ))}
-                {hiddenDashboardSiteCount > 0 && (
-                  <Link
-                    to="/channels/sites"
-                    className="btn btn-ghost dashboard-site-preview-more"
-                    style={{
-                      width: "100%",
-                      minHeight: 34,
-                      border: "1px solid var(--color-border-light)",
-                      color: "var(--color-text-secondary)",
-                      textDecoration: "none",
-                    }}
-                  >
-                    查看全部 {sites.length} 个站点
-                    <svg
-                      width="13"
-                      height="13"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
-                  </Link>
-                )}
-              </>
-            ) : (
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  padding: 20,
-                }}
+            {isMobile && (
+              <button
+                type="button"
+                className="dashboard-mobile-section-toggle"
+                aria-expanded={mobileSiteInfoOpen}
+                aria-controls="dashboard-site-info-content"
+                onClick={() => setMobileSiteInfoOpen((open) => !open)}
               >
-                <div style={{ width: 60, height: 60, opacity: 0.25 }}>
+                <span>{mobileSiteInfoOpen ? "收起" : "展开"}</span>
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                  style={{
+                    transform: mobileSiteInfoOpen
+                      ? "rotate(180deg)"
+                      : undefined,
+                  }}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 9l6 6 6-6"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
+          {(!isMobile || mobileSiteInfoOpen) && (
+            <div
+              id="dashboard-site-info-content"
+              className="dashboard-site-info-content"
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+            >
+              {isMobile && sites.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-ghost dashboard-site-info-test-all"
+                  onClick={runAllSiteSpeedTests}
+                >
                   <svg
+                    width="14"
+                    height="14"
                     fill="none"
                     viewBox="0 0 24 24"
-                    stroke="var(--color-text-muted)"
-                    width="60"
-                    height="60"
+                    stroke="currentColor"
+                    aria-hidden="true"
                   >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      strokeWidth={0.6}
-                      d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      strokeWidth={2}
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
                     />
                   </svg>
-                </div>
+                  一键测速
+                </button>
+              )}
+              {sites.length > 0 ? (
+                <>
+                  {dashboardSitePreview.map((site: any, idx: number) => (
+                    <div
+                      key={site.id || idx}
+                      className="dashboard-site-preview-item"
+                      style={{
+                        padding: "10px 12px",
+                        border: "1px solid var(--color-border-light)",
+                        borderRadius: "var(--radius-md)",
+                        background: "var(--color-bg)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginBottom: 6,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>
+                          {site.name}
+                        </span>
+                        <button
+                          className="btn btn-ghost"
+                          style={{
+                            fontSize: 11,
+                            padding: "2px 8px",
+                            border: "1px solid var(--color-border)",
+                            borderRadius: 6,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 3,
+                          }}
+                          onClick={async () => {
+                            const siteKey = getSiteSpeedKey(site, idx);
+                            setSiteSpeedState(siteKey, { status: "loading" });
+                            try {
+                              const start = performance.now();
+                              await fetch(`${site.url}/v1/models`, {
+                                method: "GET",
+                                mode: "no-cors",
+                              });
+                              const ms = Math.round(performance.now() - start);
+                              setSiteSpeedState(siteKey, {
+                                status: "done",
+                                ms,
+                              });
+                              toast.success(`${site.name}: ${ms}ms`);
+                            } catch {
+                              setSiteSpeedState(siteKey, { status: "timeout" });
+                              toast.error(`${site.name}: 测速失败`);
+                            }
+                          }}
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M13 10V3L4 14h7v7l9-11h-7z"
+                            />
+                          </svg>
+                          <span>{renderSiteSpeedLabel(site, idx)}</span>
+                        </button>
+                        <a
+                          href={site.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-ghost"
+                          style={{
+                            fontSize: 11,
+                            padding: "2px 8px",
+                            border: "1px solid var(--color-border)",
+                            borderRadius: 6,
+                            textDecoration: "none",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 3,
+                          }}
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                            />
+                          </svg>
+                          跳转
+                        </a>
+                      </div>
+                      <a
+                        href={site.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: 12,
+                          color: "var(--color-info)",
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        {site.url}
+                      </a>
+                    </div>
+                  ))}
+                  {hiddenDashboardSiteCount > 0 && (
+                    <Link
+                      to="/channels/sites"
+                      className="btn btn-ghost dashboard-site-preview-more"
+                      style={{
+                        width: "100%",
+                        minHeight: 34,
+                        border: "1px solid var(--color-border-light)",
+                        color: "var(--color-text-secondary)",
+                        textDecoration: "none",
+                      }}
+                    >
+                      查看全部 {sites.length} 个站点
+                      <svg
+                        width="13"
+                        height="13"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </Link>
+                  )}
+                </>
+              ) : (
                 <div
                   style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--color-text-secondary)",
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    padding: 20,
                   }}
                 >
-                  代理端点可用
+                  <div style={{ width: 60, height: 60, opacity: 0.25 }}>
+                    <svg
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="var(--color-text-muted)"
+                      width="60"
+                      height="60"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={0.6}
+                        d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    代理端点可用
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--color-text-muted)",
+                      textAlign: "center",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    使用{" "}
+                    <code
+                      style={{
+                        background: "var(--color-bg)",
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        fontSize: 10,
+                      }}
+                    >
+                      /v1/chat/completions
+                    </code>{" "}
+                    访问
+                  </div>
                 </div>
+              )}
+              <div
+                style={{
+                  marginTop: "auto",
+                  paddingTop: 8,
+                  borderTop: "1px solid var(--color-border-light)",
+                }}
+              >
                 <div
                   style={{
                     fontSize: 11,
                     color: "var(--color-text-muted)",
-                    textAlign: "center",
-                    lineHeight: 1.6,
+                    marginBottom: 2,
                   }}
                 >
-                  使用{" "}
-                  <code
-                    style={{
-                      background: "var(--color-bg)",
-                      padding: "2px 6px",
-                      borderRadius: 4,
-                      fontSize: 10,
-                    }}
-                  >
-                    /v1/chat/completions
-                  </code>{" "}
-                  访问
+                  24h 活跃调用
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>
+                  {proxy24hTotal > 0
+                    ? `${Math.round(proxy24hSuccess)}/${Math.round(proxy24hTotal)}`
+                    : "—"}
                 </div>
               </div>
-            )}
-            <div
-              style={{
-                marginTop: "auto",
-                paddingTop: 8,
-                borderTop: "1px solid var(--color-border-light)",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--color-text-muted)",
-                  marginBottom: 2,
-                }}
-              >
-                24h 活跃调用
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>
-                {proxy24hTotal > 0
-                  ? `${Math.round(proxy24hSuccess)}/${Math.round(proxy24hTotal)}`
-                  : "—"}
-              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

@@ -141,6 +141,9 @@ function manualPromptProgress(task: BridgeContinuationTask | null): {
   if (status === 'waiting' && reason === 'turn_active') {
     return { label: '已送达', detail: 'Codex 已接收并正在处理', className: 'badge-success' };
   }
+  if (status === 'waiting' && reason === 'connector_queued') {
+    return { label: '本地队列中', detail: '已进入 Connector 的 Codex 消息队列', className: 'badge-info' };
+  }
   if (status === 'waiting' && reason === 'dispatch_outcome_unknown') {
     return { label: '确认中', detail: '正在核对 Codex 是否已接收', className: 'badge-warning' };
   }
@@ -195,6 +198,7 @@ function taskReasonLabel(reason: string, status: BridgeContinuationTaskStatus): 
     backoff: '等待重试',
     waiting: '等待发送',
     running: '正在执行',
+    connector_queued: '已进入本地 Codex 消息队列',
     manual_stop: '已手动停止',
     manual_prompt: '自动续跑已被新消息替代',
     dead: '续跑失败并终止',
@@ -215,6 +219,7 @@ function eventTypeLabel(eventType: string): string {
     device_revoked: 'Connector 已撤销',
     lease_expired: '控制租约过期',
     lease_acquired: '获得控制权',
+    dispatch_queued: '进入本地消息队列',
   };
   return labels[eventType] || '任务状态变化';
 }

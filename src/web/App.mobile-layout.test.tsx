@@ -173,9 +173,24 @@ describe('App mobile layout', () => {
           node.type === 'button'
           && node.props['aria-label'] === '打开导航'
         ));
+        const quickNavigation = root.root.findAll((node) => (
+          node.type === 'nav'
+          && node.props['aria-label'] === '快捷管理'
+        ));
 
         expect(document.documentElement.getAttribute('data-layout')).toBe(expectedLayout);
         expect(hamburgerButtons.length > 0).toBe(hasHamburger);
+        expect(quickNavigation.length > 0).toBe(hasHamburger);
+        if (hasHamburger) {
+          const quickLinks = quickNavigation[0].findAllByType('a');
+          expect(quickLinks.map((link) => link.props.href)).toEqual([
+            '/',
+            '/channels',
+            '/routes',
+            '/downstream-keys',
+          ]);
+          expect(quickNavigation[0].findByProps({ 'aria-label': '打开完整导航' })).toBeTruthy();
+        }
       } finally {
         if (root) {
           await act(async () => {

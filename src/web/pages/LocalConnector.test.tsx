@@ -112,6 +112,30 @@ describe('LocalConnector page', () => {
         status: 'active',
         scopes: ['hooks.manage', 'hooks.emit', 'notify.manage', 'notify.emit', 'app_server.observe', 'app_server.control'],
         capabilities: ['app-server-control-v1'],
+        healthChecks: [
+          {
+            checkId: 'connector_runtime',
+            status: 'healthy',
+            reason: null,
+            observedAt: '2026-08-14T08:00:00.000Z',
+            transitionedAt: '2026-08-14T08:00:00.000Z',
+            incidentStartedAt: null,
+            alertedAt: null,
+            recoveryNotifiedAt: null,
+            autoRepairActionId: null,
+          },
+          {
+            checkId: 'codex_notify',
+            status: 'unavailable',
+            reason: 'managed_wrapper_missing',
+            observedAt: '2026-08-14T08:00:00.000Z',
+            transitionedAt: '2026-08-14T08:00:00.000Z',
+            incidentStartedAt: '2026-08-14T08:00:00.000Z',
+            alertedAt: null,
+            recoveryNotifiedAt: null,
+            autoRepairActionId: 'action-repair-1',
+          },
+        ],
         pairedAt: '2026-08-12T00:30:00.000Z',
         lastSeenAt: '2026-08-12T01:05:00.000Z',
       }],
@@ -335,6 +359,9 @@ describe('LocalConnector page', () => {
       ));
       await act(async () => { settingsTab.props.onClick(); });
       expect(collectText(root.root)).toContain('本地设置');
+      expect(collectText(root.root)).toContain('1 个在线设备');
+      expect(collectText(root.root)).toContain('通知异常');
+      expect(collectText(root.root)).toContain('完成通知包装器已丢失');
 
       const pairingButton = root.root.find((node) => node.type === 'button' && collectText(node).trim() === '生成配对令牌');
       await act(async () => { pairingButton.props.onClick(); });

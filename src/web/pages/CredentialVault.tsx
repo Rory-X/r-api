@@ -50,7 +50,7 @@ export default function CredentialVault() {
         <div>
           <h2 className="page-title">安全凭证库</h2>
           <div style={{ marginTop: 6, color: 'var(--color-text-muted)', fontSize: 12 }}>
-            保存系统集成和站点辅助流程使用的加密秘密；官方订阅与 OAuth 凭证由“官方凭证池”独立管理。
+            保存系统集成和站点辅助流程使用的加密秘密；官方订阅与 OAuth 凭证请前往“渠道管理 / 官方渠道”。
           </div>
         </div>
       </div>

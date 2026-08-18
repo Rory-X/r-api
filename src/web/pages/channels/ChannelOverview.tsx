@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api.js';
+import { MobileCard, MobileField } from '../../components/MobileCard.js';
 import { useToast } from '../../components/Toast.js';
+import { useIsMobile } from '../../components/useIsMobile.js';
 import { tr } from '../../i18n.js';
 import { resolveChannelPath } from './navigation.js';
 
@@ -122,6 +124,7 @@ export default function ChannelOverview() {
   const location = useLocation();
   const navigate = useNavigate();
   const toast = useToast();
+  const isMobile = useIsMobile();
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
   const [vaultItems, setVaultItems] = useState<VaultRow[]>([]);
@@ -154,6 +157,11 @@ export default function ChannelOverview() {
     [connections],
   );
 
+  const officialConnections = useMemo(
+    () => connections.filter((item) => !!String(item.oauthProvider || '').trim()),
+    [connections],
+  );
+
   const summaries = useMemo<ChannelSummary[]>(() => sites.map((site) => {
     const siteConnections = ordinaryConnections.filter((item) => Number(item.siteId) === site.id);
     const siteVault = vaultItems.filter((item) => Number(item.siteId) === site.id);
@@ -167,11 +175,12 @@ export default function ChannelOverview() {
 
   const totals = useMemo(() => ({
     sites: sites.length,
+    official: officialConnections.length,
     connections: ordinaryConnections.length,
     credentials: vaultItems.filter((item) => (
       item.siteId != null && normalizeStatus(item.status) === 'active'
     )).length,
-  }), [ordinaryConnections.length, sites.length, vaultItems]);
+  }), [officialConnections.length, ordinaryConnections.length, sites.length, vaultItems]);
 
   if (loading) {
     return (
@@ -192,12 +201,14 @@ export default function ChannelOverview() {
           </div>
         </div>
         <div className="page-actions">
+          <button className="btn btn-ghost" onClick={() => navigate(resolveChannelPath(location.pathname, 'official'))}>{tr('官方渠道')}</button>
           <button className="btn btn-primary" onClick={() => navigate(`${resolveChannelPath(location.pathname, 'sites')}?create=1`)}>{tr('添加上游渠道')}</button>
         </div>
       </div>
 
       <div className="channel-summary-strip">
         <div className="channel-summary-metric"><strong>{totals.sites}</strong><span>{tr('个上游站点')}</span></div>
+        <div className="channel-summary-metric"><strong>{totals.official}</strong><span>{tr('个官方渠道')}</span></div>
         <div className="channel-summary-metric"><strong>{totals.connections}</strong><span>{tr('个普通连接')}</span></div>
         <div className="channel-summary-metric"><strong>{totals.credentials}</strong><span>{tr('个渠道凭证')}</span></div>
       </div>
@@ -207,6 +218,83 @@ export default function ChannelOverview() {
           <div className="empty-state-title">{tr('还没有上游渠道')}</div>
           <div className="empty-state-description">{tr('先添加一个站点，再在渠道管理中选择账号、API Key 或浏览器凭证接入方式。')}</div>
           <button className="btn btn-primary" onClick={() => navigate(`${resolveChannelPath(location.pathname, 'sites')}?create=1`)}>{tr('添加第一个渠道')}</button>
+        </div>
+      ) : isMobile ? (
+        <div className="mobile-card-list" data-testid="channel-overview-mobile-list">
+          {summaries.map((channel) => {
+            const disabled = normalizeStatus(channel.status) === 'disabled';
+            const runtimeHealth = resolvePrimaryRuntimeHealth(channel.runtimeHealth);
+            const firstByteHealth = resolveFirstByteRuntimeHealth(channel.runtimeHealth);
+            const coolingEndpoint = runtimeHealth ? null : resolveCoolingApiEndpoint(channel);
+            const endpointCount = Array.isArray(channel.apiEndpoints)
+              ? channel.apiEndpoints.filter((endpoint) => endpoint.enabled !== false).length
+              : 0;
+            const statusLabel = disabled
+              ? tr('已禁用')
+              : runtimeHealth?.state === 'open'
+                ? tr('熔断中')
+                : runtimeHealth?.state === 'recovering'
+                  ? tr('恢复观察中')
+                  : coolingEndpoint
+                    ? tr('端点冷却中')
+                    : tr('可用');
+            const statusClass = disabled
+              ? 'badge-warning'
+              : runtimeHealth?.state === 'open' || coolingEndpoint
+                ? 'badge-error'
+                : runtimeHealth?.state === 'recovering'
+                  ? 'badge-warning'
+                  : 'badge-success';
+
+            return (
+              <MobileCard
+                key={channel.id}
+                title={channel.name}
+                subtitle={channel.url}
+                compact
+                headerActions={<span className={`badge ${statusClass}`}>{statusLabel}</span>}
+                footerActions={(
+                  <>
+                    <button className="btn btn-ghost" onClick={() => navigate(`${resolveChannelPath(location.pathname, 'sites')}?focusSiteId=${channel.id}`)}>{tr('站点')}</button>
+                    <button className="btn btn-primary" onClick={() => navigate(`${resolveChannelPath(location.pathname, 'connections')}?siteId=${channel.id}`)}>{tr('连接')}</button>
+                  </>
+                )}
+              >
+                <MobileField label={tr('平台')} value={<span className="badge badge-muted">{platformLabel(channel.platform)}</span>} />
+                <MobileField label={tr('连接')} value={`${channel.activeConnectionCount}/${channel.connectionCount} ${tr('活跃')}`} />
+                <MobileField label={tr('凭证')} value={channel.vaultCount} />
+                <MobileField label={tr('API 端点')} value={endpointCount} />
+                {runtimeHealth && !disabled ? (
+                  <MobileField
+                    stacked
+                    label={tr('调度健康')}
+                    value={(
+                      <span>
+                        {runtimeScopeLabel(runtimeHealth)} · {tr('级别')} {runtimeHealth.breakerLevel}
+                        {runtimeHealth.state === 'open'
+                          ? ` · ${runtimeHealth.probeInFlight ? tr('半开探针执行中') : formatRemainingMs(runtimeHealth.remainingMs)}`
+                          : ` · ${runtimeHealth.recoverySuccessCount}/${runtimeHealth.recoverySuccessThreshold} · ${Math.round(runtimeHealth.recoveryTrafficRatio * 100)}% ${tr('流量')}`}
+                        {runtimeHealth.lastFailureReason ? ` · ${runtimeHealth.lastFailureReason}` : ''}
+                      </span>
+                    )}
+                  />
+                ) : null}
+                {coolingEndpoint && !disabled ? (
+                  <MobileField
+                    stacked
+                    label={tr('冷却端点')}
+                    value={`${coolingEndpoint.id ? `#${coolingEndpoint.id} · ` : ''}${formatRemainingMs(Date.parse(coolingEndpoint.cooldownUntil || '') - Date.now())}${coolingEndpoint.lastFailureReason ? ` · ${coolingEndpoint.lastFailureReason}` : ''}`}
+                  />
+                ) : null}
+                {firstByteHealth && Number(firstByteHealth.firstByteMultiplier ?? 1) < 0.999 && !disabled ? (
+                  <MobileField
+                    label={tr('首字性能')}
+                    value={`${Math.round(Number(firstByteHealth.firstByteLatencyEmaMs))}ms · ${(Number(firstByteHealth.firstByteMultiplier) * 100).toFixed(0)}%`}
+                  />
+                ) : null}
+              </MobileCard>
+            );
+          })}
         </div>
       ) : (
         <div className="card channel-overview-table-wrap" style={{ padding: 0 }}>

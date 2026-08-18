@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
@@ -6,6 +7,7 @@ import { buildEventNavigationPath } from '../pages/helpers/navigationFocus.js';
 import { displayProgramEventTitle } from '../pages/helpers/programEventPresentation.js';
 import { useI18n } from '../i18n.js';
 import { useAnimatedVisibility } from './useAnimatedVisibility.js';
+import { useIsMobile } from './useIsMobile.js';
 
 const levelColors: Record<string, string> = {
   info: 'var(--color-info)',
@@ -34,6 +36,7 @@ export default function NotificationPanel({
   onUnreadCountChange?: (count: number) => void;
 }) {
   const { t: tr } = useI18n();
+  const isMobile = useIsMobile();
   const presence = useAnimatedVisibility(open, 160);
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -83,22 +86,38 @@ export default function NotificationPanel({
 
   if (!presence.shouldRender) return null;
 
-  return (
+  const panel = (
     <div
       ref={panelRef}
-      className={`user-dropdown ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      style={{ right: 0, top: '100%', width: 360, maxHeight: 480, padding: 0, marginTop: 4 }}
+      className={`user-dropdown notification-popover ${presence.isVisible ? '' : 'is-closing'}`.trim()}
+      role="dialog"
+      aria-label={tr('通知')}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+      <div className="notification-popover-header">
         <span style={{ fontWeight: 600, fontSize: 14 }}>{tr('通知')}</span>
-        <button onClick={clearAll} className="btn btn-link">
-          {tr('清空')}
-        </button>
+        <div className="notification-popover-header-actions">
+          <button onClick={clearAll} className="btn btn-link">
+            {tr('清空')}
+          </button>
+          {isMobile && (
+            <button
+              type="button"
+              className="notification-popover-close"
+              aria-label={tr('关闭')}
+              title={tr('关闭')}
+              onClick={onClose}
+            >
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid var(--color-border-light)', flexWrap: 'wrap' }}>
+      <div className="notification-popover-filters">
         {['', 'checkin', 'balance', 'token', 'proxy', 'status', 'site_notice'].map((filterType) => (
           <button key={filterType} onClick={() => setFilter(filterType)}
             style={{
@@ -114,7 +133,7 @@ export default function NotificationPanel({
       </div>
 
       {/* Events list */}
-      <div style={{ maxHeight: 360, overflow: 'auto' }}>
+      <div className="notification-popover-list">
         {loading && <div style={{ padding: 20, textAlign: 'center' }}><span className="spinner spinner-sm" /></div>}
         {!loading && events.length === 0 && (
           <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
@@ -173,4 +192,6 @@ export default function NotificationPanel({
       </div>
     </div>
   );
+
+  return isMobile ? createPortal(panel, document.body) : panel;
 }

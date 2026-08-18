@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, type AdminTotpStatus } from '../api.js';
 import { useToast } from '../components/Toast.js';
@@ -436,7 +436,49 @@ export default function Settings() {
   const [factoryResetting, setFactoryResetting] = useState(false);
   const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionKey>('security');
+  const settingsContentRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
+
+  const selectSettingsSection = (
+    sectionKey: SettingsSectionKey,
+    trigger?: HTMLButtonElement | null,
+  ) => {
+    setActiveSettingsSection(sectionKey);
+    if (!isMobile) return;
+
+    trigger?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    const scrollToContent = () => {
+      settingsContentRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    };
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(scrollToContent);
+    } else {
+      scrollToContent();
+    }
+  };
+
+  const handleSettingsNavKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    currentIndex: number,
+  ) => {
+    const lastIndex = SETTINGS_SECTIONS.length - 1;
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? lastIndex
+        : event.key === 'ArrowRight' || event.key === 'ArrowDown'
+          ? (currentIndex + 1) % SETTINGS_SECTIONS.length
+          : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+            ? (currentIndex - 1 + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length
+            : null;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    const nextSection = SETTINGS_SECTIONS[nextIndex];
+    const nextButton = globalThis.document?.getElementById?.(`settings-tab-${nextSection.key}`) as HTMLButtonElement | null;
+    selectSettingsSection(nextSection.key, nextButton);
+    nextButton?.focus?.();
+  };
 
   const configuredPayloadRuleCount = useMemo(
     () => payloadVisualRules.filter((rule) => !isVisualPayloadRuleBlank(rule)).length,
@@ -1272,7 +1314,11 @@ export default function Settings() {
       <div className="page-header">
         <div>
           <h2 className="page-title">系统设置</h2>
-          <p className="page-subtitle">从左侧选择配置分类，在右侧查看并保存对应设置。</p>
+          <p className="page-subtitle">
+            {isMobile
+              ? '从上方快速切换分类，在下方查看并保存对应设置。'
+              : '从左侧选择配置分类，在右侧查看并保存对应设置。'}
+          </p>
         </div>
       </div>
 
@@ -1281,7 +1327,7 @@ export default function Settings() {
           className="settings-main-nav"
           aria-label="系统设置分类导航"
           role="tablist"
-          aria-orientation="vertical"
+          aria-orientation={isMobile ? 'horizontal' : 'vertical'}
         >
           <div className="settings-main-nav-heading" aria-hidden="true">
             <strong>设置分类</strong>
@@ -1297,7 +1343,8 @@ export default function Settings() {
               aria-selected={activeSettingsSection === section.key}
               aria-controls={`settings-${section.key}`}
               tabIndex={activeSettingsSection === section.key ? 0 : -1}
-              onClick={() => setActiveSettingsSection(section.key)}
+              onClick={(event) => selectSettingsSection(section.key, event?.currentTarget ?? null)}
+              onKeyDown={(event) => handleSettingsNavKeyDown(event, index)}
             >
               <span className="settings-main-nav-index">{String(index + 1).padStart(2, '0')}</span>
               <span className="settings-main-nav-copy">
@@ -1308,7 +1355,7 @@ export default function Settings() {
           ))}
         </nav>
 
-        <div className="management-page-stack settings-category-stack settings-tab-content">
+        <div ref={settingsContentRef} className="management-page-stack settings-category-stack settings-tab-content">
         <section
           id="settings-security"
           className="settings-category"

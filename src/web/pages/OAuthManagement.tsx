@@ -20,6 +20,12 @@ import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import OAuthModelsModal, { type OAuthModelItem } from './oauth/OAuthModelsModal.js';
 import {
+  readOauthImportDrafts,
+  readOauthImportDrop,
+  type OAuthImportDraft,
+  type OAuthImportFileLike,
+} from './oauth/credentialImportSources.js';
+import {
   api,
   type OAuthConnectionInfo,
   type OAuthProviderInfo,
@@ -29,6 +35,10 @@ import {
   type OAuthQuotaWindowInfo,
   type OAuthStartInstructions,
 } from '../api.js';
+import {
+  normalizeOauthCredentialImport,
+  type NormalizedOauthCredential,
+} from '../../shared/oauthCredentialImport.js';
 
 const POLL_INTERVAL_MS = 1500;
 const CONNECTION_PAGE_LIMIT = 200;
@@ -44,7 +54,8 @@ type ActiveSession = {
 type DrawerIntent =
   | { mode: 'create'; provider?: string }
   | { mode: 'rebind'; account: OAuthConnectionInfo }
-  | { mode: 'proxy'; account: OAuthConnectionInfo };
+  | { mode: 'proxy'; account: OAuthConnectionInfo }
+  | { mode: 'batch-proxy'; accountIds: number[] };
 
 type ColumnKey = 'identity' | 'subscription' | 'status' | 'quota' | 'proxy';
 type PoolViewMode = 'cards' | 'table';
@@ -53,17 +64,6 @@ type PoolAccessModalState = {
   open: boolean;
   accountIds: number[];
   confirmSecrets: boolean;
-};
-
-type OAuthImportFileLike = {
-  name?: string;
-  text?: () => Promise<string>;
-};
-
-type OAuthImportDraft = {
-  sourceName: string;
-  rawText: string;
-  error?: string;
 };
 
 type OAuthImportSource = {
@@ -81,13 +81,16 @@ type OAuthImportPreview = {
   expiresLabel?: string;
   disabled?: boolean;
   error?: string;
-  parsedData?: Record<string, unknown>;
+  warning?: string;
+  parsedData?: unknown;
+  normalizedRecords?: NormalizedOauthCredential[];
 };
 
 type OAuthImportPreviewSummary = {
   totalCount: number;
   validCount: number;
   invalidCount: number;
+  credentialCount: number;
   canImport: boolean;
   items: OAuthImportPreview[];
 };
@@ -122,6 +125,12 @@ type SessionFeedback = {
   routeUnit?: SessionRouteUnitFeedback | null;
 };
 
+type ProxyVerificationFeedback = {
+  tone: 'success' | 'error';
+  message: string;
+  detail?: string;
+};
+
 const COLUMN_OPTIONS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'identity', label: '账号 / Provider' },
   { key: 'subscription', label: '订阅 / 计划' },
@@ -153,9 +162,31 @@ function asTrimmedString(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function normalizeOauthMessage(value: string | null | undefined): string {
-  const text = asTrimmedString(value);
-  if (!text) return '';
+function extractOauthMessageFromJson(text: string): string {
+  if (!text.startsWith('{')) return text;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const readMessage = (value: unknown): string => {
+      if (typeof value === 'string') return value.trim();
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+      const record = value as Record<string, unknown>;
+      return asTrimmedString(typeof record.message === 'string' ? record.message : '')
+        || asTrimmedString(typeof record.detail === 'string' ? record.detail : '')
+        || asTrimmedString(typeof record.code === 'string' ? record.code : '');
+    };
+    return readMessage(parsed.detail)
+      || readMessage(parsed.error)
+      || readMessage(parsed.message)
+      || text;
+  } catch {
+    return text;
+  }
+}
+
+export function normalizeOauthMessage(value: string | null | undefined): string {
+  const rawText = asTrimmedString(value);
+  if (!rawText) return '';
+  const text = extractOauthMessageFromJson(rawText);
 
   return text
     .replace(/codex usage windows inferred from rate limit response headers/ig, '额度窗口已从响应头推断')
@@ -163,39 +194,11 @@ function normalizeOauthMessage(value: string | null | undefined): string {
     .replace(/official 7d quota window is not exposed by current codex oauth artifacts/ig, '当前 Codex OAuth 未暴露官方 7d 窗口')
     .replace(/official 5h quota window is unavailable for this provider/ig, '当前 Provider 不提供官方 5h 窗口')
     .replace(/official 7d quota window is unavailable for this provider/ig, '当前 Provider 不提供官方 7d 窗口')
+    .replace(/codex quota probe model\s+([^\s]+)\s+is not supported by this account/ig, '额度探测模型不可用：$1')
+    .replace(/codex quota probe did not find an available model/ig, '没有可用于额度探测的模型')
+    .replace(/codex quota probe response did not expose x-codex rate limit headers/ig, '响应中未返回额度信息')
+    .replace(/the\s+['"]([^'"]+)['"]\s+model\s+is\s+not\s+supported\s+when\s+using[^.]*\.?/ig, '额度探测模型不可用：$1')
     .replace(/\bfetch failed\b/ig, '网络请求失败');
-}
-
-function listImportFiles(files: ArrayLike<OAuthImportFileLike> | null | undefined): OAuthImportFileLike[] {
-  return files ? Array.from(files) : [];
-}
-
-async function readOauthImportDrafts(
-  files: ArrayLike<OAuthImportFileLike> | null | undefined,
-): Promise<OAuthImportDraft[]> {
-  const nextFiles = listImportFiles(files);
-  return Promise.all(nextFiles.map(async (file, index) => {
-    const sourceName = asTrimmedString(file.name) || `oauth-import-${index + 1}.json`;
-    if (typeof file.text !== 'function') {
-      return {
-        sourceName,
-        rawText: '',
-        error: '当前浏览器不支持读取该文件',
-      };
-    }
-    try {
-      return {
-        sourceName,
-        rawText: await file.text(),
-      };
-    } catch (error: any) {
-      return {
-        sourceName,
-        rawText: '',
-        error: error?.message || '读取文件失败',
-      };
-    }
-  }));
 }
 
 function decodeJwtPayload(token?: string): Record<string, unknown> | null {
@@ -269,84 +272,39 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     };
   }
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {
-      sourceName: source.sourceName,
-      valid: false,
-      error: '需要单个 OAuth JSON 对象',
-    };
-  }
-
-  const payload = parsed as Record<string, unknown>;
-  const type = asTrimmedString(typeof payload.type === 'string' ? payload.type : '');
-  if ((type === 'sub2api-data' || type === 'sub2api-bundle') && Array.isArray(payload.accounts)) {
-    const oauthAccounts = payload.accounts.filter((item) => (
-      !!item
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && asTrimmedString(typeof (item as Record<string, unknown>).type === 'string'
-        ? (item as Record<string, unknown>).type as string
-        : '').toLowerCase() === 'oauth'
-    ));
-    if (oauthAccounts.length <= 0) {
-      return {
-        sourceName: source.sourceName,
-        valid: false,
-        error: 'Sub2API 包中没有可导入的官方 OAuth 账号',
-      };
-    }
-    return {
-      sourceName: source.sourceName,
-      valid: true,
-      providerLabel: `Sub2API / Cockpit 包 · ${oauthAccounts.length} 个 OAuth`,
-      accountKey: `${oauthAccounts.length} 个官方账号`,
-      parsedData: payload,
-    };
-  }
-
-  if ('accounts' in payload || 'proxies' in payload || 'version' in payload || 'exported_at' in payload) {
-    return {
-      sourceName: source.sourceName,
-      valid: false,
-      error: '无法识别该批量凭证包格式',
-    };
-  }
-
-  const providerLabel = type ? resolveImportProviderLabel(type) : null;
-  if (!providerLabel) {
-    return {
-      sourceName: source.sourceName,
-      valid: false,
-      error: `不支持的 OAuth 类型：${type || '未知'}`,
-    };
-  }
-
-  if (!asTrimmedString(typeof payload.access_token === 'string' ? payload.access_token : '')) {
-    return {
-      sourceName: source.sourceName,
-      valid: false,
-      error: '缺少 access_token',
-    };
-  }
-
   try {
-    const claims = decodeJwtPayload(typeof payload.id_token === 'string' ? payload.id_token : undefined);
+    const normalized = normalizeOauthCredentialImport(parsed);
+    const first = normalized.records[0]!;
+    const claims = decodeJwtPayload(typeof first.id_token === 'string' ? first.id_token : undefined);
     const authClaims = claims?.['https://api.openai.com/auth'];
     const authRecord = authClaims && typeof authClaims === 'object' && !Array.isArray(authClaims)
       ? authClaims as Record<string, unknown>
       : null;
+    const providerNames = [...new Set(normalized.records.map((record) => (
+      resolveImportProviderLabel(record.type) || record.type
+    )))];
+    const providerSummary = providerNames.join(' / ');
+    const isBatch = normalized.records.length > 1 || normalized.format !== 'native';
     return {
       sourceName: source.sourceName,
       valid: true,
-      providerLabel,
-      email: asTrimmedString(typeof payload.email === 'string' ? payload.email : '')
+      providerLabel: isBatch
+        ? `${normalized.label} · ${normalized.records.length} 个 OAuth${providerSummary ? ` · ${providerSummary}` : ''}`
+        : providerSummary,
+      email: isBatch ? undefined : asTrimmedString(typeof first.email === 'string' ? first.email : '')
         || asTrimmedString(typeof claims?.email === 'string' ? claims.email : ''),
-      accountKey: asTrimmedString(typeof payload.account_key === 'string' ? payload.account_key : '')
-        || asTrimmedString(typeof payload.account_id === 'string' ? payload.account_id : '')
-        || asTrimmedString(typeof authRecord?.chatgpt_account_id === 'string' ? authRecord.chatgpt_account_id : ''),
-      expiresLabel: resolveImportPreviewExpiryLabel(payload.expired),
-      disabled: payload.disabled === true,
-      parsedData: payload,
+      accountKey: isBatch
+        ? `${normalized.records.length} 个官方账号`
+        : asTrimmedString(typeof first.account_key === 'string' ? first.account_key : '')
+          || asTrimmedString(typeof first.account_id === 'string' ? first.account_id : '')
+          || asTrimmedString(typeof authRecord?.chatgpt_account_id === 'string' ? authRecord.chatgpt_account_id : ''),
+      expiresLabel: isBatch ? undefined : resolveImportPreviewExpiryLabel(first.expired),
+      disabled: normalized.records.every((record) => record.disabled === true),
+      warning: normalized.issues.length > 0
+        ? `${normalized.issues.length} 条无效记录会自动跳过`
+        : undefined,
+      parsedData: parsed,
+      normalizedRecords: normalized.records,
     };
   } catch (error: any) {
     return {
@@ -381,6 +339,7 @@ function resolveSchedulingState(connection: OAuthConnectionInfo): NonNullable<OA
 
 function resolveSchedulingLabel(connection: OAuthConnectionInfo): string {
   const state = resolveSchedulingState(connection);
+  if (isCodexEgressBlocked(connection)) return '出口受限';
   if (state === 'cooldown') return '冷却中';
   if (state === 'blocked') return '已阻断';
   if (state === 'unrouted') return '未生成路由';
@@ -457,6 +416,14 @@ function resolveQuotaSyncStatusText(quota?: OAuthQuotaInfo | null): string {
 
 function resolveModelSyncDetail(connection: OAuthConnectionInfo): string {
   return normalizeOauthMessage(connection.lastModelSyncError || '');
+}
+
+function isCodexEgressBlocked(connection: OAuthConnectionInfo): boolean {
+  if (!['codex', 'openai'].includes(asTrimmedString(connection.provider).toLowerCase())) {
+    return false;
+  }
+  const detail = resolveModelSyncDetail(connection);
+  return /上游拒绝当前服务器网络访问|unable to load site|cloudflare|cf-ray/i.test(detail);
 }
 
 function resolveQuotaSyncDetail(quota?: OAuthQuotaInfo | null): string {
@@ -756,9 +723,11 @@ export default function OAuthManagement() {
   const [runtimeSystemProxyConfigured, setRuntimeSystemProxyConfigured] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const importDirectoryInputRef = useRef<HTMLInputElement | null>(null);
   const [importJsonText, setImportJsonText] = useState('');
   const [importDrafts, setImportDrafts] = useState<OAuthImportDraft[]>([]);
   const [importDragOver, setImportDragOver] = useState(false);
+  const [importReading, setImportReading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importCustomProxyEnabled, setImportCustomProxyEnabled] = useState(false);
   const [importSystemProxyEnabled, setImportSystemProxyEnabled] = useState(false);
@@ -774,6 +743,7 @@ export default function OAuthManagement() {
   const [oauthCustomProxyEnabled, setOauthCustomProxyEnabled] = useState(false);
   const [oauthSystemProxyEnabled, setOauthSystemProxyEnabled] = useState(false);
   const [oauthProxyUrl, setOauthProxyUrl] = useState('');
+  const [proxyVerificationFeedback, setProxyVerificationFeedback] = useState<ProxyVerificationFeedback | null>(null);
   const [modelsModal, setModelsModal] = useState<OAuthModelsModalState>({
     open: false,
     loading: false,
@@ -840,6 +810,7 @@ export default function OAuthManagement() {
     setOauthCustomProxyEnabled(false);
     setOauthSystemProxyEnabled(false);
     setOauthProxyUrl('');
+    setProxyVerificationFeedback(null);
   }, []);
 
   const resetImportProxySettings = useCallback((defaultToSystem = false) => {
@@ -852,6 +823,7 @@ export default function OAuthManagement() {
     setImportJsonText('');
     setImportDrafts([]);
     setImportDragOver(false);
+    setImportReading(false);
   }, []);
 
   const closeImportModal = useCallback(() => {
@@ -932,7 +904,7 @@ export default function OAuthManagement() {
     setSelectedProviderKey(provider);
     setDrawerProjectId('');
     setDrawerOpen(true);
-    setSessionInfo('已进入独立的官方凭证池，请在这里完成官方账号授权。');
+    setSessionInfo('已进入官方渠道，请在这里完成官方账号授权。');
   }, [loaded, location.search, providers]);
 
   useEffect(() => {
@@ -1128,9 +1100,20 @@ export default function OAuthManagement() {
     setOauthSystemProxyEnabled(connection.useSystemProxy === true);
     setOauthCustomProxyEnabled(connection.useSystemProxy !== true && !!asTrimmedString(connection.proxyUrl));
     setOauthProxyUrl(connection.useSystemProxy ? '' : asTrimmedString(connection.proxyUrl));
+    setProxyVerificationFeedback(null);
     setDrawerOpen(true);
     setShowColumnMenu(false);
     setSessionInfo('已打开 OAuth 代理设置，修改后可直接保存代理，或保存后重新授权。');
+  };
+
+  const openBatchProxySettingsDrawer = (accountIds: number[]) => {
+    const normalizedIds = Array.from(new Set(accountIds.filter((id) => id > 0)));
+    if (normalizedIds.length === 0) return;
+    setDrawerIntent({ mode: 'batch-proxy', accountIds: normalizedIds });
+    resetOauthProxySettings();
+    setDrawerOpen(true);
+    setShowColumnMenu(false);
+    setSessionInfo(`已选择 ${normalizedIds.length} 个官方凭证，保存后会逐项复测并重建调度路由。`);
   };
 
   const openRouteUnitModal = () => {
@@ -1196,29 +1179,65 @@ export default function OAuthManagement() {
   };
 
   const handleSaveProxy = async () => {
-    if (drawerIntent.mode !== 'proxy') return;
+    if (drawerIntent.mode !== 'proxy' && drawerIntent.mode !== 'batch-proxy') return;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
       setSessionError('已开启代理，请先输入完整代理地址');
       return;
     }
 
-    const actionKey = `save-proxy:${drawerIntent.account.accountId}`;
+    const actionKey = drawerIntent.mode === 'batch-proxy'
+      ? 'save-proxy:batch'
+      : `save-proxy:${drawerIntent.account.accountId}`;
     setActionLoadingKey(actionKey);
     try {
-      await api.updateOAuthConnectionProxy(
-        drawerIntent.account.accountId,
-        resolveProxySettingsPayload({
-          customEnabled: oauthCustomProxyEnabled,
-          systemEnabled: oauthSystemProxyEnabled,
-          proxyValue: oauthProxyUrl,
-          clearToSiteFallback: true,
-        }),
-      );
+      const proxySettings = resolveProxySettingsPayload({
+        customEnabled: oauthCustomProxyEnabled,
+        systemEnabled: oauthSystemProxyEnabled,
+        proxyValue: oauthProxyUrl,
+        clearToSiteFallback: true,
+      });
+      if (drawerIntent.mode === 'batch-proxy') {
+        const result = await api.updateOAuthConnectionsProxy(drawerIntent.accountIds, proxySettings);
+        await loadConnections();
+        const failedItems = result.items.filter((item) => !item.success || item.modelRefresh?.success === false);
+        if (failedItems.length > 0) {
+          const detail = `${failedItems.length} 个凭证复测失败${failedItems[0]?.error ? `：${normalizeOauthMessage(failedItems[0].error)}` : ''}`;
+          setProxyVerificationFeedback({
+            tone: 'error',
+            message: `代理已保存，但 ${failedItems.length} 个凭证仍未恢复`,
+            detail,
+          });
+          setSessionError(`代理已保存，但仍有官方凭证不可调度：${detail}`);
+          return;
+        }
+        setDrawerOpen(false);
+        resetOauthProxySettings();
+        setSessionSuccess(`已为 ${result.updated} 个凭证保存出口并完成复测，路由已重建`);
+        return;
+      }
+
+      const result = await api.updateOAuthConnectionProxy(drawerIntent.account.accountId, proxySettings);
       await loadConnections();
+      const modelRefresh = result?.modelRefresh;
+      if (modelRefresh && !modelRefresh.success) {
+        const detail = normalizeOauthMessage(modelRefresh.errorMessage || '模型发现失败');
+        setProxyVerificationFeedback({
+          tone: 'error',
+          message: '代理已保存，但出口验证仍未通过',
+          detail,
+        });
+        setSessionError(`代理已保存，但仍有官方凭证不可调度：${detail}`);
+        return;
+      }
       setDrawerOpen(false);
       resetOauthProxySettings();
-      setSessionSuccess('代理已保存');
+      const discoveredCount = modelRefresh?.modelCount;
+      setSessionSuccess(
+        typeof discoveredCount === 'number'
+          ? `代理已保存并验证，已发现 ${discoveredCount} 个模型，路由已重建`
+          : '代理已保存并完成模型复测，路由已重建',
+      );
     } catch (error: any) {
       setSessionError(error?.message || '保存代理失败');
     } finally {
@@ -1227,6 +1246,10 @@ export default function OAuthManagement() {
   };
 
   const handleStart = async () => {
+    if (drawerIntent.mode === 'batch-proxy') {
+      setSessionError('批量出口设置不支持重新授权，请在单个凭证卡片中重新授权。');
+      return;
+    }
     const provider = selectedProvider
       || (drawerIntent.mode === 'create'
         ? providers.find((item) => item.provider === drawerIntent.provider)
@@ -1471,8 +1494,19 @@ export default function OAuthManagement() {
   }, []);
 
   const handleImportFilesSelected = useCallback(async (files: ArrayLike<OAuthImportFileLike> | null | undefined) => {
-    const drafts = await readOauthImportDrafts(files);
-    setImportDrafts(drafts);
+    setImportReading(true);
+    try {
+      const drafts = await readOauthImportDrafts(files);
+      setImportDrafts(drafts);
+    } catch (error: any) {
+      setImportDrafts([{
+        sourceName: '所选内容',
+        rawText: '',
+        error: error?.message || '读取凭证来源失败',
+      }]);
+    } finally {
+      setImportReading(false);
+    }
   }, []);
 
   const handleImportFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1493,8 +1527,20 @@ export default function OAuthManagement() {
   const handleImportDrop = useCallback(async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setImportDragOver(false);
-    await handleImportFilesSelected(event.dataTransfer?.files);
-  }, [handleImportFilesSelected]);
+    setImportReading(true);
+    try {
+      const drafts = await readOauthImportDrop(event.dataTransfer);
+      setImportDrafts(drafts);
+    } catch (error: any) {
+      setImportDrafts([{
+        sourceName: '拖入内容',
+        rawText: '',
+        error: error?.message || '读取文件夹或压缩包失败',
+      }]);
+    } finally {
+      setImportReading(false);
+    }
+  }, []);
 
   const importSources = useMemo<OAuthImportSource[]>(() => {
     const manualRaw = importJsonText.trim();
@@ -1513,7 +1559,8 @@ export default function OAuthManagement() {
       totalCount: items.length,
       validCount,
       invalidCount,
-      canImport: validCount > 0 && invalidCount === 0,
+      credentialCount: items.reduce((sum, item) => sum + (item.normalizedRecords?.length || 0), 0),
+      canImport: validCount > 0,
       items,
     };
   }, [importSources]);
@@ -1534,9 +1581,9 @@ export default function OAuthManagement() {
 
     setImporting(true);
     try {
-      const parsedItems = importPreviewSummary.items
-        .filter((item) => item.valid && item.parsedData)
-        .map((item) => item.parsedData as Record<string, unknown>);
+      const validSources = importPreviewSummary.items
+        .filter((item) => item.valid && item.parsedData !== undefined && item.normalizedRecords?.length);
+      const normalizedRecords = validSources.flatMap((item) => item.normalizedRecords || []);
       const importProxySettings = importSystemProxyEnabled && !importCustomProxyEnabled
         ? { useSystemProxy: true as const }
         : resolveProxySettingsPayload({
@@ -1544,25 +1591,34 @@ export default function OAuthManagement() {
           systemEnabled: importSystemProxyEnabled,
           proxyValue: importProxyUrl,
         });
-      const result = parsedItems.length === 1
+      const result = validSources.length === 1
         && !('proxyUrl' in importProxySettings)
         && !('useSystemProxy' in importProxySettings)
-        ? await api.importOAuthConnections(parsedItems[0]!)
+        ? await api.importOAuthConnections(validSources[0]!.parsedData)
         : await api.importOAuthConnections({
-          items: parsedItems,
+          items: normalizedRecords,
           ...importProxySettings,
         });
 
       await loadConnections();
+      const pendingValidationCount = result.items.filter((item) => (
+        item.status === 'imported' && !!item.message
+      )).length;
+      const locallySkippedCount = importPreviewSummary.invalidCount;
+      const totalSkippedCount = result.skipped + locallySkippedCount;
       const importMessage = result.failed > 0
         ? `批量导入完成，成功 ${result.imported} 个，失败 ${result.failed} 个`
-        : `已添加 ${result.imported} 个官方凭证`;
-      if (result.failed > 0) {
+        : pendingValidationCount > 0
+          ? `已导入 ${result.imported} 个官方凭证，其中 ${pendingValidationCount} 个模型待验证`
+          : totalSkippedCount > 0
+            ? `已导入 ${result.imported} 个官方凭证，跳过 ${totalSkippedCount} 个无效项`
+            : `已添加 ${result.imported} 个官方凭证`;
+      if (result.failed > 0 || pendingValidationCount > 0 || totalSkippedCount > 0) {
         toast.info(importMessage);
       } else {
         toast.success(importMessage);
       }
-      if (result.failed > 0) {
+      if (result.failed > 0 || pendingValidationCount > 0 || totalSkippedCount > 0) {
         setSessionInfo(importMessage);
       } else {
         setSessionSuccess(importMessage);
@@ -2098,6 +2154,7 @@ export default function OAuthManagement() {
         const quota = connection.quota;
         const participation = resolveConnectionRouteParticipation(connection);
         const schedulingState = resolveSchedulingState(connection);
+        const egressBlocked = isCodexEgressBlocked(connection);
         const selected = selectedConnectionIds.includes(connection.accountId);
         return (
           <article
@@ -2145,6 +2202,7 @@ export default function OAuthManagement() {
               <span className="official-plan-badge">{resolveSubscriptionPlan(connection)}</span>
               <span>{resolveSubscriptionExpiry(connection)}</span>
               {connection.projectId ? <span>Project {connection.projectId}</span> : null}
+              <span title={resolveProxyDisplayText(connection)}>出口：{resolveProxyDisplayText(connection)}</span>
             </div>
 
             <div className="official-credential-quota">
@@ -2173,6 +2231,21 @@ export default function OAuthManagement() {
                 <span>{connection.scheduling?.enabledRouteCount ?? connection.routeChannelCount ?? 0} 条启用路由</span>
               </div>
               <div className="official-scheduling-primary">{resolveSchedulingDetail(connection)}</div>
+              {egressBlocked ? (
+                <div className="official-egress-blocked" role="alert">
+                  <div className="official-egress-blocked-copy">
+                    <strong>官方出口被上游拒绝</strong>
+                    <span>请为此凭证配置支持地区的 HTTP(S) 或 SOCKS 出口。</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => openProxySettingsDrawer(connection)}
+                  >
+                    配置出口
+                  </button>
+                </div>
+              ) : null}
               <div className="official-scheduling-stats">
                 <div><span>模式</span><strong>{participation.kind === 'route_unit' ? '池化' : '单体'}</strong></div>
                 <div><span>模型</span><strong>{connection.modelCount}</strong></div>
@@ -2233,9 +2306,9 @@ export default function OAuthManagement() {
     <div className="page-container animate-fade-in">
       <div className="page-header">
         <div>
-          <h2 className="page-title">官方凭证池</h2>
+          <h2 className="page-title">官方渠道</h2>
           <div className="page-subtitle">
-            管理官方订阅与官方 API 凭证，将其转换为可观测、可池化、可调度的 2API 供给。
+            管理官方订阅与官方 API 凭证；每份凭证都是可观测、可池化、可调度的官方上游渠道。
           </div>
         </div>
         {!isMobile ? (
@@ -2364,6 +2437,13 @@ export default function OAuthManagement() {
             >
               接出所选凭证
             </button>
+            <button
+              type="button"
+              className="btn btn-ghost oauth-outline-button"
+              onClick={() => openBatchProxySettingsDrawer(selectedConnectionIds)}
+            >
+              统一配置出口
+            </button>
             {canMergeSelectedIntoRouteUnit ? (
               <button
                 type="button"
@@ -2422,6 +2502,8 @@ export default function OAuthManagement() {
         onClose={() => setDrawerOpen(false)}
         title={drawerIntent.mode === 'create'
           ? '添加官方凭证'
+          : drawerIntent.mode === 'batch-proxy'
+            ? `统一出口 · ${drawerIntent.accountIds.length} 个凭证`
           : drawerIntent.mode === 'proxy'
             ? `代理设置 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`
             : `重新授权 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`}
@@ -2438,6 +2520,12 @@ export default function OAuthManagement() {
                     options={providerOptions}
                     placeholder="选择 OAuth Provider"
                   />
+                </div>
+              ) : drawerIntent.mode === 'batch-proxy' ? (
+                <div className="oauth-cell-stack">
+                  <div className="oauth-field-label">批量出口范围</div>
+                  <div className="oauth-cell-primary">{drawerIntent.accountIds.length} 个官方凭证</div>
+                  <div className="oauth-cell-secondary">保存后逐项运行官方模型发现；失败凭证会保留并显示在卡片上。</div>
                 </div>
               ) : (
                 <div className="oauth-cell-stack">
@@ -2469,10 +2557,17 @@ export default function OAuthManagement() {
               ) : null}
 
               <div className="oauth-form-note">
-                {drawerIntent.mode === 'proxy'
-                  ? '这里修改的是凭证级代理。点击“保存代理”会立即落库并刷新列表；只有“保存并重新授权”才会重新走授权流程。若两项都不勾选，则按系统代理或直连策略执行。'
+                {drawerIntent.mode === 'proxy' || drawerIntent.mode === 'batch-proxy'
+                  ? '这里修改的是凭证级代理。点击“保存代理”会立即落库并刷新列表；批量设置会逐项复测，失败凭证仍会保留在池中。若两项都不勾选，则按系统代理或直连策略执行。'
                   : '这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的官方凭证都会使用这份凭证级代理；若不勾选，则按系统代理或直连策略执行。'}
               </div>
+
+              {(drawerIntent.mode === 'proxy' || drawerIntent.mode === 'batch-proxy') && proxyVerificationFeedback ? (
+                <div className={`oauth-proxy-verification is-${proxyVerificationFeedback.tone}`} role="status">
+                  <strong>{proxyVerificationFeedback.message}</strong>
+                  {proxyVerificationFeedback.detail ? <span>{proxyVerificationFeedback.detail}</span> : null}
+                </div>
+              ) : null}
 
               <div className="oauth-toggle-group">
                 <label className="oauth-toggle">
@@ -2482,6 +2577,7 @@ export default function OAuthManagement() {
                     data-oauth-setting="use-system-proxy"
                     onChange={(event) => {
                       const checked = !!event.target.checked;
+                      setProxyVerificationFeedback(null);
                       setOauthSystemProxyEnabled(checked);
                       if (checked) {
                         setOauthCustomProxyEnabled(false);
@@ -2498,6 +2594,7 @@ export default function OAuthManagement() {
                     data-oauth-setting="use-custom-proxy"
                     onChange={(event) => {
                       const checked = !!event.target.checked;
+                      setProxyVerificationFeedback(null);
                       setOauthCustomProxyEnabled(checked);
                       if (checked) setOauthSystemProxyEnabled(false);
                     }}
@@ -2513,26 +2610,35 @@ export default function OAuthManagement() {
                   className="oauth-input"
                   value={oauthProxyUrl}
                   data-oauth-setting="proxy-url"
-                  onChange={(event) => setOauthProxyUrl(event.target.value)}
+                  onChange={(event) => {
+                    setProxyVerificationFeedback(null);
+                    setOauthProxyUrl(event.target.value);
+                  }}
                   placeholder="如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
                   disabled={!oauthCustomProxyEnabled}
                 />
               </div>
 
-              {drawerIntent.mode === 'proxy' ? (
+              {drawerIntent.mode === 'proxy' || drawerIntent.mode === 'batch-proxy' ? (
                 <div className="oauth-inline-actions">
                   <button
                     type="button"
                     className="btn btn-primary"
                     onClick={handleSaveProxy}
                     disabled={
-                      actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`
+                      actionLoadingKey === (drawerIntent.mode === 'batch-proxy'
+                        ? 'save-proxy:batch'
+                        : `save-proxy:${drawerIntent.account.accountId}`)
                       || actionLoadingKey.startsWith('start:')
                     }
                   >
-                    {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? '保存中...' : '保存代理'}
+                    {actionLoadingKey === (drawerIntent.mode === 'batch-proxy'
+                      ? 'save-proxy:batch'
+                      : `save-proxy:${drawerIntent.account.accountId}`)
+                      ? '保存中...'
+                      : '保存代理'}
                   </button>
-                  <button
+                  {drawerIntent.mode === 'proxy' ? <button
                     type="button"
                     className="btn btn-ghost"
                     onClick={handleStart}
@@ -2544,7 +2650,7 @@ export default function OAuthManagement() {
                     }
                   >
                     {actionLoadingKey.startsWith('start:') ? '启动中...' : '保存并重新授权'}
-                  </button>
+                  </button> : null}
                 </div>
               ) : (
                 <button
@@ -2667,14 +2773,14 @@ export default function OAuthManagement() {
             <button type="button" className="btn btn-ghost" onClick={closeImportModal}>
               关闭
             </button>
-            <button type="button" className="btn btn-primary" onClick={handleImport} disabled={importing || !importPreviewSummary?.canImport}>
+            <button type="button" className="btn btn-primary" onClick={handleImport} disabled={importing || importReading || !importPreviewSummary?.canImport}>
               {importing ? '添加中...' : '添加'}
             </button>
           </>
         )}
       >
         <div className="oauth-import-copy">
-          支持原生官方 OAuth JSON，以及 Cockpit/Sub2API 的 `sub2api-data` / `sub2api-bundle` 包；凭证包内只提取官方 OAuth 账号。
+          支持 CPA auth-dir 原生 OAuth JSON，以及 Cockpit/Sub2API 的 `sub2api-data` / `sub2api-bundle` 包；可导入整个文件夹或 ZIP/TAR/TAR.GZ 压缩包。
         </div>
         <div
           className={`oauth-import-picker ${importDragOver ? 'is-dragover' : ''}`.trim()}
@@ -2687,18 +2793,27 @@ export default function OAuthManagement() {
             ref={importFileInputRef}
             data-testid="oauth-import-file-input"
             type="file"
-            accept=".json,application/json"
+            accept=".json,.zip,.tar,.tgz,.tar.gz,application/json,application/zip,application/x-tar,application/gzip"
             multiple
+            onChange={(event) => { void handleImportFileChange(event); }}
+            style={{ display: 'none' }}
+          />
+          <input
+            ref={importDirectoryInputRef}
+            data-testid="oauth-import-directory-input"
+            type="file"
+            multiple
+            {...{ webkitdirectory: '', directory: '' }}
             onChange={(event) => { void handleImportFileChange(event); }}
             style={{ display: 'none' }}
           />
           {importDrafts.length > 0 ? (
             <>
-              <div className="oauth-import-picker-copy">已选择 {importDrafts.length} 份 JSON，点击可重新选择</div>
-              <div className="oauth-import-picker-hint">支持多选；凭证包会展开为多个官方 OAuth 账号。</div>
+              <div className="oauth-import-picker-copy">已读取 {importDrafts.length} 份凭证 JSON，点击可重新选择</div>
+              <div className="oauth-import-picker-hint">文件夹和压缩包已展开；非 JSON 文件会自动忽略。</div>
               <div className="oauth-import-file-list">
-                {importDrafts.map((draft) => (
-                  <div key={draft.sourceName} className="oauth-import-file-item">
+                {importDrafts.map((draft, index) => (
+                  <div key={`${draft.sourceName}:${index}`} className="oauth-import-file-item">
                     <span className="oauth-import-file-name">
                       {draft.sourceName}
                       {draft.error ? ` · ${draft.error}` : ''}
@@ -2710,11 +2825,39 @@ export default function OAuthManagement() {
           ) : (
             <>
               <div className="oauth-import-picker-copy" style={{ color: importDragOver ? 'var(--color-primary)' : undefined }}>
-                {importDragOver ? '松开即可导入这些 JSON 文件' : '拖拽官方凭证 JSON 或 Cockpit/Sub2API 包到此处'}
+                {importReading
+                  ? '正在读取凭证文件...'
+                  : importDragOver
+                    ? '松开即可读取文件、文件夹或压缩包'
+                    : '拖拽 CPA auth-dir、官方凭证 JSON 或 ZIP/TAR 包到此处'}
               </div>
-              <div className="oauth-import-picker-hint">或点击选择文件，支持一次多选多个 `.json` 文件</div>
+              <div className="oauth-import-picker-hint">支持 `.json`、`.zip`、`.tar`、`.tar.gz`、`.tgz`</div>
             </>
           )}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={importReading}
+              onClick={(event) => {
+                event.stopPropagation();
+                importFileInputRef.current?.click();
+              }}
+            >
+              选择文件或压缩包
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={importReading}
+              onClick={(event) => {
+                event.stopPropagation();
+                importDirectoryInputRef.current?.click();
+              }}
+            >
+              选择文件夹
+            </button>
+          </div>
         </div>
         <div className="oauth-form-note">
           导入后的账号代理可在这里一次性指定；如果当前运行时已配置系统代理，会默认预选“使用系统级代理”。
@@ -2775,8 +2918,8 @@ export default function OAuthManagement() {
             <div className="oauth-import-preview-title">识别结果</div>
             <div className="oauth-import-preview-summary">
               {importPreviewSummary.canImport
-                ? `已识别 ${importPreviewSummary.totalCount} 份 JSON，均可添加。`
-                : `已识别 ${importPreviewSummary.totalCount} 份 JSON，其中 ${importPreviewSummary.invalidCount} 份无效。`}
+                ? `已从 ${importPreviewSummary.totalCount} 份 JSON 识别 ${importPreviewSummary.credentialCount} 个 OAuth 凭证${importPreviewSummary.invalidCount > 0 ? `，${importPreviewSummary.invalidCount} 份无效文件会跳过` : ''}。`
+                : `已识别 ${importPreviewSummary.totalCount} 份 JSON，但没有可导入的 OAuth 凭证。`}
             </div>
             <div className="oauth-import-preview-list">
               {importPreviewSummary.items.map((item) => (
@@ -2794,6 +2937,7 @@ export default function OAuthManagement() {
                       {item.accountKey ? <span>账号：{item.accountKey}</span> : null}
                       {item.expiresLabel ? <span>到期：{item.expiresLabel}</span> : null}
                       <span>{item.disabled ? '状态：导入后禁用' : '状态：导入后启用'}</span>
+                      {item.warning ? <span>提示：{item.warning}</span> : null}
                     </div>
                   ) : (
                     <div className="oauth-import-preview-error">{item.error || 'JSON 结构无效'}</div>
@@ -2803,6 +2947,8 @@ export default function OAuthManagement() {
             </div>
             {!importPreviewSummary.canImport ? (
               <div className="oauth-import-preview-note">请先修正无效 JSON，再点击“添加”。</div>
+            ) : importPreviewSummary.invalidCount > 0 ? (
+              <div className="oauth-import-preview-note">合法凭证会继续导入，无效文件会自动跳过。</div>
             ) : null}
           </div>
         ) : null}

@@ -104,7 +104,7 @@ describe('CredentialVault', () => {
     expect(rendered).toContain('Vault Session');
     expect(rendered).toContain('Feishu App Secret');
     expect(rendered).toContain('归属：系统集成');
-    expect(rendered).toContain('官方订阅与 OAuth 凭证由“官方凭证池”独立管理');
+    expect(rendered).toContain('官方订阅与 OAuth 凭证请前往“渠道管理 / 官方渠道”');
     expect(rendered).not.toContain('统一凭证');
     expect(rendered).not.toContain('导入任务');
     expect(rendered).not.toContain('session-secret');

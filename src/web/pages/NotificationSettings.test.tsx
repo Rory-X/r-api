@@ -317,7 +317,7 @@ describe('NotificationSettings', () => {
     }
   });
 
-  it('does not present unconfigured channels as enabled and keeps low-frequency options collapsed', async () => {
+  it('does not present unconfigured channels as enabled and keeps every settings card visible', async () => {
     let root!: WebTestRenderer;
     try {
       await act(async () => {
@@ -345,12 +345,12 @@ describe('NotificationSettings', () => {
       expect(barkSwitch.props.checked).toBe(false);
       expect(serverChanSwitch.props.checked).toBe(false);
 
-      const collapsedSections = root.root.findAll((node) => node.type === Disclosure);
-      expect(collapsedSections).toHaveLength(3);
-      expect(collapsedSections.every((section) => section.props.defaultOpen !== true && section.props.open !== true)).toBe(true);
-      expect(collectText(root.root)).toContain('更多渠道');
+      expect(root.root.findAll((node) => node.type === Disclosure)).toHaveLength(0);
+      expect(collectText(root.root)).toContain('Server酱 (SendKey)');
       expect(collectText(root.root)).toContain('高级设置');
-      expect(collectText(root.root)).toContain('邮件通知');
+      expect(collectText(root.root)).toContain('Telegram API Base URL');
+      expect(collectText(root.root)).toContain('邮件服务 (SMTP)');
+      expect(collectText(root.root)).toContain('SMTP 服务器');
     } finally {
       root?.unmount();
     }

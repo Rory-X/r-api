@@ -13,5 +13,9 @@ describe('ProxyLogs mobile layout', () => {
     expect(source).toContain('compact');
     expect(source).toContain('mobile-summary-grid');
     expect(source).toContain("subtitle={formatDateTimeLocal(log.createdAt)}");
+    expect(source).toContain('proxy-log-mobile-detail-section');
+    expect(source).toContain('label="总 Tokens"');
+    expect(source).toContain('label="下游请求路径"');
+    expect(source).toContain('label="上游请求路径"');
   });
 });

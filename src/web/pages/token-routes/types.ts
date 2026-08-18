@@ -43,6 +43,9 @@ export type RouteChannel = {
   manualOverride: boolean;
   successCount: number;
   failCount: number;
+  lastFailAt?: string | null;
+  consecutiveFailCount?: number;
+  cooldownLevel?: number;
   cooldownUntil?: string | null;
   account?: {
     username: string | null;
@@ -168,7 +171,6 @@ export type SortableChannelRowProps = {
   onSaveToken: () => void;
   onDeleteChannel: () => void;
   onToggleEnabled: (enabled: boolean) => void;
-  onSiteBlockModel?: () => void;
 };
 
 export type GroupRouteItem = {

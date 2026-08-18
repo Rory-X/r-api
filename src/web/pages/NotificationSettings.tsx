@@ -3,7 +3,7 @@ import { api, type RuntimeSettingsPayload } from '../api.js';
 import CenteredModal from '../components/CenteredModal.js';
 import { useToast } from '../components/Toast.js';
 import { tr } from '../i18n.js';
-import { Button, Disclosure, Input, Option, Select, Switch } from '../components/ui/index.js';
+import { Button, Input, Option, Select, Switch } from '../components/ui/index.js';
 
 type RuntimeSettings = {
     webhookUrl: string;
@@ -546,18 +546,8 @@ export default function NotificationSettings() {
                     </div>
                 </div>
 
-                <Disclosure
-                    className="notification-disclosure animate-slide-up stagger-5"
-                    title={<span className="notification-disclosure-title">
-                        更多渠道
-                        <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 400 }}>
-                            Server酱
-                        </span>
-                    </span>}
-                >
-
                 {/* 卡片：Server酱 */}
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--color-border-light)' }}>
+                <div className="card animate-slide-up stagger-5" style={{ padding: 24, border: runtime.serverChanEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-warning-soft)', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -586,7 +576,6 @@ export default function NotificationSettings() {
                         />
                     </div>
                 </div>
-                </Disclosure>
 
                 {/* 卡片：Telegram */} 
                 <div className="card animate-slide-up stagger-6" style={{ padding: 24, border: runtime.telegramEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
@@ -631,15 +620,11 @@ export default function NotificationSettings() {
                         </div>
                     </div>
 
-                    <Disclosure
-                        className="notification-advanced-disclosure"
-                        title={<span className="notification-advanced-disclosure-title">
-                            高级设置
-                            <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                                代理、API 地址与 Topic
-                            </span>
-                        </span>}
-                    >
+                    <div className="notification-static-section">
+                        <div className="notification-static-section-title">
+                            <span>高级设置</span>
+                            <span>代理、API 地址与 Topic</span>
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '16px 20px', marginTop: 16, opacity: runtime.telegramEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
                             <div style={{ gridColumn: '1 / -1' }}>
                                 <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram API Base URL</div>
@@ -673,21 +658,11 @@ export default function NotificationSettings() {
                                 />
                             </div>
                         </div>
-                    </Disclosure>
+                    </div>
                 </div>
 
-                <Disclosure
-                    className="notification-disclosure animate-slide-up stagger-7"
-                    title={<span className="notification-disclosure-title">
-                        邮件通知
-                        <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 400 }}>
-                            SMTP
-                        </span>
-                    </span>}
-                >
-
                 {/* 卡片：SMTP 邮件设置 */}
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--color-border-light)' }}>
+                <div className="card animate-slide-up stagger-7" style={{ padding: 24, border: runtime.smtpEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-primary-light)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -786,7 +761,6 @@ export default function NotificationSettings() {
 
                     </div>
                 </div>
-                </Disclosure>
 
             </div>
         </div>

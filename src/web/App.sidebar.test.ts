@@ -22,7 +22,7 @@ describe('App sidebar config', () => {
     expect(systemGroupIndex).toBeGreaterThan(downstreamIndex);
   });
 
-  it('keeps the official pool independent and places the safety vault under 系统与安全', () => {
+  it('keeps official channels inside channel management and places the safety vault under 系统与安全', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
     const accessGroupIndex = source.indexOf("label: '接入管理'");
     const runtimeGroupIndex = source.indexOf("label: '路由与运行'");
@@ -30,7 +30,7 @@ describe('App sidebar config', () => {
     const accessGroup = source.slice(accessGroupIndex, runtimeGroupIndex);
     const systemGroup = source.slice(systemGroupIndex, source.indexOf('];', systemGroupIndex));
 
-    expect(accessGroup).toContain("{ to: '/official-credentials', label: '官方凭证池'");
+    expect(accessGroup).not.toContain("{ to: '/official-credentials', label: '官方凭证池'");
     expect(accessGroup).not.toContain("label: '安全凭证库'");
     expect(systemGroup).toContain("{ to: '/settings/credentials', label: '安全凭证库'");
     expect(source).toContain('<Route path="/settings/credentials" element={<CredentialVault />} />');
@@ -46,6 +46,7 @@ describe('App sidebar config', () => {
 
     const orderedEntries = [
       "{ to: '/routes', label: '路由'",
+      "{ to: '/routing-observability', label: '观测面板'",
       "{ to: '/downstream-keys', label: '下游密钥'",
       "{ to: '/logs', label: '使用日志'",
       "{ to: '/checkin', label: '签到记录'",
@@ -68,8 +69,8 @@ describe('App sidebar config', () => {
     expect(source).toContain('function LegacyChannelRedirect');
     expect(source).toContain('<Route path="/sites" element={<LegacyChannelRedirect section="sites" />} />');
     expect(source).toContain('<Route path="/accounts" element={<LegacyChannelRedirect section="connections" />} />');
-    expect(source).toContain('<Route path="/oauth" element={<PreservingRedirect pathname="/official-credentials" />} />');
-    expect(source).toContain('<Route path="/official-credentials" element={<OfficialCredentialPool />} />');
+    expect(source).toContain('<Route path="/oauth" element={<PreservingRedirect pathname="/channels/official" />} />');
+    expect(source).toContain('<Route path="/official-credentials" element={<PreservingRedirect pathname="/channels/official" />} />');
     expect(runtimeGroupIndex).toBeGreaterThan(accessGroupIndex);
   });
 
@@ -78,12 +79,21 @@ describe('App sidebar config', () => {
 
     expect(source).toContain("const ChannelManagement = lazy(() => import('./pages/ChannelManagement.js'));");
     expect(source).toContain('<Route path="/channels" element={<ChannelManagement />}>');
+    expect(source).toContain('<Route path="official" element={<OfficialCredentialPool />} />');
     expect(source).toContain('<Route path="sites" element={<Sites />} />');
     expect(source).toContain('<Route path="connections" element={<Accounts />} />');
-    expect(source).toContain('<Route path="oauth" element={<PreservingRedirect pathname="/official-credentials" />} />');
+    expect(source).toContain('<Route path="oauth" element={<PreservingRedirect pathname="/channels/official" />} />');
     expect(source).not.toContain('<Route path="oauth" element={<OfficialCredentialPool />} />');
     expect(source).not.toContain('<Route path="credentials" element={<CredentialVault />} />');
     expect(source).toContain('<Route path="credentials" element={<PreservingRedirect pathname="/settings/credentials" />} />');
     expect(source).toContain('<Route path="recovery" element={<BrowserRecoveryTasks />} />');
+  });
+
+  it('exposes routing observability as a runtime menu and authenticated route', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+
+    expect(source).toContain("const RoutingObservability = lazy(() => import('./pages/RoutingObservability.js'));");
+    expect(source).toContain("{ to: '/routing-observability', label: '观测面板'");
+    expect(source).toContain('<Route path="/routing-observability" element={<RoutingObservability />} />');
   });
 });

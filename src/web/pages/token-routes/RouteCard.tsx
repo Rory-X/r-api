@@ -93,8 +93,6 @@ type RouteCardProps = {
   onCreateTokenForMissing: (accountId: number, modelName: string) => void;
   // Add channel
   onAddChannel: (routeId: number) => void;
-  // Site block model
-  onSiteBlockModel: (channelId: number, routeId: number) => void;
   // Source group expansion
   expandedSourceGroupMap: Record<string, boolean>;
   onToggleSourceGroup: (groupKey: string) => void;
@@ -489,7 +487,6 @@ type ChannelRowShellProps = {
   onSaveToken: (routeId: number, channelId: number, accountId: number) => void;
   onDeleteChannel: (channelId: number, routeId: number) => void;
   onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
-  onSiteBlockModel: (channelId: number, routeId: number) => void;
 };
 
 type SortableChannelShellProps = ChannelRowShellProps & {
@@ -531,7 +528,6 @@ function SortableChannelShell({
   onSaveToken,
   onDeleteChannel,
   onToggleChannelEnabled,
-  onSiteBlockModel,
   railLabel,
   mobileRailLabel,
   mobileRailDetail,
@@ -660,7 +656,6 @@ function SortableChannelShell({
         onSaveToken={() => onSaveToken(routeId, channel.id, channel.accountId)}
         onDeleteChannel={() => onDeleteChannel(channel.id, routeId)}
         onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, routeId, enabled)}
-        onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, routeId)}
       />
     </div>
   );
@@ -685,7 +680,6 @@ function StaticChannelShell({
   onSaveToken,
   onDeleteChannel,
   onToggleChannelEnabled,
-  onSiteBlockModel,
 }: ChannelRowShellProps & { presentation: 'automatic' | 'disabled' }) {
   const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
   const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
@@ -716,7 +710,6 @@ function StaticChannelShell({
         onSaveToken={() => onSaveToken(routeId, channel.id, channel.accountId)}
         onDeleteChannel={() => onDeleteChannel(channel.id, routeId)}
         onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, routeId, enabled)}
-        onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, routeId)}
       />
     </div>
   );
@@ -754,7 +747,6 @@ function RouteCardInner({
   missingTokenGroupItems,
   onCreateTokenForMissing,
   onAddChannel,
-  onSiteBlockModel,
   expandedSourceGroupMap,
   onToggleSourceGroup,
 }: RouteCardProps) {
@@ -1393,7 +1385,6 @@ function RouteCardInner({
                             onSaveToken={onSaveToken}
                             onDeleteChannel={onDeleteChannel}
                             onToggleChannelEnabled={onToggleChannelEnabled}
-                            onSiteBlockModel={onSiteBlockModel}
                             railLabel={railLabel}
                             mobileRailLabel={mobileRailLabel}
                             mobileRailDetail={mobileRailDetail}
@@ -1472,7 +1463,6 @@ function RouteCardInner({
                     onSaveToken={onSaveToken}
                     onDeleteChannel={onDeleteChannel}
                     onToggleChannelEnabled={onToggleChannelEnabled}
-                    onSiteBlockModel={onSiteBlockModel}
                   />
                 ))}
               </div>
@@ -1524,7 +1514,6 @@ function RouteCardInner({
                     onSaveToken={onSaveToken}
                     onDeleteChannel={onDeleteChannel}
                     onToggleChannelEnabled={onToggleChannelEnabled}
-                    onSiteBlockModel={onSiteBlockModel}
                   />
                 ))}
               </div>
@@ -1581,7 +1570,6 @@ function areRouteCardPropsEqual(prev: RouteCardProps, next: RouteCardProps): boo
     || prev.onChannelDragEnd !== next.onChannelDragEnd
     || prev.onCreateTokenForMissing !== next.onCreateTokenForMissing
     || prev.onAddChannel !== next.onAddChannel
-    || prev.onSiteBlockModel !== next.onSiteBlockModel
     || prev.onToggleSourceGroup !== next.onToggleSourceGroup
     || prev.clearingCooldown !== next.clearingCooldown
     || prev.updatingRoutingStrategy !== next.updatingRoutingStrategy

@@ -5,7 +5,7 @@ import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
 import ProxyLogs from './ProxyLogs.js';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, isMobileMock } = vi.hoisted(() => ({
   apiMock: {
     getProxyLogs: vi.fn(),
     getProxyLogsQuery: vi.fn(),
@@ -19,10 +19,15 @@ const { apiMock } = vi.hoisted(() => ({
     getSites: vi.fn(),
     updateRuntimeSettings: vi.fn(),
   },
+  isMobileMock: vi.fn(),
 }));
 
 vi.mock('../api.js', () => ({
   api: apiMock,
+}));
+
+vi.mock('../components/useIsMobile.js', () => ({
+  useIsMobile: isMobileMock,
 }));
 
 function collectText(node: ReactTestInstance): string {
@@ -104,6 +109,7 @@ function buildListResponse(overrides?: Partial<{
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isMobileMock.mockReturnValue(false);
     const localStorageState = new Map<string, string>();
     Object.defineProperty(globalThis, 'navigator', {
       value: {
@@ -312,6 +318,91 @@ describe('ProxyLogs server-driven page', () => {
       await act(async () => {
         root?.unmount();
       });
+    }
+  });
+
+  it('keeps the full desktop detail payload in the mobile usage log card', async () => {
+    isMobileMock.mockReturnValue(true);
+    const baseLog = buildListResponse().items[0];
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
+      items: [{ ...baseLog, modelActual: 'gpt-4o-2026-08-01' }],
+    }));
+    apiMock.getProxyLogDetail.mockResolvedValue({
+      ...baseLog,
+      modelActual: 'gpt-4o-2026-08-01',
+      routeId: 45,
+      channelId: 67,
+      billingDetails: {
+        breakdown: {
+          inputPerMillion: 1,
+          outputPerMillion: 2,
+          cacheReadPerMillion: 0.5,
+          cacheCreationPerMillion: 0.75,
+          inputCost: 0.1,
+          outputCost: 0.2,
+          cacheReadCost: 0.0000015,
+          cacheCreationCost: 0.000003,
+          totalCost: 0.3,
+        },
+        pricing: {
+          modelRatio: 1,
+          completionRatio: 1,
+          cacheRatio: 0.5,
+          cacheCreationRatio: 0.75,
+          groupRatio: 1,
+        },
+        usage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          cacheReadTokens: 3,
+          cacheCreationTokens: 4,
+          billablePromptTokens: 10,
+          promptTokensIncludeCache: false,
+        },
+      },
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(root.root.findAll((node) => String(node.props.className || '').split(' ').includes('mobile-card')).length).toBeGreaterThan(0);
+      expect(root.root.findAll((node) => node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101')).toHaveLength(0);
+
+      const detailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '详情'
+      ));
+      await act(async () => detailButton.props.onClick());
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('请求概览');
+      expect(text).toContain('实际模型');
+      expect(text).toContain('gpt-4o-2026-08-01');
+      expect(text).toContain('总 Tokens');
+      expect(text).toContain('缓存 Tokens');
+      expect(text).toContain('缓存创建 Tokens');
+      expect(text).toContain('下游请求路径');
+      expect(text).toContain('/v1/chat');
+      expect(text).toContain('上游请求路径');
+      expect(text).toContain('/api/chat');
+      expect(text).toContain('计费过程');
+      expect(text).toContain('客户端详情');
+    } finally {
+      root?.unmount();
     }
   });
 

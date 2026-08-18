@@ -13,7 +13,7 @@ import { generateDownstreamSkKey } from '../helpers/generateDownstreamSkKey.js';
 
 const DOWNSTREAM_KEY_PREFIX = 'sk-';
 
-export type DownstreamExcludedCredentialRef =
+export type DownstreamCredentialRef =
   | {
     kind: 'account_token';
     siteId: number;
@@ -24,7 +24,14 @@ export type DownstreamExcludedCredentialRef =
     kind: 'default_api_key';
     siteId: number;
     accountId: number;
+  }
+  | {
+    kind: 'account_credential';
+    siteId: number;
+    accountId: number;
   };
+
+export type DownstreamExcludedCredentialRef = DownstreamCredentialRef;
 
 export type DownstreamKeyEditorForm = {
   name: string;
@@ -41,7 +48,8 @@ export type DownstreamKeyEditorForm = {
   selectedGroupRouteIds: number[];
   siteWeightMultipliersText: string;
   excludedSiteIds: number[];
-  excludedCredentialRefs: DownstreamExcludedCredentialRef[];
+  allowedCredentialRefs: DownstreamCredentialRef[];
+  excludedCredentialRefs: DownstreamCredentialRef[];
 };
 
 export type DownstreamSiteOption = {
@@ -52,7 +60,7 @@ export type DownstreamSiteOption = {
 
 export type DownstreamCredentialOption = {
   key: string;
-  ref: DownstreamExcludedCredentialRef;
+  ref: DownstreamCredentialRef;
   siteName: string;
   accountName: string;
   label: string;
@@ -129,7 +137,7 @@ function tagChipStyle(kind: 'normal' | 'accent' = 'normal'): React.CSSProperties
   };
 }
 
-function buildExcludedCredentialRefKey(ref: DownstreamExcludedCredentialRef): string {
+function buildCredentialRefKey(ref: DownstreamCredentialRef): string {
   return ref.kind === 'account_token'
     ? `${ref.kind}:${ref.siteId}:${ref.accountId}:${ref.tokenId}`
     : `${ref.kind}:${ref.siteId}:${ref.accountId}`;
@@ -139,29 +147,29 @@ function normalizeExcludedSiteIds(values: number[]): number[] {
   return uniqIds(values).sort((left, right) => left - right);
 }
 
-function normalizeExcludedCredentialRefs(values: DownstreamExcludedCredentialRef[]): DownstreamExcludedCredentialRef[] {
-  const deduped = new Map<string, DownstreamExcludedCredentialRef>();
+function normalizeCredentialRefs(values: DownstreamCredentialRef[]): DownstreamCredentialRef[] {
+  const deduped = new Map<string, DownstreamCredentialRef>();
   for (const value of values) {
     if (!value || !Number.isFinite(value.siteId) || !Number.isFinite(value.accountId)) continue;
     if (value.kind === 'account_token') {
       if (!Number.isFinite(value.tokenId)) continue;
-      const normalized: DownstreamExcludedCredentialRef = {
+      const normalized: DownstreamCredentialRef = {
         kind: 'account_token',
         siteId: Math.trunc(value.siteId),
         accountId: Math.trunc(value.accountId),
         tokenId: Math.trunc(value.tokenId),
       };
-      deduped.set(buildExcludedCredentialRefKey(normalized), normalized);
+      deduped.set(buildCredentialRefKey(normalized), normalized);
       continue;
     }
-    const normalized: DownstreamExcludedCredentialRef = {
-      kind: 'default_api_key',
+    const normalized: DownstreamCredentialRef = {
+      kind: value.kind,
       siteId: Math.trunc(value.siteId),
       accountId: Math.trunc(value.accountId),
     };
-    deduped.set(buildExcludedCredentialRefKey(normalized), normalized);
+    deduped.set(buildCredentialRefKey(normalized), normalized);
   }
-  return Array.from(deduped.values()).sort((left, right) => buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right)));
+  return Array.from(deduped.values()).sort((left, right) => buildCredentialRefKey(left).localeCompare(buildCredentialRefKey(right)));
 }
 
 export function TagInput({
@@ -279,6 +287,7 @@ export default function DownstreamKeyEditorModal({
   const [modelSearch, setModelSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
+  const [allowedCredentialSearch, setAllowedCredentialSearch] = useState('');
   const [credentialSearch, setCredentialSearch] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -287,6 +296,7 @@ export default function DownstreamKeyEditorModal({
       setModelSearch('');
       setGroupSearch('');
       setSiteSearch('');
+      setAllowedCredentialSearch('');
       setCredentialSearch('');
       setAdvancedOpen(false);
     }
@@ -340,6 +350,17 @@ export default function DownstreamKeyEditorModal({
       || item.detail.toLowerCase().includes(keyword)
     ));
   }, [credentialOptions, credentialSearch]);
+
+  const filteredAllowedCredentials = useMemo(() => {
+    const keyword = allowedCredentialSearch.trim().toLowerCase();
+    if (!keyword) return credentialOptions;
+    return credentialOptions.filter((item) => (
+      item.siteName.toLowerCase().includes(keyword)
+      || item.accountName.toLowerCase().includes(keyword)
+      || item.label.toLowerCase().includes(keyword)
+      || item.detail.toLowerCase().includes(keyword)
+    ));
+  }, [allowedCredentialSearch, credentialOptions]);
 
   const selectedModelCount = form.selectedModels.length;
   const selectedGroupCount = normalizedSelectedGroupRouteIds.length;
@@ -502,6 +523,63 @@ export default function DownstreamKeyEditorModal({
               <div className="downstream-key-advanced-panel">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div>
+                    <div className="downstream-key-modal-section-title">凭证白名单</div>
+                    <div className="downstream-key-modal-help">一旦选择，请求和失败重试都只会使用这些站点凭证；留空表示不限制凭证范围。</div>
+                  </div>
+                  <Button variant="ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, allowedCredentialRefs: [] }))}>清空</Button>
+                </div>
+                <div className="downstream-key-modal-meta">
+                  {form.allowedCredentialRefs.length > 0
+                    ? `已允许 ${form.allowedCredentialRefs.length} 个凭证`
+                    : '未启用凭证白名单'}
+                </div>
+                <div className="toolbar-search" style={{ maxWidth: '100%' }}>
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <Input value={allowedCredentialSearch} onChange={(e) => setAllowedCredentialSearch(e.target.value)} placeholder="搜索允许的站点 / 账号 / 凭证" />
+                </div>
+                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {exclusionSourceLoading ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>加载站点与凭证中...</div>
+                  ) : filteredAllowedCredentials.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无可选站点凭证</div>
+                  ) : filteredAllowedCredentials.map((item) => {
+                    const checked = form.allowedCredentialRefs.some((ref) => buildCredentialRefKey(ref) === buildCredentialRefKey(item.ref));
+                    return (
+                      <div key={`allow:${item.key}`} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <Checkbox
+                          checked={checked}
+                          onChange={(nextChecked) => onChange((prev) => ({
+                            ...prev,
+                            allowedCredentialRefs: normalizeCredentialRefs(
+                              nextChecked
+                                ? [...prev.allowedCredentialRefs, item.ref]
+                                : prev.allowedCredentialRefs.filter((ref) => buildCredentialRefKey(ref) !== buildCredentialRefKey(item.ref)),
+                            ),
+                            excludedCredentialRefs: nextChecked
+                              ? prev.excludedCredentialRefs.filter((ref) => buildCredentialRefKey(ref) !== buildCredentialRefKey(item.ref))
+                              : prev.excludedCredentialRefs,
+                          }))}
+                          label={(
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>{item.label}</div>
+                              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>
+                                {item.siteName} / {item.accountName}
+                              </div>
+                              <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-muted)' }}>{item.detail}</div>
+                            </div>
+                          )}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="downstream-key-advanced-panel">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div>
                     <div className="downstream-key-modal-section-title">模型白名单</div>
                     <div className="downstream-key-modal-help">只展示精确模型；未勾选时默认不允许任何精确模型，可点“全选”一次性放开。</div>
                   </div>
@@ -655,18 +733,21 @@ export default function DownstreamKeyEditorModal({
                   ) : filteredCredentials.length === 0 ? (
                     <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无可排除 API Key/令牌</div>
                   ) : filteredCredentials.map((item) => {
-                    const checked = form.excludedCredentialRefs.some((ref) => buildExcludedCredentialRefKey(ref) === buildExcludedCredentialRefKey(item.ref));
+                    const checked = form.excludedCredentialRefs.some((ref) => buildCredentialRefKey(ref) === buildCredentialRefKey(item.ref));
                     return (
                       <div key={item.key} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
                         <Checkbox
                           checked={checked}
                           onChange={(nextChecked) => onChange((prev) => ({
                             ...prev,
-                            excludedCredentialRefs: normalizeExcludedCredentialRefs(
+                            excludedCredentialRefs: normalizeCredentialRefs(
                               nextChecked
                                 ? [...prev.excludedCredentialRefs, item.ref]
-                                : prev.excludedCredentialRefs.filter((ref) => buildExcludedCredentialRefKey(ref) !== buildExcludedCredentialRefKey(item.ref)),
+                                : prev.excludedCredentialRefs.filter((ref) => buildCredentialRefKey(ref) !== buildCredentialRefKey(item.ref)),
                             ),
+                            allowedCredentialRefs: nextChecked
+                              ? prev.allowedCredentialRefs.filter((ref) => buildCredentialRefKey(ref) !== buildCredentialRefKey(item.ref))
+                              : prev.allowedCredentialRefs,
                           }))}
                           label={(
                             <div style={{ minWidth: 0 }}>

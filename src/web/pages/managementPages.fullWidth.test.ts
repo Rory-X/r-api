@@ -14,7 +14,7 @@ describe('management page full-width layout', () => {
   it('keeps management and settings page content on the shared full-width stack', () => {
     for (const page of pages) {
       const source = readFileSync(resolve(process.cwd(), page), 'utf8');
-      expect(source, page).toContain('className="management-page-stack"');
+      expect(source, page).toMatch(/className="[^"]*\bmanagement-page-stack\b[^"]*"/);
     }
 
     const settingsSource = readFileSync(resolve(process.cwd(), 'src/web/pages/Settings.tsx'), 'utf8');

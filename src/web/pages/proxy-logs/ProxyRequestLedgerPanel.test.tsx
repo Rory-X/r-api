@@ -12,7 +12,12 @@ const { apiMock } = vi.hoisted(() => ({
   },
 }));
 
+const { isMobileMock } = vi.hoisted(() => ({
+  isMobileMock: vi.fn(),
+}));
+
 vi.mock('../../api.js', () => ({ api: apiMock }));
+vi.mock('../../components/useIsMobile.js', () => ({ useIsMobile: isMobileMock }));
 
 function collectText(node: ReactTestInstance): string {
   return (node.children || []).map((child) => (
@@ -69,6 +74,7 @@ const listItem = {
 describe('ProxyRequestLedgerPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isMobileMock.mockReturnValue(false);
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: {
@@ -174,6 +180,46 @@ describe('ProxyRequestLedgerPanel', () => {
     expect(text).toContain('仅安全重放');
     expect(text).toContain('Credential A');
     expect(text).toContain('connection ended after send');
+
+    await act(async () => root.unmount());
+  });
+
+  it('keeps request and attempt fields complete on mobile', async () => {
+    isMobileMock.mockReturnValue(true);
+
+    let root!: ReturnType<typeof create>;
+    await act(async () => {
+      root = create(
+        <ToastProvider>
+          <ProxyRequestLedgerPanel />
+        </ToastProvider>,
+      );
+    });
+    await flushMicrotasks();
+
+    const listText = collectText(root.root);
+    expect(listText).toContain('下游路径');
+    expect(listText).toContain('/v1/responses');
+    expect(listText).toContain('提交阶段');
+    expect(listText).toContain('重放安全');
+    expect(listText).toContain('包含 sent_unknown');
+
+    const detailButton = root.root.find((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && collectText(node).trim() === '查看详情'
+    ));
+    await act(async () => detailButton.props.onClick());
+    await flushMicrotasks();
+
+    const detailText = collectText(root.root);
+    expect(detailText).toContain('Attempt ID');
+    expect(detailText).toContain('attempt-risk-webui');
+    expect(detailText).toContain('开始时间');
+    expect(detailText).toContain('账号');
+    expect(detailText).toContain('upstream-user');
+    expect(detailText).toContain('提交阶段');
+    expect(detailText).toContain('connection ended after send');
 
     await act(async () => root.unmount());
   });

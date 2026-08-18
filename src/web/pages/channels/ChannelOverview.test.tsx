@@ -4,15 +4,17 @@ import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../../components/Toast.js';
 import ChannelOverview from './ChannelOverview.js';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, isMobileMock } = vi.hoisted(() => ({
   apiMock: {
     getSites: vi.fn(),
     getAccounts: vi.fn(),
     getCredentialVaultItems: vi.fn(),
   },
+  isMobileMock: vi.fn(),
 }));
 
 vi.mock('../../api.js', () => ({ api: apiMock }));
+vi.mock('../../components/useIsMobile.js', () => ({ useIsMobile: isMobileMock }));
 
 function collectText(node: any): string {
   if (Array.isArray(node)) return node.map(collectText).join('');
@@ -32,6 +34,7 @@ describe('ChannelOverview', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    isMobileMock.mockReturnValue(false);
     apiMock.getSites.mockResolvedValue([
       {
         id: 1,
@@ -82,12 +85,37 @@ describe('ChannelOverview', () => {
     const text = collectText(root!.toJSON());
     expect(apiMock.getAccounts).toHaveBeenCalledWith();
     expect(text).toContain('2个上游站点');
+    expect(text).toContain('1个官方渠道');
     expect(text).toContain('2个普通连接');
     expect(text).toContain('1个渠道凭证');
     expect(text).toContain('Panel Site');
     expect(text).toContain('OAuth Site');
     expect(text).toContain('1/2');
     expect(text).toContain('1 个 API 端点');
+  });
+
+  it('renders actionable channel cards instead of the wide table on mobile', async () => {
+    isMobileMock.mockReturnValue(true);
+
+    await act(async () => {
+      root = create(
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/channels']}>
+            <ChannelOverview />
+          </MemoryRouter>
+        </ToastProvider>,
+      );
+    });
+    await flushMicrotasks();
+
+    expect(root!.root.findAllByProps({ 'data-testid': 'channel-overview-mobile-list' })).toHaveLength(1);
+    expect(root!.root.findAllByType('table')).toHaveLength(0);
+    expect(root!.root.findAll((node) => String(node.props?.className || '').startsWith('mobile-card '))).toHaveLength(2);
+    const text = collectText(root!.toJSON());
+    expect(text).toContain('Panel Site');
+    expect(text).toContain('API 端点1');
+    expect(text).toContain('站点');
+    expect(text).toContain('连接');
   });
 
   it('shows Site breaker scope, cooldown and failure reason', async () => {

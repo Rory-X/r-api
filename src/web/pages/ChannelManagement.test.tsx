@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import ChannelManagement from './ChannelManagement.js';
 
 describe('ChannelManagement', () => {
-  it('keeps upstream workflows inside one channel surface without the global credential center', () => {
+  it('keeps official and ordinary upstream workflows inside one channel surface', () => {
     const root = create(
       <MemoryRouter initialEntries={['/channels/sites']}>
         <Routes>
@@ -24,6 +24,7 @@ describe('ChannelManagement', () => {
     expect(String(activeSitesTab?.props.className || '')).toContain('active');
     expect(links.map((link) => link.props.href)).toEqual(expect.arrayContaining([
       '/channels',
+      '/channels/official',
       '/channels/sites',
       '/channels/connections',
       '/channels/recovery',
@@ -48,7 +49,7 @@ describe('ChannelManagement', () => {
     expect(root.root.findByProps({ 'data-testid': 'channel-management' })).toBeTruthy();
     expect(root.root.findByProps({ 'data-testid': 'channel-section-loading' })).toBeTruthy();
     expect(root.root.findByType('h2').children.join('')).toBe('渠道管理');
-    expect(root.root.findAllByType('a')).toHaveLength(4);
+    expect(root.root.findAllByType('a')).toHaveLength(5);
 
     root.unmount();
   });

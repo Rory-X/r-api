@@ -86,9 +86,14 @@ function buildSummaryItem(overrides?: Partial<any>) {
     usedCost: 0,
     maxRequests: null,
     usedRequests: 0,
+    maxConcurrency: null,
+    policyVersion: 1,
     supportedModels: ['gpt-4.1-mini'],
     allowedRouteIds: [11],
     siteWeightMultipliers: {},
+    excludedSiteIds: [],
+    allowedCredentialRefs: [],
+    excludedCredentialRefs: [],
     lastUsedAt: '2026-03-15T08:27:25.378Z',
     createdAt: '2026-03-15T08:27:25.378Z',
     updatedAt: '2026-03-15T08:27:25.378Z',
@@ -119,9 +124,14 @@ function buildRawItem(overrides?: Partial<any>) {
     usedCost: 0,
     maxRequests: null,
     usedRequests: 0,
+    maxConcurrency: null,
+    policyVersion: 1,
     supportedModels: ['gpt-4.1-mini'],
     allowedRouteIds: [11],
     siteWeightMultipliers: {},
+    excludedSiteIds: [],
+    allowedCredentialRefs: [],
+    excludedCredentialRefs: [],
     lastUsedAt: '2026-03-15T08:27:25.378Z',
     ...overrides,
   };
@@ -831,7 +841,7 @@ describe('DownstreamKeys page', () => {
     }
   });
 
-  it('lazy loads exclusion sources and submits excluded sites and credentials', async () => {
+  it('lazy loads credential sources and submits credential allowlists and exclusions', async () => {
     let root!: WebTestRenderer;
     try {
       await act(async () => {
@@ -864,6 +874,7 @@ describe('DownstreamKeys page', () => {
       await flushMicrotasks();
 
       const text = collectText(root!.root);
+      expect(text).toContain('凭证白名单');
       expect(text).toContain('排除站点');
       expect(text).toContain('排除 API Key/令牌');
       expect(text).toContain('默认 API Key');
@@ -878,14 +889,17 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const checkboxes = root!.root.findAllByType(Checkbox);
-      const siteCheckbox = checkboxes.find((node) => collectText(node).includes('站点B'));
-      const tokenCheckbox = checkboxes.find((node) => collectText(node).includes('token-a'));
-      const defaultApiKeyCheckbox = checkboxes.find((node) => collectText(node).includes('默认 API Key'));
+      const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
+      const allowlistPanel = panels.find((node) => collectText(node).includes('凭证白名单'));
+      const excludedSitePanel = panels.find((node) => collectText(node).includes('排除站点'));
+      const excludedCredentialPanel = panels.find((node) => collectText(node).includes('排除 API Key/令牌'));
+      const siteCheckbox = excludedSitePanel!.findAllByType(Checkbox).find((node) => collectText(node).includes('站点B'));
+      const allowedTokenCheckbox = allowlistPanel!.findAllByType(Checkbox).find((node) => collectText(node).includes('token-a'));
+      const defaultApiKeyCheckbox = excludedCredentialPanel!.findAllByType(Checkbox).find((node) => collectText(node).includes('默认 API Key'));
 
       await act(async () => {
         siteCheckbox!.props.onChange(true);
-        tokenCheckbox!.props.onChange(true);
+        allowedTokenCheckbox!.props.onChange(true);
         defaultApiKeyCheckbox!.props.onChange(true);
       });
       await flushMicrotasks();
@@ -900,8 +914,10 @@ describe('DownstreamKeys page', () => {
         name: 'excluded-key',
         key: 'sk-excluded-key-0405',
         excludedSiteIds: [202],
-        excludedCredentialRefs: [
+        allowedCredentialRefs: [
           { kind: 'account_token', siteId: 201, accountId: 101, tokenId: 301 },
+        ],
+        excludedCredentialRefs: [
           { kind: 'default_api_key', siteId: 201, accountId: 101 },
         ],
       }));

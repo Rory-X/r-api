@@ -1,4 +1,4 @@
-export type ChannelSection = 'overview' | 'sites' | 'connections' | 'credentials' | 'recovery';
+export type ChannelSection = 'overview' | 'official' | 'sites' | 'connections' | 'recovery';
 
 export function resolveChannelPath(_pathname: string, section: ChannelSection): string {
   return section === 'overview' ? '/channels' : `/channels/${section}`;

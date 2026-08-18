@@ -129,7 +129,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -176,7 +175,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -234,7 +232,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -292,7 +289,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -341,7 +337,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -410,7 +405,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -488,7 +482,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -536,7 +529,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -582,7 +574,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />
@@ -657,7 +648,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -716,7 +706,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -769,7 +758,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -828,7 +816,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -873,7 +860,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -944,7 +930,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />
@@ -1006,7 +991,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
         onAddChannel={vi.fn()}
-        onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
       />,
@@ -1048,7 +1032,6 @@ describe('RouteCard', () => {
       onChannelDragEnd: vi.fn(),
       onCreateTokenForMissing: vi.fn(),
       onAddChannel: vi.fn(),
-      onSiteBlockModel: vi.fn(),
       onToggleSourceGroup: vi.fn(),
     };
     const candidateView = { routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} };
@@ -1083,7 +1066,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={callbacks.onCreateTokenForMissing}
         onAddChannel={callbacks.onAddChannel}
-        onSiteBlockModel={callbacks.onSiteBlockModel}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={callbacks.onToggleSourceGroup}
       />
@@ -1128,7 +1110,6 @@ describe('RouteCard', () => {
       onChannelDragEnd: vi.fn(),
       onCreateTokenForMissing: vi.fn(),
       onAddChannel: vi.fn(),
-      onSiteBlockModel: vi.fn(),
       onToggleSourceGroup: vi.fn(),
     };
     const callbacksB = {
@@ -1144,7 +1125,6 @@ describe('RouteCard', () => {
       onChannelDragEnd: vi.fn(),
       onCreateTokenForMissing: vi.fn(),
       onAddChannel: vi.fn(),
-      onSiteBlockModel: vi.fn(),
       onToggleSourceGroup: vi.fn(),
     };
     const candidateView = { routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} };
@@ -1179,7 +1159,6 @@ describe('RouteCard', () => {
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={callbacks.onCreateTokenForMissing}
         onAddChannel={callbacks.onAddChannel}
-        onSiteBlockModel={callbacks.onSiteBlockModel}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={callbacks.onToggleSourceGroup}
       />

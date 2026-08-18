@@ -116,6 +116,8 @@ describe('Tokens edit modal and row selection', () => {
         valueStatus: 'ready',
         enabled: true,
         isDefault: false,
+        routeUsageCount: 1,
+        activeRouteUsageCount: 1,
         updatedAt: '2026-03-07 10:00:00',
         accountId: 1,
         account: { username: 'session-user' },
@@ -144,6 +146,23 @@ describe('Tokens edit modal and row selection', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('keeps route usage compact and exposes the full status on hover', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const routeUsage = root.root.find((node) => node.props['data-testid'] === 'token-route-usage-22');
+      expect(collectText(routeUsage)).toBe('1 个通道');
+      expect(routeUsage.props.className).toContain('token-route-usage-badge');
+      expect(routeUsage.props['data-tooltip']).toBe('已绑定 1 个路由通道，均处于启用状态');
+    } finally {
+      root?.unmount();
+    }
   });
 
   it('opens the centered edit modal when editing a token', async () => {
@@ -295,6 +314,10 @@ describe('Tokens edit modal and row selection', () => {
       expect(syncAccountSelect).toBeTruthy();
       expect(syncAccountSelect!.props.searchable).toBe(true);
       expect(syncAccountSelect!.props.searchPlaceholder).toBe('筛选账号（名称 / 站点）');
+      expect(syncAccountSelect!.props.emptyLabel).toBe('暂无可同步的面板账号');
+      expect(syncAccountSelect!.props.options).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ value: '0' })]),
+      );
       expect(syncAccountSelect!.props.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

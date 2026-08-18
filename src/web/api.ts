@@ -551,6 +551,70 @@ export type ProxyLogStatusFilter = "all" | "success" | "failed";
 export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
 
+export type RoutingObservabilityChannel = {
+  channelId: number;
+  label: string;
+  siteName: string | null;
+  accountName: string | null;
+  selectedRequests: number;
+  selectedAttempts: number;
+  selectionShare: number;
+  successfulAttempts: number;
+  failedAttempts: number;
+  currentFailCount: number;
+  currentConsecutiveFailCount: number;
+  currentCooldownUntil: string | null;
+  enabled: boolean;
+};
+
+export type RoutingObservabilityRoute = {
+  routeId: number | null;
+  routeName: string;
+  modelPattern: string | null;
+  routingStrategy: string | null;
+  enabled: boolean | null;
+  requests: number;
+  finalSuccessCount: number;
+  finalSuccessRate: number;
+  firstAttemptSuccessCount: number;
+  firstAttemptSuccessRate: number;
+  failoverRecoveredCount: number;
+  failoverRecoveredRate: number;
+  averageAttempts: number;
+  p95LatencyMs: number | null;
+  p95FirstByteLatencyMs: number | null;
+  totalCost: number;
+  successfulRequestCost: number | null;
+  status503Count: number;
+  channels: RoutingObservabilityChannel[];
+};
+
+export type RoutingObservabilityResponse = {
+  generatedAt: string;
+  range: { hours: number; from: string; to: string };
+  caveats: string[];
+  totals: {
+    requests: number;
+    finalSuccessCount: number;
+    finalFailureCount: number;
+    finalSuccessRate: number;
+    firstAttemptSuccessCount: number;
+    firstAttemptFailureCount: number;
+    firstAttemptSuccessRate: number;
+    failoverRecoveredCount: number;
+    failoverRecoveredRate: number;
+    averageAttempts: number;
+    p95LatencyMs: number | null;
+    p95FirstByteLatencyMs: number | null;
+    totalCost: number;
+    successfulRequestCost: number | null;
+    status503Count: number;
+  };
+  routes: RoutingObservabilityRoute[];
+  sampledLogRows: number;
+  truncated: boolean;
+};
+
 export type ProxyLogBillingDetails = {
   quotaType: number;
   usage: {
@@ -967,6 +1031,38 @@ export type OAuthConnectionsResponse = {
   offset: number;
 };
 
+export type OAuthConnectionProxyUpdateResponse = {
+  success: true;
+  accountId: number;
+  proxyUrl: string | null;
+  useSystemProxy: boolean;
+  refreshedRoutes: true;
+  modelRefresh: {
+    success: boolean;
+    status: "success" | "failed" | "skipped";
+    errorCode: string | null;
+    errorMessage: string | null;
+    modelCount: number;
+    modelsPreview: string[];
+  };
+};
+
+export type OAuthConnectionProxyBatchUpdateResponse = {
+  success: boolean;
+  requested: number;
+  updated: number;
+  failed: number;
+  refreshedRoutes: true;
+  items: Array<{
+    accountId: number;
+    success: boolean;
+    proxyUrl?: string | null;
+    useSystemProxy?: boolean;
+    modelRefresh?: OAuthConnectionProxyUpdateResponse['modelRefresh'];
+    error?: string;
+  }>;
+};
+
 export type OAuthQuotaBatchRefreshResponse = {
   success: boolean;
   refreshed: number;
@@ -1089,6 +1185,17 @@ export type LocalConnectorDevice = {
   status: "active" | "revoked";
   scopes: LocalConnectorScope[];
   capabilities: string[];
+  healthChecks?: Array<{
+    checkId: "connector_runtime" | "codex_notify";
+    status: "unknown" | "healthy" | "unavailable";
+    reason: string | null;
+    observedAt: string | null;
+    transitionedAt: string | null;
+    incidentStartedAt: string | null;
+    alertedAt: string | null;
+    recoveryNotifiedAt: string | null;
+    autoRepairActionId: string | null;
+  }>;
   pairedAt: string;
   lastSeenAt?: string | null;
   revokedAt?: string | null;
@@ -2462,6 +2569,10 @@ export const api = {
         ...(options?.refresh ? { refresh: 1 } : {}),
       })}`,
     ),
+  getRoutingObservability: (hours: 24 | 168 | 720 = 24) =>
+    request<RoutingObservabilityResponse>(
+      `/api/stats/routing-observability${buildQueryString({ hours })}`,
+    ),
   getProxyLogs: (params?: ProxyLogsQuery) =>
     request(
       `/api/stats/proxy-logs${buildQueryString(params)}`,
@@ -2605,7 +2716,15 @@ export const api = {
     request(`/api/oauth/connections/${accountId}/proxy`, {
       method: "PATCH",
       body: JSON.stringify(data || {}),
-    }) as Promise<{ success: true }>,
+    }) as Promise<OAuthConnectionProxyUpdateResponse>,
+  updateOAuthConnectionsProxy: (
+    accountIds: number[],
+    data: { proxyUrl?: string | null; useSystemProxy?: boolean },
+  ) =>
+    request('/api/oauth/connections/proxy', {
+      method: 'PATCH',
+      body: JSON.stringify({ accountIds, ...data }),
+    }) as Promise<OAuthConnectionProxyBatchUpdateResponse>,
   rebindOAuthConnection: (
     accountId: number,
     data?: { proxyUrl?: string | null; useSystemProxy?: boolean },
@@ -2618,11 +2737,16 @@ export const api = {
     request(`/api/oauth/connections/${accountId}`, {
       method: "DELETE",
     }) as Promise<{ success: true }>,
-  importOAuthConnections: (data: Record<string, unknown>) =>
-    request("/api/oauth/import", {
+  importOAuthConnections: (data: unknown) => {
+    const payload = data && typeof data === "object" && !Array.isArray(data)
+      && Array.isArray((data as Record<string, unknown>).items)
+      ? data
+      : { data };
+    return request("/api/oauth/import", {
       method: "POST",
-      body: JSON.stringify(Array.isArray(data.items) ? data : { data }),
-    }) as Promise<OAuthImportResponse>,
+      body: JSON.stringify(payload),
+    }) as Promise<OAuthImportResponse>;
+  },
   exportOAuthConnectionsToSub2Api: (accountIds: number[], confirmation: string) =>
     request("/api/oauth/export/sub2api", {
       method: "POST",

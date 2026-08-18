@@ -130,6 +130,10 @@ describe('Accounts tokens embedded header', () => {
       expect(collectText(tabList)).toContain('签发令牌');
       expect(subTabs).toHaveLength(2);
       expect(subTabs[1]?.props['aria-selected']).toBe(true);
+      expect(subTabs[0]?.props['data-tooltip']).toBe('用于登录、签到、余额和状态维护');
+      expect(subTabs[1]?.props['data-tooltip']).toBe('属于面板账号的上游 API Token，供路由通道自动使用');
+      expect(subTabs[0]?.findAll((node) => node.type === 'small')).toHaveLength(0);
+      expect(subTabs[1]?.findAll((node) => node.type === 'small')).toHaveLength(0);
       expect(collectText(root.root)).toContain('面板账号的下游资源：签发令牌');
       expect(topLevelTabs.some((node) => collectText(node) === '签发令牌')).toBe(false);
     } finally {

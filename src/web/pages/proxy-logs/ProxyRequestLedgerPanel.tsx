@@ -398,7 +398,12 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
                   compact
                   headerActions={<CommitStateBadge state={attempt.commitState} />}
                 >
+                  <MobileField label="Attempt ID" value={attempt.attemptId} stacked />
+                  <MobileField label="开始时间" value={formatDateTimeLocal(attempt.startedAt)} />
+                  <MobileField label="站点" value={attempt.siteName || '-'} />
+                  <MobileField label="账号" value={attempt.accountUsername || '-'} />
                   <MobileField label="状态" value={<StatusBadge status={attempt.status} attempt />} />
+                  <MobileField label="提交阶段" value={<CommitStateBadge state={attempt.commitState} />} />
                   <MobileField label="Channel" value={attempt.channelId ? `#${attempt.channelId}` : '-'} />
                   <MobileField label="Credential" value={attempt.credentialName || (attempt.credentialId ? `#${attempt.credentialId}` : '-')} />
                   <MobileField label="HTTP" value={attempt.statusCode ?? '-'} />
@@ -594,6 +599,7 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
                       title={item.requestedModel || item.requestId}
                       subtitle={formatDateTimeLocal(item.createdAt)}
                       compact
+                      className={item.hasSentUnknown ? 'proxy-ledger-mobile-risk' : ''}
                       headerActions={<CommitStateBadge state={item.latestCommitState} />}
                       footerActions={
                         <Button variant="link" onClick={() => openDetail(item.requestId)}>
@@ -602,10 +608,21 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
                       }
                     >
                       <MobileField label="Request ID" value={item.requestId} />
+                      <MobileField label="下游路径" value={item.downstreamPath || '-'} />
                       <MobileField label="状态" value={<StatusBadge status={item.status} />} />
+                      <MobileField label="提交阶段" value={<CommitStateBadge state={item.latestCommitState} />} />
                       <MobileField label="Thread / Session" value={identityLabel(item)} />
                       <MobileField label="尝试" value={item.attemptCount} />
                       <MobileField label="重试归属" value={formatRetryOwner(item.retryOwner)} />
+                      <MobileField
+                        label="重放安全"
+                        value={item.replaySafety === 'safe_only' ? '仅安全重放' : '允许显式重放'}
+                      />
+                      {item.hasSentUnknown ? (
+                        <div className="proxy-ledger-mobile-warning">
+                          包含 sent_unknown，默认不会自动重放
+                        </div>
+                      ) : null}
                     </MobileCard>
                   ))}
                 </div>

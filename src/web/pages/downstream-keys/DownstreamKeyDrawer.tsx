@@ -175,6 +175,14 @@ export default function DownstreamKeyDrawer({
                   <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>v{item?.policyVersion || 1}</div>
                 </div>
                 <div>
+                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>凭证范围</div>
+                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
+                    {(item?.allowedCredentialRefs || []).length > 0
+                      ? `仅 ${(item?.allowedCredentialRefs || []).length} 个凭证`
+                      : '所有可用凭证'}
+                  </div>
+                </div>
+                <div>
                   <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>主分组</div>
                   <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{item?.groupName || '未分组'}</div>
                 </div>

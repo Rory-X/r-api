@@ -1237,61 +1237,6 @@ export default function TokenRoutes() {
     }
   };
 
-  const handleSiteBlockModel = async (channelId: number, routeId: number) => {
-    const channels = channelsByRouteId[routeId] || [];
-    const channel = channels.find((c) => c.id === channelId);
-    if (!channel?.site?.id) {
-      toast.error('找不到通道对应的站点信息');
-      return;
-    }
-    const route = routeSummaries.find((r) => r.id === routeId);
-    const modelName = channel.sourceModel || (route && isExactModelPattern(route.modelPattern) ? route.modelPattern : '') || '';
-    if (!modelName) {
-      toast.error('该通道没有精确模型名，无法使用站点屏蔽（通配符路由请在站点编辑中手动禁用）');
-      return;
-    }
-    const siteName = channel.site.name || '未知站点';
-    const confirmed = await new Promise<boolean>((resolve) => {
-      const overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
-      const dialog = document.createElement('div');
-      dialog.style.cssText = 'background:var(--color-bg-card,#fff);border-radius:12px;padding:24px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.2)';
-      dialog.innerHTML = `
-        <div style="font-weight:600;font-size:15px;margin-bottom:12px">确认站点屏蔽</div>
-        <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.6;margin-bottom:16px">
-          将模型「<b>${escapeHtml(modelName)}</b>」加入站点「<b>${escapeHtml(siteName)}</b>」的禁用列表。<br/>执行后将自动触发路由重建，该站点下此模型的通道将不再生成。
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px">
-          <button id="__sb_cancel" class="btn btn-ghost" style="padding:6px 16px">取消</button>
-          <button id="__sb_confirm" class="btn btn-warning" style="padding:6px 16px">确认屏蔽</button>
-        </div>
-      `;
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-      dialog.querySelector('#__sb_cancel')!.addEventListener('click', () => { document.body.removeChild(overlay); resolve(false); });
-      dialog.querySelector('#__sb_confirm')!.addEventListener('click', () => { document.body.removeChild(overlay); resolve(true); });
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) { document.body.removeChild(overlay); resolve(false); } });
-    });
-    if (!confirmed) return;
-
-    try {
-      const siteId = channel.site.id;
-      const existing = await api.getSiteDisabledModels(siteId);
-      const currentModels: string[] = existing?.models || [];
-      if (currentModels.includes(modelName)) {
-        toast.info(`模型「${modelName}」已在站点「${siteName}」的禁用列表中`);
-        return;
-      }
-      await api.updateSiteDisabledModels(siteId, [...currentModels, modelName]);
-      toast.success(`已将「${modelName}」加入站点「${siteName}」的禁用列表，正在重建路由...`);
-      await api.rebuildRoutes(false);
-      invalidateChannels();
-      await load();
-    } catch (e: any) {
-      toast.error(e.message || '站点屏蔽模型失败');
-    }
-  };
-
   const handleClearRouteCooldown = async (routeId: number) => {
     if (clearingCooldownByRoute[routeId]) return;
     setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: true }));
@@ -1504,12 +1449,6 @@ export default function TokenRoutes() {
   handleCreateTokenRef.current = handleCreateTokenForMissingAccount;
   const stableCreateTokenForMissing = useCallback(
     (accountId: number, modelName: string) => handleCreateTokenRef.current(accountId, modelName),
-    [],
-  );
-  const handleSiteBlockModelRef = useRef(handleSiteBlockModel);
-  handleSiteBlockModelRef.current = handleSiteBlockModel;
-  const stableSiteBlockModel = useCallback(
-    (channelId: number, routeId: number) => handleSiteBlockModelRef.current(channelId, routeId),
     [],
   );
   const handleClearRouteCooldownRef = useRef(handleClearRouteCooldown);
@@ -1915,7 +1854,6 @@ export default function TokenRoutes() {
                     missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                     onCreateTokenForMissing={stableCreateTokenForMissing}
                     onAddChannel={stableAddChannel}
-                    onSiteBlockModel={stableSiteBlockModel}
                     expandedSourceGroupMap={expandedSourceGroupMap}
                     onToggleSourceGroup={stableToggleSourceGroup}
                   />
@@ -1955,7 +1893,6 @@ export default function TokenRoutes() {
               missingTokenGroupItems={EMPTY_MISSING_GROUP_ITEMS}
               onCreateTokenForMissing={stableCreateTokenForMissing}
               onAddChannel={stableAddChannel}
-              onSiteBlockModel={stableSiteBlockModel}
               expandedSourceGroupMap={expandedSourceGroupMap}
               onToggleSourceGroup={stableToggleSourceGroup}
             />
@@ -1994,7 +1931,6 @@ export default function TokenRoutes() {
                   missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                   onCreateTokenForMissing={stableCreateTokenForMissing}
                   onAddChannel={stableAddChannel}
-                  onSiteBlockModel={stableSiteBlockModel}
                   expandedSourceGroupMap={expandedSourceGroupMap}
                   onToggleSourceGroup={stableToggleSourceGroup}
                 />

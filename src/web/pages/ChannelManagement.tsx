@@ -5,6 +5,7 @@ import ChannelOverview from './channels/ChannelOverview.js';
 
 const tabs = [
   { to: '/channels', label: '渠道总览', end: true },
+  { to: '/channels/official', label: '官方渠道' },
   { to: '/channels/sites', label: '上游站点' },
   { to: '/channels/connections', label: '账号与 API Key' },
   { to: '/channels/recovery', label: '浏览器凭证' },
@@ -29,7 +30,7 @@ export default function ChannelManagement() {
         <div>
           <h2 className="page-title">{tr('渠道管理')}</h2>
           <div style={{ marginTop: 6, color: 'var(--color-text-muted)', fontSize: 12 }}>
-            {tr('统一管理 API 上游站点、普通连接、API Key 与浏览器凭证流程。官方订阅由独立凭证池管理。')}
+            {tr('统一管理官方订阅渠道、API 上游站点、普通连接、API Key 与浏览器凭证流程。')}
           </div>
         </div>
       </div>

@@ -87,12 +87,28 @@ const isMaskedPendingSyncResult = (result: AccountTokenSyncResult | null | undef
   String(result?.reason || '').trim().toLowerCase() === 'upstream_masked_tokens'
   && Number(result?.maskedPending || 0) > 0;
 
-const resolveTokenUsageLabel = (token: any): string => {
-  const total = Number(token?.routeUsageCount || 0);
-  const enabled = Number(token?.activeRouteUsageCount || 0);
-  if (total <= 0) return '未绑定路由';
-  if (enabled === total) return `${total} 个启用通道`;
-  return `${total} 个通道（${enabled} 个启用）`;
+const resolveTokenUsagePresentation = (token: any) => {
+  const total = Math.max(0, Number(token?.routeUsageCount || 0));
+  const enabled = Math.min(total, Math.max(0, Number(token?.activeRouteUsageCount || 0)));
+  if (total <= 0) {
+    return {
+      label: '未绑定',
+      detail: '当前令牌未绑定任何路由通道',
+      badgeClassName: 'badge-muted',
+    };
+  }
+  if (enabled === total) {
+    return {
+      label: `${total} 个通道`,
+      detail: `已绑定 ${total} 个路由通道，均处于启用状态`,
+      badgeClassName: 'badge-success',
+    };
+  }
+  return {
+    label: `${total} 个通道`,
+    detail: `已绑定 ${total} 个路由通道，其中 ${enabled} 个启用`,
+    badgeClassName: enabled > 0 ? 'badge-info' : 'badge-warning',
+  };
 };
 
 const resolveAccountLabel = (result: AccountTokenSyncResult | null | undefined) => {
@@ -812,11 +828,9 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               size="sm"
               value={String(syncingAccountId || 0)}
               onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
-              options={[
-                { value: '0', label: '选择面板账号后同步' },
-                ...activeAccountSelectOptions,
-              ]}
+              options={activeAccountSelectOptions}
               placeholder="选择面板账号后同步"
+              emptyLabel="暂无可同步的面板账号"
               searchable
               searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
             />
@@ -878,11 +892,9 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               <ModernSelect
                 value={String(syncingAccountId || 0)}
                 onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
-                options={[
-                  { value: '0', label: '选择面板账号后同步' },
-                  ...activeAccountSelectOptions,
-                ]}
+                options={activeAccountSelectOptions}
                 placeholder="选择面板账号后同步"
+                emptyLabel="暂无可同步的面板账号"
                 searchable
                 searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
               />
@@ -909,42 +921,6 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
 
       <div className="info-tip" style={{ marginBottom: 12 }}>
         这里管理的是面板账号在上游站点签发的 API Token，不是登录 Session 或直连 API Key。可从上游同步已有 Token，也可调用上游 API 创建新 Token；这些 Token 会作为模型路由通道的实际调用凭证，命中通道后由网关自动携带，无需在每次请求中手动填写。
-      </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: 10,
-          marginBottom: 12,
-        }}
-      >
-        <div
-          style={{
-            padding: '12px 14px',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--color-bg-card)',
-          }}
-        >
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>直连 API Key</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.65 }}>
-            在「API Key 管理」中保存，连接本身就是调用凭证。请求会直接使用它，不需要再配置面板签发 Token。
-          </div>
-        </div>
-        <div
-          style={{
-            padding: '12px 14px',
-            border: '1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border))',
-            borderRadius: 'var(--radius-sm)',
-            background: 'color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card))',
-          }}
-        >
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>面板签发 API Token</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.65 }}>
-            由 Session 面板账号同步或创建，可为同一账号维护多个令牌，并绑定到不同模型路由通道。
-          </div>
-        </div>
       </div>
 
       {!loading && activeAccounts.length === 0 ? (
@@ -1237,6 +1213,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 const loadingPrefix = `token-${token.id}`;
                 const isPending = isMaskedPendingToken(token);
                 const isExpanded = expandedTokenIds.includes(token.id);
+                const routeUsage = resolveTokenUsagePresentation(token);
                 return (
                   <MobileCard
                     key={token.id}
@@ -1294,7 +1271,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                           stacked
                           value={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, wordBreak: 'break-all' }}>{token.tokenMasked || '***'}</span>}
                         />
-                        <MobileField label="路由使用" value={resolveTokenUsageLabel(token)} />
+                        <MobileField label="路由使用" value={routeUsage.detail} />
                         <MobileField
                           label="来源站点"
                           value={token.site?.url ? (
@@ -1376,7 +1353,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 <th>来源站点</th>
                 <th>账号</th>
                 <th>分组</th>
-                <th>路由使用</th>
+                <th className="token-route-usage-cell">路由使用</th>
                 <th>状态</th>
                 <th>默认</th>
                 <th>更新时间</th>
@@ -1387,6 +1364,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               {accountClusteredTokens.map((token: any, i: number) => {
                 const loadingPrefix = `token-${token.id}`;
                 const isPending = isMaskedPendingToken(token);
+                const routeUsage = resolveTokenUsagePresentation(token);
                 return (
                   <tr
                     key={token.id}
@@ -1430,12 +1408,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     </td>
                     <td>{token.account?.username || `account-${token.accountId}`}</td>
                     <td>{token.tokenGroup || 'default'}</td>
-                    <td>
+                    <td className="token-route-usage-cell">
                       <span
-                        className={`badge ${Number(token.routeUsageCount || 0) > 0 ? 'badge-success' : 'badge-muted'}`}
+                        className={`badge token-route-usage-badge ${routeUsage.badgeClassName}`}
                         style={{ fontSize: 11 }}
+                        data-testid={`token-route-usage-${token.id}`}
+                        data-tooltip={routeUsage.detail}
+                        data-tooltip-side="top"
                       >
-                        {resolveTokenUsageLabel(token)}
+                        {routeUsage.label}
                       </span>
                     </td>
                     <td>

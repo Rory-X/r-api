@@ -96,6 +96,50 @@ function observationSourceLabel(source: LocalConnectorThread['observationSource'
   return source === 'codex_desktop' ? 'Codex Desktop' : 'Connector App Server';
 }
 
+const CONNECTOR_HEALTH_REASON_LABELS: Readonly<Record<string, string>> = {
+  heartbeat_timeout: '心跳超时',
+  config_missing: 'Codex 配置不存在',
+  config_invalid: 'Codex 配置无法解析',
+  managed_wrapper_missing: '完成通知包装器已丢失',
+  managed_command_mismatch: '完成通知命令与当前运行环境不一致',
+  forward_notify_invalid: '转发通知配置无效',
+  runtime_missing: 'Connector 运行文件不存在',
+};
+
+function deviceHealthMeta(device: LocalConnectorDevice): {
+  label: string;
+  detail: string;
+  className: string;
+} {
+  const runtime = device.healthChecks?.find((check) => check.checkId === 'connector_runtime');
+  const notify = device.healthChecks?.find((check) => check.checkId === 'codex_notify');
+  if (runtime?.status === 'unavailable') {
+    return {
+      label: '离线',
+      detail: CONNECTOR_HEALTH_REASON_LABELS[runtime.reason || ''] || 'Connector 心跳中断',
+      className: 'badge-error',
+    };
+  }
+  if (notify?.status === 'unavailable') {
+    return {
+      label: '通知异常',
+      detail: CONNECTOR_HEALTH_REASON_LABELS[notify.reason || ''] || 'Codex 完成通知链路不可用',
+      className: 'badge-warning',
+    };
+  }
+  if (runtime?.status === 'healthy' && (!device.scopes.includes('notify.manage') || notify?.status === 'healthy')) {
+    return { label: '健康', detail: 'Connector 与完成通知链路均正常', className: 'badge-success' };
+  }
+  return { label: '检测中', detail: '等待 Connector 上报完整健康状态', className: 'badge-muted' };
+}
+
+function isDeviceOnline(device: LocalConnectorDevice): boolean {
+  const runtime = device.healthChecks?.find((check) => check.checkId === 'connector_runtime');
+  if (runtime) return runtime.status === 'healthy';
+  const lastSeenAtMs = device.lastSeenAt ? Date.parse(device.lastSeenAt) : Number.NaN;
+  return Number.isFinite(lastSeenAtMs) && Date.now() - lastSeenAtMs <= 120_000;
+}
+
 function threadKey(deviceId: string, threadId: string): string {
   return `${deviceId}\0${threadId}`;
 }
@@ -157,6 +201,10 @@ export default function LocalConnector() {
     : 'sessions';
 
   const activeDevices = useMemo(() => devices.filter((device) => device.status === 'active'), [devices]);
+  const onlineDeviceCount = useMemo(
+    () => activeDevices.filter((device) => isDeviceOnline(device)).length,
+    [activeDevices],
+  );
   const feishuDeviceId = selectedDeviceId || activeDevices[0]?.id || '';
   const deviceById = useMemo(() => new Map(devices.map((device) => [device.id, device])), [devices]);
   const latestAutomaticTaskByThread = useMemo(() => {
@@ -403,9 +451,9 @@ export default function LocalConnector() {
       </div>
 
       <nav className="tabs local-connector-tabs" aria-label="本地 Connector 导航">
-        <button type="button" className={`tab ${activeView === 'sessions' ? 'active' : ''}`} onClick={() => selectView('sessions')}>会话接管</button>
-        <button type="button" className={`tab ${activeView === 'settings' ? 'active' : ''}`} onClick={() => selectView('settings')}>本地设置</button>
-        <button type="button" className={`tab ${activeView === 'feishu' ? 'active' : ''}`} onClick={() => selectView('feishu')}>飞书</button>
+        <Button type="button" className={`tab ${activeView === 'sessions' ? 'active' : ''}`} onClick={() => selectView('sessions')}>会话接管</Button>
+        <Button type="button" className={`tab ${activeView === 'settings' ? 'active' : ''}`} onClick={() => selectView('settings')}>本地设置</Button>
+        <Button type="button" className={`tab ${activeView === 'feishu' ? 'active' : ''}`} onClick={() => selectView('feishu')}>飞书</Button>
       </nav>
 
       {activeView === 'sessions' && <section className="card local-session-overview">
@@ -540,7 +588,7 @@ export default function LocalConnector() {
       {activeView === 'settings' && <section className="card local-connector-settings">
           <div className="local-connector-settings-title local-connector-settings-heading">
             <strong>本地设置</strong>
-            <small>{activeDevices.length} 个在线设备 · 配对、权限和本地 Hook / Notify 运维</small>
+            <small>{onlineDeviceCount} 个在线设备 · 配对、权限和本地 Hook / Notify 运维</small>
           </div>
           <div className="local-connector-settings-content">
             <section className="local-connector-settings-section">
@@ -552,11 +600,14 @@ export default function LocalConnector() {
                 <div className="local-connector-settings-empty">暂无设备</div>
               ) : (
                 <div className="local-connector-device-list">
-                  {devices.map((device) => (
+                  {devices.map((device) => {
+                    const health = deviceHealthMeta(device);
+                    return (
                     <div key={device.id} className="local-connector-device-row">
                       <div>
-                        <strong>{device.name}</strong>
+                        <strong>{device.name} <span className={`badge ${health.className}`}>{health.label}</span></strong>
                         <span>{device.platform}{device.version ? ` ${device.version}` : ''} · 最近上报 {formatDate(device.lastSeenAt)}</span>
+                        <span>{health.detail}</span>
                         <div className="local-connector-device-scopes">
                           {device.scopes.map((scope) => <span key={scope} className="badge badge-neutral">{scope}</span>)}
                         </div>
@@ -570,7 +621,8 @@ export default function LocalConnector() {
                         </div>
                       ) : <span className="badge badge-neutral">已撤销</span>}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>

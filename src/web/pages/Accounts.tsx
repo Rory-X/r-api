@@ -1506,10 +1506,12 @@ export default function Accounts() {
               role="tab"
               aria-selected={activeSegment === segment.value}
               onClick={() => setSegment(segment.value)}
+              data-tooltip={segment.description}
+              data-tooltip-side="bottom"
+              data-tooltip-align="center"
               className={activeSegment === segment.value ? "is-active" : ""}
             >
               <span>{segment.label}</span>
-              <small>{segment.description}</small>
             </button>
           ))}
         </div>

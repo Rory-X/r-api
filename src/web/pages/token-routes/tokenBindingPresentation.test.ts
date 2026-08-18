@@ -67,7 +67,7 @@ describe('tokenBindingPresentation', () => {
       accountName: 'elysiver_api',
     });
 
-    expect(result.bindingModeLabel).toBe('API令牌');
+    expect(result.bindingModeLabel).toBe('API Key直连');
     expect(result.badgeTone).toBe('warning');
     expect(result.isFollowingAccountDefault).toBe(false);
     expect(result.effectiveTokenName).toBe('elysiver_api');

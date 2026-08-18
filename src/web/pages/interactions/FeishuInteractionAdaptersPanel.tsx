@@ -83,6 +83,10 @@ function formatDate(value?: string | null): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : value;
 }
 
+function receiveIdTypeLabel(value: FeishuInteractionAdapter['receiveIdType']): string {
+  return RECEIVE_ID_OPTIONS.find((option) => option.value === value)?.label || value;
+}
+
 function callbackUrl(adapter: FeishuInteractionAdapter): string {
   const browserOrigin = typeof window !== 'undefined' && window.location?.origin
     ? window.location.origin
@@ -465,14 +469,37 @@ export default function FeishuInteractionAdaptersPanel({
             const status = connectionStatus(adapter, connection);
             return (
               <article key={adapter.id} className={`feishu-connection-row ${active ? 'is-active' : ''}`}>
-                <Button type="button" className="feishu-connection-select" onClick={() => setSelectedAdapterId(adapter.id)}>
-                  <span className="feishu-connection-heading">
-                    <strong>{adapter.name}</strong>
-                    <span className={`badge ${status.className}`}>{status.label}</span>
+                <Button
+                  type="button"
+                  className="feishu-connection-select"
+                  aria-pressed={active}
+                  onClick={() => setSelectedAdapterId(adapter.id)}
+                >
+                  <span className="feishu-connection-identity">
+                    <span className="feishu-connection-heading">
+                      <strong>{adapter.name}</strong>
+                      <span className={`badge ${status.className}`}>{status.label}</span>
+                    </span>
+                    <span className="feishu-connection-target">
+                      <small>通知目标</small>
+                      <span
+                        data-tooltip={`${adapter.receiveIdType}: ${adapter.receiveId}`}
+                        data-tooltip-side="top"
+                        data-tooltip-align="start"
+                      >
+                        {receiveIdTypeLabel(adapter.receiveIdType)} · {adapter.receiveId}
+                      </span>
+                    </span>
                   </span>
-                  <span className="feishu-connection-target">通知目标 · {adapter.receiveIdType}:{adapter.receiveId}</span>
-                  <span className="feishu-connection-meta">
-                    最近事件 {formatDate(adapter.lastCallbackAt)} · 最近投递 {formatDate(adapter.lastDispatchAt)}
+                  <span className="feishu-connection-activity">
+                    <span>
+                      <small>最近事件</small>
+                      <strong>{formatDate(adapter.lastCallbackAt)}</strong>
+                    </span>
+                    <span>
+                      <small>最近投递</small>
+                      <strong>{formatDate(adapter.lastDispatchAt)}</strong>
+                    </span>
                   </span>
                   {adapter.lastError && <span className="feishu-adapter-error">{adapter.lastError}</span>}
                 </Button>

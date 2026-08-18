@@ -49,6 +49,7 @@ const BrowserRecoveryTasks = lazy(() => import('./pages/BrowserRecoveryTasks.js'
 const LocalConnector = lazy(() => import('./pages/LocalConnector.js'));
 const BridgeContinuations = lazy(() => import('./pages/BridgeContinuations.js'));
 const InteractionRequests = lazy(() => import('./pages/InteractionRequests.js'));
+const RoutingObservability = lazy(() => import('./pages/RoutingObservability.js'));
 import BrowserCredentialRecovery from './pages/BrowserCredentialRecovery.js';
 
 type ThemeMode = 'system' | 'light' | 'dark';
@@ -495,7 +496,6 @@ export const sidebarGroups = [
     label: '接入管理',
     items: [
       { to: '/channels', label: '渠道管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
-      { to: '/official-credentials', label: '官方凭证池', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 5.5h10A2.5 2.5 0 0119.5 8v8A2.5 2.5 0 0117 18.5H7A2.5 2.5 0 014.5 16V8A2.5 2.5 0 017 5.5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 10h8M8 14h5M9 5.5V4m6 1.5V4" /></svg> },
       { to: '/site-announcements', label: '站点公告', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
       { to: '/local-connector', label: '本地 Connector', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h8M8 17h8M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6" /></svg> },
     ],
@@ -504,6 +504,7 @@ export const sidebarGroups = [
     label: '路由与运行',
     items: [
       { to: '/routes', label: '路由', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
+      { to: '/routing-observability', label: '观测面板', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 19V9m5 10V5m6 14v-7m5 7V8" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 19h18" /></svg> },
       { to: '/downstream-keys', label: '下游密钥', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
       { to: '/logs', label: '使用日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
       { to: '/checkin', label: '签到记录', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
@@ -521,6 +522,19 @@ export const sidebarGroups = [
     ],
   },
 ];
+
+const mobileQuickNavItems = [
+  { to: '/', label: '概览' },
+  { to: '/channels', label: '渠道' },
+  { to: '/routes', label: '路由' },
+  { to: '/downstream-keys', label: '密钥' },
+].map((quickItem) => {
+  const sourceItem = sidebarGroups
+    .flatMap((group) => group.items)
+    .find((item) => item.to === quickItem.to);
+  if (!sourceItem) throw new Error(`Missing sidebar item for mobile quick navigation: ${quickItem.to}`);
+  return { ...sourceItem, label: quickItem.label };
+});
 
 const topNavItems = [
   { label: '控制台', to: '/' },
@@ -1012,17 +1026,18 @@ function AppShell() {
               <Routes>
                 <Route path="/" element={<Dashboard adminName={displayName} />} />
                 <Route path="/channels" element={<ChannelManagement />}>
+                  <Route path="official" element={<OfficialCredentialPool />} />
                   <Route path="sites" element={<Sites />} />
                   <Route path="connections" element={<Accounts />} />
-                  <Route path="oauth" element={<PreservingRedirect pathname="/official-credentials" />} />
+                  <Route path="oauth" element={<PreservingRedirect pathname="/channels/official" />} />
                   <Route path="credentials" element={<PreservingRedirect pathname="/settings/credentials" />} />
                   <Route path="recovery" element={<BrowserRecoveryTasks />} />
                 </Route>
                 <Route path="/sites" element={<LegacyChannelRedirect section="sites" />} />
                 <Route path="/site-announcements" element={<SiteAnnouncements />} />
                 <Route path="/accounts" element={<LegacyChannelRedirect section="connections" />} />
-                <Route path="/oauth" element={<PreservingRedirect pathname="/official-credentials" />} />
-                <Route path="/official-credentials" element={<OfficialCredentialPool />} />
+                <Route path="/oauth" element={<PreservingRedirect pathname="/channels/official" />} />
+                <Route path="/official-credentials" element={<PreservingRedirect pathname="/channels/official" />} />
                 <Route path="/credential-vault" element={<PreservingRedirect pathname="/settings/credentials" />} />
                 <Route path="/browser-recovery-tasks" element={<LegacyChannelRedirect section="recovery" />} />
                 <Route path="/local-connector" element={<LocalConnector />} />
@@ -1033,6 +1048,7 @@ function AppShell() {
                 <Route path="/tokens" element={<Tokens />} />
                 <Route path="/checkin" element={<CheckinLog />} />
                 <Route path="/routes" element={<TokenRoutes />} />
+                <Route path="/routing-observability" element={<RoutingObservability />} />
                 <Route path="/logs" element={<ProxyLogs />} />
                 <Route path="/monitor" element={<Monitors />} />
                 <Route path="/settings" element={<Settings />} />
@@ -1050,6 +1066,36 @@ function AppShell() {
           </PageTransition>
         </main>
       </div>
+
+      {isMobile ? (
+        <nav className="mobile-quick-nav" aria-label={t('快捷管理')}>
+          {mobileQuickNavItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) => `mobile-quick-nav-item ${isActive ? 'active' : ''}`}
+            >
+              {item.icon}
+              <span>{t(item.label)}</span>
+            </NavLink>
+          ))}
+          <button
+            type="button"
+            className={`mobile-quick-nav-item ${drawerOpen ? 'active' : ''}`}
+            aria-label={t('打开完整导航')}
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen(true)}
+          >
+            <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.25" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="12" r="1.25" fill="currentColor" stroke="none" />
+              <circle cx="19" cy="12" r="1.25" fill="currentColor" stroke="none" />
+            </svg>
+            <span>{t('更多')}</span>
+          </button>
+        </nav>
+      ) : null}
 
       <UserProfileModal
         open={showProfileModal}

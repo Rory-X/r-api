@@ -164,6 +164,131 @@ function SchedulingStatus({
   );
 }
 
+function formatCooldownDeadline(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return value;
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function ChannelRuntimeStatus({
+  channel,
+  candidate,
+  routingStrategy,
+  connectionMode,
+  suppressTooltips,
+}: {
+  channel: SortableChannelRowProps['channel'];
+  candidate: SortableChannelRowProps['decisionCandidate'];
+  routingStrategy: NonNullable<SortableChannelRowProps['routingStrategy']>;
+  connectionMode: ReturnType<typeof resolveTokenBindingConnectionMode>;
+  suppressTooltips: boolean;
+}) {
+  const failureCount = Math.max(0, channel.failCount ?? candidate?.failureCount ?? 0);
+  const consecutiveFailureCount = Math.max(
+    0,
+    channel.consecutiveFailCount ?? candidate?.consecutiveFailureCount ?? 0,
+  );
+  const cooldownUntil = channel.cooldownUntil !== undefined
+    ? channel.cooldownUntil
+    : candidate?.cooldownUntil;
+  const cooldownTimestamp = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
+  const cooldownActive = Number.isFinite(cooldownTimestamp) && cooldownTimestamp > Date.now();
+  const cooldownDeadline = cooldownUntil ? formatCooldownDeadline(cooldownUntil) : null;
+  const cooldownLabel = cooldownActive && cooldownDeadline
+    ? `冷却至 ${cooldownDeadline}`
+    : '未冷却';
+  const cooldownTooltip = cooldownDeadline
+    ? `${cooldownActive ? '当前冷却截止' : '上次冷却截止'}：${cooldownDeadline}`
+    : '当前未处于冷却状态';
+
+  const observationLabel = (() => {
+    if (routingStrategy !== 'stable_first') return '观察池 —';
+    if (candidate?.observationPool === 'primary') return '主池';
+    if (candidate?.observationPool === 'observation') {
+      const remaining = Math.max(0, candidate.observationRemainingRequests ?? 0);
+      if (candidate.observationBlockedByCooldown) return '观察池 · 等待冷却';
+      return candidate.observationDueNow
+        ? '观察池 · 本次到期'
+        : `观察池 · 剩 ${remaining} 请求`;
+    }
+    return '未入池';
+  })();
+  const observationTooltip = candidate?.observationPool === 'observation'
+    ? '每完成一次主池真实请求，剩余请求数减 1；到期后放行一次观察池灰度请求。'
+    : (candidate?.observationPool === 'primary'
+        ? '当前通道属于稳定优先策略的主池。'
+        : '当前策略不使用观察池，或该通道当前不可参与分池。');
+
+  const stickyMode = candidate?.stickyMode
+    ?? (channel.routeUnit?.strategy === 'stick_until_unavailable'
+      ? 'route_unit'
+      : (connectionMode === 'apikey' ? 'none' : 'session'));
+  const stickyBindingCount = Math.max(0, candidate?.stickyBindingCount ?? 0);
+  const stickyHit = candidate?.stickyHit ?? stickyBindingCount > 0;
+  const stickyLabel = stickyHit
+    ? (stickyBindingCount > 0 ? `粘黏命中 ${stickyBindingCount}` : '粘黏命中')
+    : (stickyMode === 'route_unit'
+        ? '池内粘黏'
+        : (stickyMode === 'session' ? '粘黏未命中' : '不支持粘黏'));
+  const stickyTooltip = stickyHit
+    ? (stickyBindingCount > 0
+        ? `当前实例有 ${stickyBindingCount} 个活跃会话绑定到该通道。`
+        : '当前实例有活跃会话命中该通道。')
+    : (stickyMode === 'route_unit'
+        ? 'OAuth 路由池会优先沿用最近可用成员，成员不可用时再切换。'
+        : (stickyMode === 'session'
+            ? '支持会话粘黏，但当前实例没有活跃会话绑定到该通道。'
+            : 'API Key 直连通道不启用会话粘黏。'));
+
+  const badgeStyle: CSSProperties = {
+    fontSize: 10,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+  };
+
+  return (
+    <div
+      data-testid="channel-runtime-status"
+      style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}
+    >
+      <span
+        className={`badge ${failureCount > 0 ? 'badge-warning' : 'badge-muted'}`}
+        style={badgeStyle}
+        data-tooltip={suppressTooltips ? undefined : `累计失败 ${failureCount} 次${consecutiveFailureCount > 0 ? `，连续失败 ${consecutiveFailureCount} 次` : ''}`}
+      >
+        失败 {failureCount}{consecutiveFailureCount > 0 ? ` · 连续 ${consecutiveFailureCount}` : ''}
+      </span>
+      <span
+        className={`badge ${cooldownActive ? 'badge-error' : 'badge-muted'}`}
+        style={badgeStyle}
+        data-tooltip={suppressTooltips ? undefined : cooldownTooltip}
+      >
+        {cooldownLabel}
+      </span>
+      <span
+        className={`badge ${candidate?.observationPool === 'observation' ? 'badge-warning' : 'badge-muted'}`}
+        style={badgeStyle}
+        data-tooltip={suppressTooltips ? undefined : observationTooltip}
+      >
+        {observationLabel}
+      </span>
+      <span
+        className={`badge ${stickyHit ? 'badge-success' : 'badge-muted'}`}
+        style={badgeStyle}
+        data-tooltip={suppressTooltips ? undefined : stickyTooltip}
+      >
+        {stickyLabel}
+      </span>
+    </div>
+  );
+}
+
 export function SortableChannelRow({
   channel,
   routingStrategy = 'weighted',
@@ -190,7 +315,6 @@ export function SortableChannelRow({
   onSaveToken,
   onDeleteChannel,
   onToggleEnabled,
-  onSiteBlockModel,
 }: SortableChannelRowProps) {
   const resolvedPriority = displayPriority ?? channel.priority ?? 0;
   const resolvedOrder = displayOrder ?? channel.sortOrder;
@@ -198,6 +322,9 @@ export function SortableChannelRow({
   const schedulingLocked = readOnly || !schedulingEditable;
   const displaySchedulingControls = schedulingEditable && !readOnly;
   const suppressTooltips = dragInProgress || dragging;
+  const tokenBindingConnectionMode = resolveTokenBindingConnectionMode(channel.account);
+  const hasTokenBindingChoices = tokenOptions.length > 0 || activeTokenId > 0;
+  const showEffectiveTokenBadge = hasTokenBindingChoices || tokenBindingConnectionMode === 'session';
   const rowTransition = [
     'box-shadow 180ms ease',
     'background-color 180ms ease',
@@ -225,7 +352,9 @@ export function SortableChannelRow({
     transition: rowTransition || undefined,
     opacity: dragging ? 0.92 : channel.enabled === false ? 0.56 : 1,
     display: 'grid',
-    gridTemplateColumns: managementLocked || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
+    gridTemplateColumns: managementLocked || mobile
+      ? 'minmax(0, 1fr)'
+      : (hasTokenBindingChoices ? 'minmax(0, 1fr) auto auto auto' : 'minmax(0, 1fr) auto auto'),
     alignItems: mobile ? 'stretch' : 'center',
     gap: mobile ? 8 : 6,
     padding: mobile ? '8px 9px' : '5px 8px',
@@ -254,7 +383,7 @@ export function SortableChannelRow({
     activeTokenId,
     channel.token?.name ?? null,
     {
-      connectionMode: resolveTokenBindingConnectionMode(channel.account),
+      connectionMode: tokenBindingConnectionMode,
       accountName: channel.account?.username || `account-${channel.accountId}`,
     },
   );
@@ -333,9 +462,7 @@ export function SortableChannelRow({
               </span>
 
               <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
-                成功/失败 <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
-                <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
-                <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
+                成功 <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
               </span>
             </div>
 
@@ -353,21 +480,23 @@ export function SortableChannelRow({
                 {tokenBinding.bindingModeLabel}
               </span>
 
-              <span
-                className="badge"
-                style={{
-                  fontSize: 10,
-                  background: 'var(--color-info-soft)',
-                  color: 'var(--color-info)',
-                  maxWidth: 220,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-                data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
-              >
-                当前生效：{tokenBinding.effectiveTokenName}
-              </span>
+              {showEffectiveTokenBadge ? (
+                <span
+                  className="badge"
+                  style={{
+                    fontSize: 10,
+                    background: 'var(--color-info-soft)',
+                    color: 'var(--color-info)',
+                    maxWidth: 220,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
+                >
+                  当前生效：{tokenBinding.effectiveTokenName}
+                </span>
+              ) : null}
 
               {channel.sourceModel ? (
                 <span className="badge badge-info" style={{ fontSize: 10 }}>
@@ -414,6 +543,14 @@ export function SortableChannelRow({
               </div>
             ) : null}
 
+            <ChannelRuntimeStatus
+              channel={channel}
+              candidate={decisionCandidate}
+              routingStrategy={routingStrategy}
+              connectionMode={tokenBindingConnectionMode}
+              suppressTooltips={suppressTooltips}
+            />
+
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <SchedulingStatus
                 manual={manualScheduling}
@@ -422,7 +559,7 @@ export function SortableChannelRow({
                 suppressTooltips={suppressTooltips}
               />
 
-              {!managementLocked && (
+              {!managementLocked && hasTokenBindingChoices ? (
                 <button
                   type="button"
                   className="btn btn-link"
@@ -431,10 +568,10 @@ export function SortableChannelRow({
                 >
                   {mobileDetailsOpen ? '收起配置' : '配置通道'}
                 </button>
-              )}
+              ) : null}
             </div>
 
-            {!managementLocked && mobileDetailsOpen && (
+            {!managementLocked && hasTokenBindingChoices && mobileDetailsOpen ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6, borderTop: '1px solid var(--color-border-light)' }}>
                 <div style={{ width: '100%' }}>
                   <ModernSelect
@@ -477,15 +614,6 @@ export function SortableChannelRow({
                     {channel.enabled === false ? '启用' : '禁用'}
                   </button>
 
-                  {onSiteBlockModel && channel.site?.id ? (
-                    <button
-                      onClick={onSiteBlockModel}
-                      className="btn btn-link btn-link-warning"
-                    >
-                      站点屏蔽
-                    </button>
-                  ) : null}
-
                   <button
                     onClick={onDeleteChannel}
                     className="btn btn-link btn-link-danger"
@@ -494,7 +622,36 @@ export function SortableChannelRow({
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
+
+            {!managementLocked && !hasTokenBindingChoices ? (
+              <div
+                data-testid="direct-channel-actions"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                  paddingTop: 6,
+                  borderTop: '1px solid var(--color-border-light)',
+                }}
+              >
+                <button
+                  onClick={() => onToggleEnabled(channel.enabled === false)}
+                  className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
+                >
+                  {channel.enabled === false ? '启用' : '禁用'}
+                </button>
+
+                <button
+                  onClick={onDeleteChannel}
+                  className="btn btn-link btn-link-danger"
+                >
+                  移除
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -572,21 +729,23 @@ export function SortableChannelRow({
           {tokenBinding.bindingModeLabel}
         </span>
 
-        <span
-          className="badge"
-          style={{
-            fontSize: 10,
-            background: 'var(--color-info-soft)',
-            color: 'var(--color-info)',
-            maxWidth: 220,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-          data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
-        >
-          当前生效：{tokenBinding.effectiveTokenName}
-        </span>
+        {showEffectiveTokenBadge ? (
+          <span
+            className="badge"
+            style={{
+              fontSize: 10,
+              background: 'var(--color-info-soft)',
+              color: 'var(--color-info)',
+              maxWidth: 220,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
+          >
+            当前生效：{tokenBinding.effectiveTokenName}
+          </span>
+        ) : null}
 
         {channel.sourceModel ? (
           <span className="badge badge-info" style={{ fontSize: 10 }}>
@@ -636,6 +795,14 @@ export function SortableChannelRow({
           </div>
         ) : null}
 
+        <ChannelRuntimeStatus
+          channel={channel}
+          candidate={decisionCandidate}
+          routingStrategy={routingStrategy}
+          connectionMode={tokenBindingConnectionMode}
+          suppressTooltips={suppressTooltips}
+        />
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', marginTop: mobile ? 0 : 1, flexWrap: 'wrap' }}>
           <SchedulingStatus
             manual={manualScheduling}
@@ -644,50 +811,50 @@ export function SortableChannelRow({
             suppressTooltips={suppressTooltips}
           />
 
-          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>成功/失败</span>
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>成功</span>
           <span style={{ fontSize: 11 }}>
             <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
-            <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
-            <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
           </span>
         </div>
       </div>
 
       {!managementLocked ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ minWidth: 220, flex: 1 }}>
-              <ModernSelect
-                size="sm"
-                value={String(activeTokenId || 0)}
-                onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
-                disabled={isUpdatingToken}
-                options={[
-                  {
-                    value: '0',
-                    label: tokenBinding.followOptionLabel,
-                    description: tokenBinding.followOptionDescription,
-                  },
-                  ...tokenOptions.map((token) => ({
-                    value: String(token.id),
-                    label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                    description: buildFixedTokenOptionDescription(token),
-                  })),
-                ]}
-                placeholder="选择令牌绑定方式"
-              />
-              <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
-                {tokenBinding.helperText}
+          {hasTokenBindingChoices ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ minWidth: 220, flex: 1 }}>
+                <ModernSelect
+                  size="sm"
+                  value={String(activeTokenId || 0)}
+                  onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
+                  disabled={isUpdatingToken}
+                  options={[
+                    {
+                      value: '0',
+                      label: tokenBinding.followOptionLabel,
+                      description: tokenBinding.followOptionDescription,
+                    },
+                    ...tokenOptions.map((token) => ({
+                      value: String(token.id),
+                      label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
+                      description: buildFixedTokenOptionDescription(token),
+                    })),
+                  ]}
+                  placeholder="选择令牌绑定方式"
+                />
+                <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
+                  {tokenBinding.helperText}
+                </div>
               </div>
+              <button
+                onClick={onSaveToken}
+                disabled={isUpdatingToken}
+                className="btn btn-link btn-link-info"
+              >
+                {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
+              </button>
             </div>
-            <button
-              onClick={onSaveToken}
-              disabled={isUpdatingToken}
-              className="btn btn-link btn-link-info"
-            >
-              {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-            </button>
-          </div>
+          ) : null}
 
           <button
             onClick={() => onToggleEnabled(channel.enabled === false)}
@@ -698,16 +865,6 @@ export function SortableChannelRow({
           </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            {onSiteBlockModel && channel.site?.id ? (
-              <button
-                onClick={onSiteBlockModel}
-                className="btn btn-link btn-link-warning"
-                data-tooltip={suppressTooltips ? undefined : `将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
-              >
-                站点屏蔽
-              </button>
-            ) : null}
-
             <button
               onClick={onDeleteChannel}
               className="btn btn-link btn-link-danger"

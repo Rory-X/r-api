@@ -199,4 +199,39 @@ describe('App mobile sidebar', () => {
       }
     }
   });
+
+  it('opens the full navigation from the persistent mobile quick bar', async () => {
+    setupRuntime(390);
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <App />
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const moreButton = root.root.find((node) => (
+        node.type === 'button'
+        && node.props['aria-label'] === '打开完整导航'
+      ));
+
+      await act(async () => {
+        moreButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('导航菜单');
+      expect(moreButton.props['aria-expanded']).toBe(true);
+    } finally {
+      if (root) {
+        await act(async () => {
+          root.unmount();
+        });
+      }
+    }
+  });
 });

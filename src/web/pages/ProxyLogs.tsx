@@ -3042,59 +3042,6 @@ export default function ProxyLogs() {
                   </div>
                   {isExpanded ? (
                     <div className="mobile-card-extra">
-                      <MobileField
-                        label="时间"
-                        value={formatDateTimeLocal(log.createdAt)}
-                      />
-                      <MobileField
-                        label="站点"
-                        value={
-                          <SiteBadgeLink
-                            siteId={siteIdByName.get(
-                              String(log.siteName || "").trim(),
-                            )}
-                            siteName={log.siteName}
-                            badgeStyle={{ fontSize: 11 }}
-                          />
-                        }
-                      />
-                      {detail
-                        ? renderProxyLogUpstreamIdentity(
-                            detailLog,
-                            pathMeta.upstreamPath,
-                            {
-                              compact: true,
-                              testId: `proxy-log-upstream-target-detail-${log.id}`,
-                              onLocate: () =>
-                                setLocatorTarget({
-                                  kind: "upstream",
-                                  log: detailLog,
-                                  upstreamPath: pathMeta.upstreamPath,
-                                }),
-                            },
-                          )
-                        : null}
-                      {streamModeLabel ? (
-                        <MobileField label="模式" value={streamModeLabel} />
-                      ) : null}
-                      {firstByteLabel ? (
-                        <MobileField
-                          label="首字"
-                          value={firstByteLabel.replace(/^首字\s*/, "")}
-                        />
-                      ) : null}
-                      <MobileField
-                        label="重试"
-                        value={log.retryCount > 0 ? log.retryCount : 0}
-                      />
-                      <MobileField
-                        label="用量来源"
-                        value={
-                          formatProxyLogUsageSource(
-                            detailLog.usageSource ?? pathMeta.usageSource,
-                          ) || "--"
-                        }
-                      />
                       {detailState?.loading && (
                         <div style={{ color: "var(--color-text-muted)" }}>
                           加载详情中...
@@ -3105,44 +3052,223 @@ export default function ProxyLogs() {
                           {detailState.error}
                         </div>
                       )}
-                      {billingDetailSummary && (
-                        <div style={{ color: "var(--color-text-muted)" }}>
-                          {billingDetailSummary}
+
+                      <section className="proxy-log-mobile-detail-section">
+                        <div className="proxy-log-mobile-detail-title">
+                          请求概览
                         </div>
-                      )}
-                      <MobileField
-                        label="客户端详情"
-                        value={renderProxyLogClientCell(detailLog, {
-                          includeGeneric: true,
-                        })}
-                      />
-                      {renderDownstreamKeyIdentity(detailLog, {
-                        testId: `proxy-log-downstream-key-detail-${log.id}`,
-                        onLocate: () =>
-                          setLocatorTarget({
-                            kind: "downstream-key",
-                            log: detailLog,
-                          }),
-                      })}
-                      {billingProcessLines.length > 0 && (
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
-                          {billingProcessLines.map((line, index) => (
-                            <span key={`${log.id}-billing-mobile-${index}`}>
-                              {line}
+                        <MobileField
+                          label="时间"
+                          value={formatDateTimeLocal(log.createdAt)}
+                        />
+                        <MobileField
+                          label="请求模型"
+                          value={detailLog.modelRequested || "unknown"}
+                        />
+                        {detailLog.modelActual &&
+                        detailLog.modelActual !== detailLog.modelRequested ? (
+                          <MobileField
+                            label="实际模型"
+                            value={detailLog.modelActual}
+                          />
+                        ) : null}
+                        <MobileField
+                          label="状态"
+                          value={
+                            <span
+                              className={`badge ${detailLog.status === "success" ? "badge-success" : "badge-error"}`}
+                              style={{ fontSize: 10 }}
+                            >
+                              {detailLog.status === "success" ? "成功" : "失败"}
                             </span>
-                          ))}
+                          }
+                        />
+                        {streamModeLabel ? (
+                          <MobileField label="模式" value={streamModeLabel} />
+                        ) : null}
+                        {firstByteLabel ? (
+                          <MobileField
+                            label="首字"
+                            value={firstByteLabel.replace(/^首字\s*/, "")}
+                          />
+                        ) : null}
+                        <MobileField
+                          label="用时"
+                          value={formatLatency(detailLog.latencyMs)}
+                        />
+                        <MobileField
+                          label="重试"
+                          value={detailLog.retryCount > 0 ? detailLog.retryCount : 0}
+                        />
+                      </section>
+
+                      <section className="proxy-log-mobile-detail-section">
+                        <div className="proxy-log-mobile-detail-title">
+                          用量与计费
                         </div>
-                      )}
+                        <MobileField
+                          label="输入 Tokens"
+                          value={formatProxyLogTokenValue(
+                            detailLog.promptTokens,
+                          )}
+                        />
+                        <MobileField
+                          label="输出 Tokens"
+                          value={formatProxyLogTokenValue(
+                            detailLog.completionTokens,
+                          )}
+                        />
+                        <MobileField
+                          label="总 Tokens"
+                          value={formatProxyLogTokenValue(detailLog.totalTokens)}
+                        />
+                        <MobileField
+                          label="预估费用"
+                          value={
+                            typeof detailLog.estimatedCost === "number"
+                              ? `$${detailLog.estimatedCost.toFixed(6)}`
+                              : "--"
+                          }
+                        />
+                        <MobileField
+                          label="用量来源"
+                          value={
+                            formatProxyLogUsageSource(
+                              detailLog.usageSource ?? pathMeta.usageSource,
+                            ) || "未知"
+                          }
+                        />
+                        {detailLog.billingDetails &&
+                        detailLog.billingDetails.usage.cacheReadTokens > 0 ? (
+                          <MobileField
+                            label="缓存 Tokens"
+                            value={detailLog.billingDetails.usage.cacheReadTokens.toLocaleString()}
+                          />
+                        ) : null}
+                        {detailLog.billingDetails &&
+                        detailLog.billingDetails.usage.cacheCreationTokens >
+                          0 ? (
+                          <MobileField
+                            label="缓存创建 Tokens"
+                            value={detailLog.billingDetails.usage.cacheCreationTokens.toLocaleString()}
+                          />
+                        ) : null}
+                        {billingDetailSummary ? (
+                          <MobileField
+                            label="计费倍率"
+                            value={billingDetailSummary}
+                            stacked
+                          />
+                        ) : null}
+                        <MobileField
+                          label="计费过程"
+                          stacked
+                          value={
+                            billingProcessLines.length > 0 ? (
+                              <div className="proxy-log-mobile-billing-lines">
+                                {billingProcessLines.map((line, index) => (
+                                  <span
+                                    key={`${log.id}-billing-mobile-${index}`}
+                                  >
+                                    {line}
+                                  </span>
+                                ))}
+                                <span className="proxy-log-mobile-detail-note">
+                                  仅供参考，以实际扣费为准
+                                </span>
+                              </div>
+                            ) : (
+                              `输入 ${formatProxyLogTokenValue(detailLog.promptTokens)} tokens + 输出 ${formatProxyLogTokenValue(detailLog.completionTokens)} tokens = 总计 ${formatProxyLogTokenValue(detailLog.totalTokens)} tokens${typeof detailLog.estimatedCost === "number" ? `，预估费用 $${detailLog.estimatedCost.toFixed(6)}` : ""}`
+                            )
+                          }
+                        />
+                      </section>
+
+                      <section className="proxy-log-mobile-detail-section">
+                        <div className="proxy-log-mobile-detail-title">
+                          路由与身份
+                        </div>
+                        <MobileField
+                          label="站点"
+                          value={
+                            <SiteBadgeLink
+                              siteId={siteIdByName.get(
+                                String(detailLog.siteName || "").trim(),
+                              )}
+                              siteName={detailLog.siteName}
+                              badgeStyle={{ fontSize: 11 }}
+                            />
+                          }
+                        />
+                        {detail
+                          ? renderProxyLogUpstreamIdentity(
+                              detailLog,
+                              pathMeta.upstreamPath,
+                              {
+                                compact: true,
+                                testId: `proxy-log-upstream-target-detail-${log.id}`,
+                                onLocate: () =>
+                                  setLocatorTarget({
+                                    kind: "upstream",
+                                    log: detailLog,
+                                    upstreamPath: pathMeta.upstreamPath,
+                                  }),
+                              },
+                            )
+                          : null}
+                        <MobileField
+                          label="客户端详情"
+                          value={renderProxyLogClientCell(detailLog, {
+                            includeGeneric: true,
+                          })}
+                          stacked
+                        />
+                        {renderDownstreamKeyIdentity(detailLog, {
+                          testId: `proxy-log-downstream-key-detail-${log.id}`,
+                          onLocate: () =>
+                            setLocatorTarget({
+                              kind: "downstream-key",
+                              log: detailLog,
+                            }),
+                        })}
+                        <MobileField
+                          label="下游请求路径"
+                          value={
+                            detail && pathMeta.downstreamPath ? (
+                              <code className="proxy-log-mobile-path">
+                                {pathMeta.downstreamPath}
+                              </code>
+                            ) : (
+                              "未记录"
+                            )
+                          }
+                          stacked
+                        />
+                        <MobileField
+                          label="上游请求路径"
+                          value={
+                            detail && pathMeta.upstreamPath ? (
+                              <code className="proxy-log-mobile-path">
+                                {pathMeta.upstreamPath}
+                              </code>
+                            ) : (
+                              "未记录"
+                            )
+                          }
+                          stacked
+                        />
+                      </section>
+
                       {detail && pathMeta.errorMessage.trim().length > 0 && (
-                        <div style={{ color: "var(--color-danger)" }}>
-                          {pathMeta.errorMessage}
-                        </div>
+                        <MobileField
+                          label="错误信息"
+                          value={
+                            <span className="proxy-log-mobile-error">
+                              {pathMeta.errorMessage}
+                            </span>
+                          }
+                          stacked
+                        />
                       )}
                     </div>
                   ) : null}

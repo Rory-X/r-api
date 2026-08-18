@@ -81,6 +81,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     bar: { style: { cornerRadius: [0, 6, 6, 0], fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 1, y1: 0, stops: [{ offset: 0, color: '#4f46e5' }, { offset: 1, color: '#818cf8' }] } } },
     label: { visible: true, position: 'right', formatter: '{value}', style: { fontSize: 11, fill: labelColor, stroke: 'transparent' } },
     axes: [{ orient: 'left', label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'bottom', visible: false }],
+    tooltip: { confine: true },
     animation: true, background: 'transparent',
   }), [spendDistribution, labelColor]);
 
@@ -92,7 +93,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     area: { style: { fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 0, y1: 1, stops: [{ offset: 0, color: 'rgba(79,70,229,0.25)' }, { offset: 1, color: 'rgba(79,70,229,0.02)' }] }, curveType: 'monotone' as const } },
     point: { visible: true, style: { size: 7, fill: '#4f46e5', stroke: '#fff', lineWidth: 2 } },
     axes: [{ orient: 'bottom' as const, label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'left' as const, label: { style: { fontSize: 11, fill: labelColor } } }],
-    tooltip: { mark: { content: [{ key: () => '消耗', value: (datum: any) => formatCurrency(datum?.spend ?? 0) }] } },
+    tooltip: { confine: true, mark: { content: [{ key: () => '消耗', value: (datum: any) => formatCurrency(datum?.spend ?? 0) }] } },
     animation: true, background: 'transparent',
   }), [spendTrend, labelColor]);
 
@@ -104,6 +105,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     pie: { style: { cornerRadius: 4, padAngle: 0.02 } },
     label: { visible: true, position: 'outside', formatter: '{_percent_}%', style: { fill: labelColor } },
     legends: { visible: false },
+    tooltip: { confine: true },
     animation: true,
     color: ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'],
     background: 'transparent',
@@ -112,9 +114,9 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
   if (!hasData) return <EmptyBlock />;
 
   return (
-    <div>
+    <div className="model-analysis-panel">
       {/* Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+      <div className="model-analysis-summary">
         <div className="stat-summary-card stat-summary-purple">
           <div className="stat-summary-card-label">总消耗</div>
           <div className="stat-summary-card-value">{formatCurrency(totals.spend)}</div>
@@ -130,8 +132,8 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       </div>
 
       {/* Pill Tabs */}
-      <div style={{ marginBottom: 16 }}>
-        <div className="pill-tabs">
+      <div className="model-analysis-tabs-wrap">
+        <div className="pill-tabs model-analysis-tabs">
           {tabs.map(tab => (
             <button
               key={tab.key}
@@ -146,11 +148,11 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
 
       {/* Chart Content */}
       {activeTab === 'spend' && (
-        <div>
-          <div style={{ height: 300 }}>
+        <div className="model-analysis-tab-content">
+          <div className="model-analysis-chart">
             <VChart spec={spendBarSpec} />
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          <div className="model-analysis-legend">
             {spendDistribution.map(d => (
               <span key={d.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
                 <InlineBrandIcon model={d.model} size={13} />
@@ -163,17 +165,17 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       )}
 
       {activeTab === 'trend' && (
-        <div style={{ height: 300 }}>
+        <div className="model-analysis-chart">
           <VChart spec={trendSpec} />
         </div>
       )}
 
       {activeTab === 'calls' && (
-        <div>
-          <div style={{ height: 300 }}>
+        <div className="model-analysis-tab-content">
+          <div className="model-analysis-chart">
             <VChart spec={callsPieSpec} />
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          <div className="model-analysis-legend">
             {callsDistribution.map((d, idx) => {
               const pieColors = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
               return (
@@ -190,8 +192,8 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       )}
 
       {activeTab === 'rank' && (
-        <div style={{ overflow: 'hidden', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-md)' }}>
-          <table className="data-table" style={{ width: '100%' }}>
+        <div className="model-analysis-ranking">
+          <table className="data-table model-analysis-ranking-table">
             <thead>
               <tr>
                 <th style={{ width: 36, textAlign: 'center' }}>#</th>

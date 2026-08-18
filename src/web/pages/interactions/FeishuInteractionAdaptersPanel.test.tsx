@@ -90,6 +90,45 @@ describe('FeishuInteractionAdaptersPanel', () => {
     vi.unstubAllGlobals();
   });
 
+  it('groups connection identity, target, activity, and status into a full-width summary row', async () => {
+    const existing = {
+      ...adapter(),
+      lastCallbackAt: '2026-08-13T13:19:59.000Z',
+      lastDispatchAt: '2026-08-13T14:28:26.000Z',
+    };
+    apiMock.getInteractionAdapters.mockResolvedValue({ success: true, items: [existing] });
+    apiMock.getFeishuLongConnections.mockResolvedValue({
+      success: true,
+      items: [{ adapterId: existing.id, state: 'connected' }],
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <FeishuInteractionAdaptersPanel deviceId="device-1" onRequestSelect={vi.fn()} onDispatchComplete={vi.fn()} />
+          </ToastProvider>,
+        );
+      });
+      await flush();
+
+      const selector = root.root.find((node) => {
+        const className = String(node.props.className || '');
+        return node.type === 'button' && className.includes('feishu-connection-select');
+      });
+      expect(selector.props['aria-pressed']).toBe(true);
+      expect(selector.findAll((node) => String(node.props.className || '').includes('feishu-connection-identity'))).toHaveLength(1);
+      expect(selector.findAll((node) => String(node.props.className || '').includes('feishu-connection-activity'))).toHaveLength(1);
+      expect(collectText(selector)).toContain('长连接正常');
+      expect(collectText(selector)).toContain('群聊 Chat ID · oc_chat_1');
+      expect(collectText(selector)).toContain('最近事件');
+      expect(collectText(selector)).toContain('最近投递');
+    } finally {
+      await act(async () => { root?.unmount(); });
+    }
+  });
+
   it('creates an adapter with a normalized operator allowlist', async () => {
     const created = adapter();
     created.secretsConfigured.verificationToken = false;

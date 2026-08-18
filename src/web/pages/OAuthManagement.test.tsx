@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
+import { strToU8, zipSync } from 'fflate';
 import { ToastProvider } from '../components/Toast.js';
-import OAuthManagement from './OAuthManagement.js';
+import OAuthManagement, { normalizeOauthMessage } from './OAuthManagement.js';
 
 const { apiMock, openMock, focusMock, confirmMock, promptMock } = vi.hoisted(() => ({
   apiMock: {
@@ -15,6 +16,7 @@ const { apiMock, openMock, focusMock, confirmMock, promptMock } = vi.hoisted(() 
     refreshOAuthConnectionQuotaBatch: vi.fn(),
     rebindOAuthConnection: vi.fn(),
     updateOAuthConnectionProxy: vi.fn(),
+    updateOAuthConnectionsProxy: vi.fn(),
     deleteOAuthConnection: vi.fn(),
     importOAuthConnections: vi.fn(),
     exportOAuthConnectionsToSub2Api: vi.fn(),
@@ -97,6 +99,15 @@ async function clickButton(root: WebTestRenderer, label: string) {
 }
 
 describe('OAuthManagement page', () => {
+  it('compacts stored quota JSON errors into a user-facing message', () => {
+    expect(normalizeOauthMessage(JSON.stringify({
+      detail: "The 'gpt-5.4' model is not supported when using this account.",
+    }))).toBe('额度探测模型不可用：gpt-5.4');
+    expect(normalizeOauthMessage(JSON.stringify({
+      detail: { code: 'deactivated_workspace' },
+    }))).toBe('deactivated_workspace');
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -178,7 +189,7 @@ describe('OAuthManagement page', () => {
       await vi.waitFor(async () => {
         await flushMicrotasks();
         const text = collectText(root!.root);
-        expect(text).toContain('官方凭证池');
+        expect(text).toContain('官方渠道');
         expect(text).toContain('Codex');
         expect(text).toContain('Gemini CLI');
         expect(text).toContain('codex-user@example.com');
@@ -1402,6 +1413,14 @@ describe('OAuthManagement page', () => {
       ));
 
       expect(fileInput.props.multiple).toBe(true);
+      expect(fileInput.props.accept).toContain('.zip');
+      const directoryInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'file'
+        && node.props['data-testid'] === 'oauth-import-directory-input'
+      ));
+      expect(directoryInput.props.multiple).toBe(true);
+      expect(directoryInput.props.webkitdirectory).toBe('');
 
       await act(async () => {
         await fileInput.props.onChange({
@@ -1415,7 +1434,7 @@ describe('OAuthManagement page', () => {
       const importText = collectText(root.root);
       expect(importText).toContain('workspace-a.json');
       expect(importText).toContain('workspace-b.json');
-      expect(importText).toContain('已识别 2 份 JSON');
+      expect(importText).toContain('已从 2 份 JSON 识别 2 个 OAuth 凭证');
       expect(importText).toContain('结构有效');
       expect(findOauthImportSettingInput(root, 'use-system-proxy').props.checked).toBe(true);
 
@@ -1441,7 +1460,7 @@ describe('OAuthManagement page', () => {
         vi.advanceTimersByTime(300);
       });
       await flushMicrotasks();
-      expect(collectText(root.root)).toContain('已添加 2 个官方凭证');
+      expect(collectText(root.root)).toContain('已导入 2 个官方凭证，跳过 1 个无效项');
       expect(root.root.findAll((node) => (
         node.type === 'input'
         && node.props['data-testid'] === 'oauth-import-file-input'
@@ -1511,6 +1530,255 @@ describe('OAuthManagement page', () => {
 
       expect(collectText(root.root)).toContain('Sub2API / Cockpit 包 · 2 个 OAuth');
       expect(collectText(root.root)).toContain('2 个官方账号');
+      await clickButton(root, '添加');
+      expect(apiMock.importOAuthConnections).toHaveBeenCalledWith(bundle);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('accepts a Cockpit bare array export without requiring manual reshaping', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({ providers: [] });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 });
+    apiMock.importOAuthConnections.mockResolvedValue({
+      success: true,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    });
+    const cockpitExport = [{
+      type: 'codex',
+      access_token: 'cockpit-access',
+      refresh_token: 'cockpit-refresh',
+      email: 'cockpit@example.com',
+    }];
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+      await clickButton(root, '导入官方凭证');
+
+      const fileInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-testid'] === 'oauth-import-file-input'
+      ));
+      await act(async () => {
+        await fileInput.props.onChange({
+          target: {
+            value: 'cockpit',
+            files: [{
+              name: 'accountflow-redeem-cockpit-tools.json',
+              size: 512,
+              text: async () => JSON.stringify(cockpitExport),
+            }],
+          },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('OAuth 凭证数组 · 1 个 OAuth');
+      await clickButton(root, '添加');
+      expect(apiMock.importOAuthConnections).toHaveBeenCalledWith(cockpitExport);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('accepts an untyped Sub2API export by its accounts structure', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({ providers: [] });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 });
+    apiMock.importOAuthConnections.mockResolvedValue({
+      success: true,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    });
+    const untypedBundle = {
+      exported_at: '2026-08-14T12:02:19Z',
+      proxies: [],
+      accounts: [{
+        name: 'Sub2 Codex',
+        platform: 'openai',
+        type: 'oauth',
+        credentials: {
+          access_token: 'sub2-access',
+          refresh_token: 'sub2-refresh',
+        },
+      }],
+    };
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+      await clickButton(root, '导入官方凭证');
+
+      const textarea = root.root.find((node) => (
+        node.type === 'textarea'
+        && typeof node.props.placeholder === 'string'
+        && node.props.placeholder.includes('sub2api-data')
+      ));
+      await act(async () => {
+        textarea.props.onChange({ target: { value: JSON.stringify(untypedBundle) } });
+      });
+
+      expect(collectText(root.root)).toContain('Sub2API / Cockpit 包 · 1 个 OAuth');
+      await clickButton(root, '添加');
+      expect(apiMock.importOAuthConnections).toHaveBeenCalledWith(untypedBundle);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('imports valid files even when another selected file is invalid', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({ providers: [] });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 });
+    apiMock.importOAuthConnections.mockResolvedValue({
+      success: true,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    });
+    const validPayload = {
+      type: 'codex',
+      access_token: 'valid-access',
+      email: 'valid@example.com',
+    };
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+      await clickButton(root, '导入官方凭证');
+
+      const fileInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-testid'] === 'oauth-import-file-input'
+      ));
+      await act(async () => {
+        await fileInput.props.onChange({
+          target: {
+            files: [{
+              name: 'valid.json',
+              text: async () => JSON.stringify(validPayload),
+            }, {
+              name: 'invalid.json',
+              text: async () => JSON.stringify({ type: 'codex' }),
+            }],
+          },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('1 份无效文件会跳过');
+      await clickButton(root, '添加');
+      expect(apiMock.importOAuthConnections).toHaveBeenCalledWith(validPayload);
+      expect(collectText(root.root)).toContain('已导入 1 个官方凭证，跳过 1 个无效项');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('extracts and imports a Sub2API credential package from a zip archive', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({ providers: [] });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 });
+    apiMock.importOAuthConnections.mockResolvedValue({
+      success: true,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    });
+    const bundle = {
+      type: 'sub2api-bundle',
+      version: 1,
+      accounts: [{
+        name: 'CPA Codex',
+        platform: 'openai',
+        type: 'oauth',
+        credentials: { access_token: 'zip-access', refresh_token: 'zip-refresh' },
+      }],
+      proxies: [],
+    };
+    const archive = zipSync({
+      'export/sub2api.json': strToU8(JSON.stringify(bundle)),
+      'export/README.txt': strToU8('ignored'),
+    });
+    const archiveBuffer = archive.buffer.slice(
+      archive.byteOffset,
+      archive.byteOffset + archive.byteLength,
+    ) as ArrayBuffer;
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+      await clickButton(root, '导入官方凭证');
+
+      const fileInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-testid'] === 'oauth-import-file-input'
+      ));
+      await act(async () => {
+        await fileInput.props.onChange({
+          target: {
+            value: 'archive',
+            files: [{
+              name: 'sub2api.zip',
+              size: archive.byteLength,
+              arrayBuffer: async () => archiveBuffer,
+            }],
+          },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('sub2api.zip/export/sub2api.json');
+      expect(collectText(root.root)).toContain('Sub2API / Cockpit 包 · 1 个 OAuth');
       await clickButton(root, '添加');
       expect(apiMock.importOAuthConnections).toHaveBeenCalledWith(bundle);
     } finally {
@@ -2299,7 +2567,21 @@ describe('OAuthManagement page', () => {
       limit: 100,
       offset: 0,
     });
-    apiMock.updateOAuthConnectionProxy.mockResolvedValue({ success: true });
+    apiMock.updateOAuthConnectionProxy.mockResolvedValue({
+      success: true,
+      accountId: 11,
+      proxyUrl: null,
+      useSystemProxy: false,
+      refreshedRoutes: true,
+      modelRefresh: {
+        success: true,
+        status: 'success',
+        errorCode: null,
+        errorMessage: null,
+        modelCount: 5,
+        modelsPreview: ['gemini-2.5-pro'],
+      },
+    });
 
     let root!: WebTestRenderer;
     try {
@@ -2328,8 +2610,172 @@ describe('OAuthManagement page', () => {
         proxyUrl: null,
         useSystemProxy: false,
       });
+      expect(collectText(root!.root)).toContain('代理已保存并验证，已发现 5 个模型，路由已重建');
       expect(apiMock.rebindOAuthConnection).not.toHaveBeenCalled();
       expect(openMock).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps the proxy drawer open when model discovery still fails after saving an exit', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [{
+        provider: 'codex',
+        label: 'Codex',
+        platform: 'codex',
+        enabled: true,
+        loginType: 'oauth',
+        requiresProjectId: false,
+        supportsDirectAccountRouting: true,
+        supportsCloudValidation: true,
+        supportsNativeProxy: true,
+      }],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [{
+        accountId: 12,
+        provider: 'codex',
+        email: 'blocked@example.com',
+        modelCount: 0,
+        modelsPreview: [],
+        status: 'abnormal',
+        lastModelSyncError: 'Codex 模型获取失败（HTTP 403: Codex 上游拒绝当前服务器网络访问，请配置可用代理后重试）',
+      }],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.updateOAuthConnectionProxy.mockResolvedValue({
+      success: true,
+      accountId: 12,
+      proxyUrl: 'socks5h://egress.example:1080',
+      useSystemProxy: false,
+      refreshedRoutes: true,
+      modelRefresh: {
+        success: false,
+        status: 'failed',
+        errorCode: 'unauthorized',
+        errorMessage: 'Codex 模型获取失败（HTTP 403: Codex 上游拒绝当前服务器网络访问，请配置可用代理后重试）',
+        modelCount: 0,
+        modelsPreview: [],
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).toContain('出口受限');
+      expect(collectText(root!.root)).toContain('配置出口');
+      await clickButton(root!, '配置出口');
+      const customProxyToggle = findOauthSettingInput(root!, 'use-custom-proxy');
+      const proxyInput = findOauthSettingInput(root!, 'proxy-url');
+      await act(async () => {
+        customProxyToggle.props.onChange({ target: { checked: true } });
+        proxyInput.props.onChange({ target: { value: 'socks5h://egress.example:1080' } });
+      });
+      await clickButton(root!, '保存代理');
+
+      expect(collectText(root!.root)).toContain('代理已保存，但出口验证仍未通过');
+      expect(collectText(root!.root)).toContain('Codex 上游拒绝当前服务器网络访问');
+      expect(findButton(root!, '保存代理')).toBeTruthy();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('applies one verified exit to all selected official credentials', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [{
+        provider: 'codex',
+        label: 'Codex',
+        platform: 'codex',
+        enabled: true,
+        loginType: 'oauth',
+        requiresProjectId: false,
+        supportsDirectAccountRouting: true,
+        supportsCloudValidation: true,
+        supportsNativeProxy: true,
+      }],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [1, 2].map((accountId) => ({
+        accountId,
+        provider: 'codex',
+        email: `codex-${accountId}@example.com`,
+        modelCount: 0,
+        modelsPreview: [],
+        status: 'abnormal' as const,
+        lastModelSyncError: 'Codex 模型获取失败（HTTP 403: Codex 上游拒绝当前服务器网络访问，请配置可用代理后重试）',
+      })),
+      total: 2,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.updateOAuthConnectionsProxy.mockResolvedValue({
+      success: true,
+      requested: 2,
+      updated: 2,
+      failed: 0,
+      refreshedRoutes: true,
+      items: [1, 2].map((accountId) => ({
+        accountId,
+        success: true,
+        proxyUrl: 'socks5h://sg-egress.example:1080',
+        useSystemProxy: false,
+        modelRefresh: {
+          success: true,
+          status: 'success',
+          errorCode: null,
+          errorMessage: null,
+          modelCount: 4,
+          modelsPreview: ['gpt-5.4'],
+        },
+      })),
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const selectAll = root!.root.find((node) => node.props['data-testid'] === 'oauth-select-all');
+      await act(async () => {
+        selectAll.props.onChange({ target: { checked: true } });
+      });
+      await clickButton(root!, '统一配置出口');
+
+      const customProxyToggle = findOauthSettingInput(root!, 'use-custom-proxy');
+      const proxyInput = findOauthSettingInput(root!, 'proxy-url');
+      await act(async () => {
+        customProxyToggle.props.onChange({ target: { checked: true } });
+        proxyInput.props.onChange({ target: { value: 'socks5h://sg-egress.example:1080' } });
+      });
+      await clickButton(root!, '保存代理');
+
+      expect(apiMock.updateOAuthConnectionsProxy).toHaveBeenCalledWith([1, 2], {
+        proxyUrl: 'socks5h://sg-egress.example:1080',
+        useSystemProxy: false,
+      });
+      expect(collectText(root!.root)).toContain('已为 2 个凭证保存出口并完成复测，路由已重建');
     } finally {
       root?.unmount();
     }

@@ -931,7 +931,7 @@ export default function Sites() {
     if (input.choice === 'session') {
       if (platform === 'codex') {
         const officialParams = new URLSearchParams({ create: '1', provider: 'codex' });
-        navigate(`/official-credentials?${officialParams.toString()}`);
+        navigate(`${resolveChannelPath(location.pathname, 'official')}?${officialParams.toString()}`);
         return;
       }
         navigate(`${resolveChannelPath(location.pathname, 'connections')}?${params.toString()}`);
