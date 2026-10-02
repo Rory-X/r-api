@@ -1,3 +1,4 @@
+import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
@@ -15,18 +16,18 @@ import {
   resolveProxyUrlFromExtraConfig,
   requiresManagedAccountTokens,
   resolvePlatformUserId,
-  supportsDirectAccountRoutingConnection,
 } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
-import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
+import { buildRoutingCandidateKey, loadRoutingModelCandidates } from './routeModelCandidateService.js';
+import { syncPatternRouteChannels } from './patternRouteChannelSyncService.js';
+import { withRouteMutation } from './routeMutationLock.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
-import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
+import { clearRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
-import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import {
   discoverAntigravityModelsFromCloud,
@@ -246,12 +247,7 @@ async function updateOauthModelDiscoveryState(input: {
   return extraConfig;
 }
 
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
+const isExactModelPattern = isExactTokenRouteModelPattern;
 
 async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1377,145 +1373,19 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
   return results;
 }
 
-export async function rebuildTokenRoutesFromAvailability() {
-  const tokenRows = await db.select().from(schema.tokenModelAvailability)
-    .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
-    .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(
-      and(
-        eq(schema.tokenModelAvailability.available, true),
-        eq(schema.accountTokens.enabled, true),
-        eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
-        eq(schema.accounts.status, 'active'),
-        eq(schema.sites.status, 'active'),
-      ),
-    )
-    .all();
-  const usableTokenRows = tokenRows.filter((row) => (
-    isUsableAccountToken(row.account_tokens)
-    && requiresManagedAccountTokens(row.accounts)
-  ));
-
-  const accountRows = await db.select().from(schema.modelAvailability)
-    .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(
-      and(
-        eq(schema.modelAvailability.available, true),
-        eq(schema.accounts.status, 'active'),
-        eq(schema.sites.status, 'active'),
-      ),
-    )
-    .all();
-
-  // Load site-level disabled models
-  const disabledModelRows = await db.select().from(schema.siteDisabledModels).all();
-  const disabledModelsBySite = new Map<number, Set<string>>();
-  for (const row of disabledModelRows) {
-    if (!disabledModelsBySite.has(row.siteId)) disabledModelsBySite.set(row.siteId, new Set());
-    disabledModelsBySite.get(row.siteId)!.add(row.modelName.toLowerCase());
-  }
-
-  function isModelDisabledForSite(siteId: number, modelName: string): boolean {
-    const disabled = disabledModelsBySite.get(siteId);
-    return !!disabled && disabled.has(modelName.toLowerCase());
-  }
-
-  // Load global brand filter
-  const blockedBrandRules = getBlockedBrandRules(config.globalBlockedBrands);
-
-  // Load global allowed models whitelist
-  const globalAllowedModels = new Set(
-    config.globalAllowedModels.map((m) => m.toLowerCase().trim()).filter(Boolean),
-  );
-
-  function isModelAllowedByWhitelist(modelName: string): boolean {
-    // If whitelist is empty, allow all models (backward compatible)
-    if (globalAllowedModels.size === 0) return true;
-    // Check if model is in whitelist (case-insensitive)
-    return globalAllowedModels.has(modelName.toLowerCase().trim());
-  }
-
-  const enabledOauthRouteUnits = await listEnabledOauthRouteUnitsWithMembers();
-  const routeUnitByAccountId = new Map<number, {
-    routeUnitId: number;
-    representativeAccountId: number;
-  }>();
-  for (const routeUnit of enabledOauthRouteUnits) {
-    const representativeAccountId = routeUnit.members[0]?.account.id;
-    if (!representativeAccountId) continue;
-    for (const member of routeUnit.members) {
-      routeUnitByAccountId.set(member.account.id, {
-        routeUnitId: routeUnit.unit.id,
-        representativeAccountId,
-      });
-    }
-  }
-
-  const modelCandidates = new Map<string, Map<string, {
-    accountId: number;
-    tokenId: number | null;
-    oauthRouteUnitId: number | null;
-  }>>();
-  const buildCandidateKey = (input: {
-    accountId: number;
-    tokenId: number | null;
-    oauthRouteUnitId: number | null;
-  }) => (
-    input.oauthRouteUnitId
-      ? `route-unit:${input.oauthRouteUnitId}`
-      : `${input.accountId}:${input.tokenId ?? 'account'}`
-  );
-  const buildChannelKey = (channel: typeof schema.routeChannels.$inferSelect) => (
-    channel.oauthRouteUnitId
-      ? `route-unit:${channel.oauthRouteUnitId}`
-      : `${channel.accountId}:${channel.tokenId ?? 'account'}`
-  );
-  const addModelCandidate = (
-    modelNameRaw: string | null | undefined,
-    accountId: number,
-    tokenId: number | null,
-    siteId: number,
-    oauthRouteUnitId: number | null = null,
-  ) => {
-    const modelName = (modelNameRaw || '').trim();
-    if (!modelName) return;
-    if (!isModelAllowedByWhitelist(modelName)) return;
-    if (isModelDisabledForSite(siteId, modelName)) return;
-    if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
-    if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
-    const candidate = { accountId, tokenId, oauthRouteUnitId };
-    modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
-  };
-
-  for (const row of usableTokenRows) {
-    addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
-  }
-
-  for (const row of accountRows) {
-    if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
-    const routeUnit = routeUnitByAccountId.get(row.accounts.id);
-    if (routeUnit) {
-      addModelCandidate(
-        row.model_availability.modelName,
-        routeUnit.representativeAccountId,
-        null,
-        row.accounts.siteId,
-        routeUnit.routeUnitId,
-      );
-      continue;
-    }
-    addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
-  }
-
+async function rebuildTokenRoutesFromAvailabilityInternal() {
+  const modelCandidates = await loadRoutingModelCandidates();
+  const buildChannelKey = buildRoutingCandidateKey;
   const routes = await db.select().from(schema.tokenRoutes).all();
   const channels = await db.select().from(schema.routeChannels).all();
+  // Keep dependencies before deleting exact routes cascades their source links.
+  const groupSources = await db.select().from(schema.routeGroupSources).all();
 
   let createdRoutes = 0;
   let createdChannels = 0;
   let removedChannels = 0;
   let removedRoutes = 0;
+  const affectedRouteIds = new Set<number>();
 
   for (const [modelName, candidateMap] of modelCandidates.entries()) {
     let route = routes.find((r) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
@@ -1531,6 +1401,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (!route) continue;
       routes.push(route);
       createdRoutes++;
+      affectedRouteIds.add(route.id);
     }
 
     const routeChannels = channels.filter((channel) => channel.routeId === route.id);
@@ -1541,8 +1412,15 @@ export async function rebuildTokenRoutesFromAvailability() {
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
-      const exists = routeChannels.some((channel) => buildChannelKey(channel) === candidateKey);
-      if (exists) continue;
+      const exists = routeChannels.find((channel) => buildChannelKey(channel) === candidateKey);
+      if (exists) {
+        if (candidate.oauthRouteUnitId && !exists.manualOverride && exists.accountId !== candidate.accountId) {
+          await db.update(schema.routeChannels).set({ accountId: candidate.accountId })
+            .where(eq(schema.routeChannels.id, exists.id)).run();
+          affectedRouteIds.add(route.id);
+        }
+        continue;
+      }
 
       const inserted = await db.insert(schema.routeChannels).values({
         routeId: route.id,
@@ -1562,6 +1440,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       channels.push(created);
       nextSortOrder += 1;
       createdChannels++;
+      affectedRouteIds.add(route.id);
       desiredKeys.add(candidateKey);
     }
 
@@ -1578,6 +1457,7 @@ export async function rebuildTokenRoutesFromAvailability() {
             .set({ tokenId: preferred.id })
             .where(eq(schema.routeChannels.id, channel.id))
             .run();
+          affectedRouteIds.add(route.id);
           continue;
         }
       }
@@ -1585,6 +1465,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (!channel.manualOverride) {
         await db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
         removedChannels++;
+        affectedRouteIds.add(route.id);
       }
     }
   }
@@ -1607,11 +1488,20 @@ export async function rebuildTokenRoutesFromAvailability() {
     const deleted = (await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run()).changes;
     if (deleted > 0) {
       removedRoutes += deleted;
+      affectedRouteIds.add(route.id);
     }
   }
 
-  if (createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0) {
-    await clearAllRouteDecisionSnapshots();
+  const patternSync = await syncPatternRouteChannels({ candidates: modelCandidates });
+  createdChannels += patternSync.createdChannels;
+  removedChannels += patternSync.removedChannels;
+
+  for (const routeId of patternSync.routeIds) affectedRouteIds.add(routeId);
+  if (affectedRouteIds.size > 0) {
+    for (const source of groupSources) {
+      if (affectedRouteIds.has(source.sourceRouteId)) affectedRouteIds.add(source.groupRouteId);
+    }
+    await clearRouteDecisionSnapshots([...affectedRouteIds]);
   }
 
   invalidateTokenRouterCache();
@@ -1623,6 +1513,10 @@ export async function rebuildTokenRoutesFromAvailability() {
     removedChannels,
     removedRoutes,
   };
+}
+
+export async function rebuildTokenRoutesFromAvailability() {
+  return withRouteMutation(rebuildTokenRoutesFromAvailabilityInternal);
 }
 
 async function runRefreshModelsAndRebuildRoutes() {

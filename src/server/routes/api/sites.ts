@@ -3,6 +3,7 @@ import { db, schema } from '../../db/index.js';
 import { getInsertedRowId } from '../../db/insertHelpers.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import {
@@ -801,6 +802,9 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     await clearOauthProviderSiteDeletionForSite({ platform: nextPlatform, url: nextUrl });
 
+    if (body.status !== undefined && normalizedStatus && normalizedStatus !== existingSite.status) {
+      await routeRefreshWorkflow.rebuildRoutesOnly();
+    }
     invalidateSiteCaches();
 
     return await loadSiteWithApiEndpoints(id);
@@ -816,6 +820,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         await tx.delete(schema.sites).where(eq(schema.sites.id, id)).run();
       });
     }
+    await routeRefreshWorkflow.rebuildRoutesOnly();
     invalidateSiteCaches();
     return { success: true };
   });
@@ -875,6 +880,9 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
     }
 
+    if (successIds.length > 0 && ['enable', 'disable', 'delete'].includes(action)) {
+      await routeRefreshWorkflow.rebuildRoutesOnly();
+    }
     invalidateSiteCaches();
     return {
       success: true,
@@ -935,6 +943,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       ).run();
     }
 
+    await routeRefreshWorkflow.rebuildRoutesOnly();
     invalidateSiteCaches();
     return { siteId: id, models: uniqueModels };
   });
