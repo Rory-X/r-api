@@ -74,6 +74,7 @@ export default defineConfig({
           { text: 'Local Connector', link: '/local-connector' },
           { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
           { text: '运维手册', link: '/operations' },
+          { text: '发布验收矩阵', link: '/engineering/release-acceptance-matrix' },
           { text: '常见问题 FAQ', link: '/faq' },
         ],
       },
