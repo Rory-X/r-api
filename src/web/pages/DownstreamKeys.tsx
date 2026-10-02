@@ -18,6 +18,7 @@ import DownstreamKeyEditorModal, {
 } from './downstream-keys/DownstreamKeyEditorModal.js';
 import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
 import {
+  buildProjectUsageSummaries,
   formatCompactTokens,
   formatIso,
   formatMoney,
@@ -748,6 +749,7 @@ export default function DownstreamKeys() {
     if (item.enabled) acc.enabled += 1;
     return acc;
   }, { tokens: 0, requests: 0, cost: 0, enabled: 0 }), [visibleItems]);
+  const projectUsage = useMemo(() => buildProjectUsageSummaries(visibleItems), [visibleItems]);
 
   useEffect(() => {
     if (!editorOpen || editingId !== null || !createDefaultsPending) {
@@ -1105,6 +1107,39 @@ export default function DownstreamKeys() {
           <SummaryMetric label="累计成本" value={formatMoney(totals.cost)} />
           <SummaryMetric label="筛选状态" value={statusOptions.find((item) => item.value === status)?.label || '全部状态'} />
         </div>
+        {projectUsage.length > 0 ? (
+          <div style={{ borderTop: '1px solid var(--color-border-light)', paddingTop: 12 }} data-project-usage-report>
+            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--color-text-primary)', marginBottom: 8 }}>
+              项目用量与成本
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    <th style={{ textAlign: 'right' }}>密钥</th>
+                    <th style={{ textAlign: 'right' }}>请求</th>
+                    <th style={{ textAlign: 'right' }}>Tokens</th>
+                    <th style={{ textAlign: 'right' }}>成功率</th>
+                    <th style={{ textAlign: 'right' }}>成本</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projectUsage.map((project) => (
+                    <tr key={project.projectKey}>
+                      <td style={{ fontWeight: 650 }}>{project.projectName}</td>
+                      <td style={{ textAlign: 'right' }}>{project.keyCount.toLocaleString()}</td>
+                      <td style={{ textAlign: 'right' }}>{project.totalRequests.toLocaleString()}</td>
+                      <td style={{ textAlign: 'right' }}>{formatCompactTokens(project.totalTokens)}</td>
+                      <td style={{ textAlign: 'right' }}>{project.successRate == null ? '--' : `${project.successRate}%`}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 650 }}>{formatMoney(project.totalCost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {selectedIds.length > 0 ? (

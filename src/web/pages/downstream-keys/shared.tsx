@@ -53,6 +53,51 @@ export type AggregateUsage = {
   totalCost: number;
 };
 
+export type ProjectUsageSummary = AggregateUsage & {
+  projectKey: string;
+  projectName: string;
+  keyCount: number;
+};
+
+export function buildProjectUsageSummaries(items: SummaryItem[]): ProjectUsageSummary[] {
+  const projects = new Map<string, ProjectUsageSummary>();
+  for (const item of items) {
+    const projectName = (item.groupName || '').trim() || '未分组项目';
+    const projectKey = (item.groupName || '').trim() || '__ungrouped__';
+    const current = projects.get(projectKey) || {
+      projectKey,
+      projectName,
+      keyCount: 0,
+      totalRequests: 0,
+      successRequests: 0,
+      failedRequests: 0,
+      successRate: null,
+      totalTokens: 0,
+      totalCost: 0,
+    };
+    current.keyCount += 1;
+    current.totalRequests += Number(item.rangeUsage?.totalRequests || 0);
+    current.successRequests += Number(item.rangeUsage?.successRequests || 0);
+    current.failedRequests += Number(item.rangeUsage?.failedRequests || 0);
+    current.totalTokens += Number(item.rangeUsage?.totalTokens || 0);
+    current.totalCost += Number(item.rangeUsage?.totalCost || 0);
+    projects.set(projectKey, current);
+  }
+  return [...projects.values()]
+    .map((item) => ({
+      ...item,
+      successRate: item.totalRequests > 0
+        ? Math.round((item.successRequests / item.totalRequests) * 1_000) / 10
+        : null,
+      totalCost: Math.round(item.totalCost * 1_000_000) / 1_000_000,
+    }))
+    .sort((left, right) => (
+      right.totalCost - left.totalCost
+      || right.totalRequests - left.totalRequests
+      || left.projectName.localeCompare(right.projectName)
+    ));
+}
+
 export type OverviewResponse = {
   success: boolean;
   item: SummaryItem;

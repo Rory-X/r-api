@@ -32,10 +32,12 @@ describe("usageAggregationService", () => {
 
   beforeEach(async () => {
     await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.downstreamKeyDayUsage).run();
     await db.delete(schema.modelDayUsage).run();
     await db.delete(schema.siteHourUsage).run();
     await db.delete(schema.siteDayUsage).run();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
@@ -70,10 +72,16 @@ describe("usageAggregationService", () => {
       })
       .returning()
       .get();
+    const downstreamKey = await db.insert(schema.downstreamApiKeys).values({
+      name: "agg-key",
+      key: "sk-agg-key-001",
+      enabled: true,
+    }).returning().get();
 
     await db.insert(schema.proxyLogs).values([
       {
         accountId: account.id,
+        downstreamApiKeyId: downstreamKey.id,
         status: "success",
         modelRequested: "gpt-5",
         modelActual: "gpt-5",
@@ -84,6 +92,7 @@ describe("usageAggregationService", () => {
       },
       {
         accountId: account.id,
+        downstreamApiKeyId: downstreamKey.id,
         status: "failed",
         modelRequested: "gpt-5-mini",
         modelActual: "gpt-5-mini",
@@ -124,9 +133,20 @@ describe("usageAggregationService", () => {
 
     const modelRows = await db.select().from(schema.modelDayUsage).all();
     expect(modelRows).toHaveLength(2);
+    const downstreamKeyRows = await db.select().from(schema.downstreamKeyDayUsage).all();
+    expect(downstreamKeyRows).toHaveLength(1);
+    expect(downstreamKeyRows[0]).toEqual(expect.objectContaining({
+      downstreamApiKeyId: downstreamKey.id,
+      totalCalls: 2,
+      successCalls: 1,
+      failedCalls: 1,
+      totalTokens: 150,
+    }));
+    expect(downstreamKeyRows[0]?.totalCost).toBeCloseTo(0.3, 6);
 
     await db.insert(schema.proxyLogs).values({
       accountId: account.id,
+      downstreamApiKeyId: downstreamKey.id,
       status: "success",
       modelRequested: "gpt-5",
       modelActual: "gpt-5",
@@ -151,6 +171,14 @@ describe("usageAggregationService", () => {
     );
     expect(updatedDayRows[0].totalSummarySpend).toBeCloseTo(0.34, 6);
     expect(updatedDayRows[0].totalSiteSpend).toBeCloseTo(0.34, 6);
+    const updatedDownstreamKeyRows = await db.select().from(schema.downstreamKeyDayUsage).all();
+    expect(updatedDownstreamKeyRows[0]).toEqual(expect.objectContaining({
+      totalCalls: 3,
+      successCalls: 2,
+      failedCalls: 1,
+      totalTokens: 170,
+    }));
+    expect(updatedDownstreamKeyRows[0]?.totalCost).toBeCloseTo(0.34, 6);
 
     await requestUsageAggregatesRecompute(1);
     const recomputePass = await runUsageAggregationProjectionPass();
@@ -168,6 +196,65 @@ describe("usageAggregationService", () => {
     );
     expect(recomputedDayRows[0].totalSummarySpend).toBeCloseTo(0.34, 6);
     expect(recomputedDayRows[0].totalSiteSpend).toBeCloseTo(0.34, 6);
+    const recomputedDownstreamKeyRows = await db.select().from(schema.downstreamKeyDayUsage).all();
+    expect(recomputedDownstreamKeyRows[0]).toEqual(expect.objectContaining({
+      totalCalls: 3,
+      successCalls: 2,
+      failedCalls: 1,
+      totalTokens: 170,
+    }));
+    expect(recomputedDownstreamKeyRows[0]?.totalCost).toBeCloseTo(0.34, 6);
+  });
+
+  it("backfills downstream key aggregates when an existing usage checkpoint is already ahead", async () => {
+    const downstreamKey = await db.insert(schema.downstreamApiKeys).values({
+      name: "backfill-key",
+      key: "sk-backfill-key-001",
+      enabled: true,
+    }).returning().get();
+    const inserted = await db.insert(schema.proxyLogs).values([
+      {
+        downstreamApiKeyId: downstreamKey.id,
+        status: "success",
+        totalTokens: 40,
+        estimatedCost: 0.08,
+        createdAt: "2026-04-07 01:00:00",
+      },
+      {
+        downstreamApiKeyId: downstreamKey.id,
+        status: "failed",
+        totalTokens: 10,
+        estimatedCost: 0.02,
+        createdAt: "2026-04-07 02:00:00",
+      },
+    ]).returning().all();
+    const lastId = inserted.at(-1)?.id || 0;
+    await db.insert(schema.analyticsProjectionCheckpoints).values({
+      projectorKey: "usage-aggregates-v1",
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Local",
+      lastProxyLogId: lastId,
+      watermarkCreatedAt: inserted.at(-1)?.createdAt || null,
+    }).run();
+
+    const result = await runUsageAggregationProjectionPass();
+
+    expect(result.processedLogs).toBe(0);
+    expect(result.downstreamKeyBackfilledLogs).toBe(2);
+    expect(await db.select().from(schema.siteDayUsage).all()).toHaveLength(0);
+    const rows = await db.select().from(schema.downstreamKeyDayUsage).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(expect.objectContaining({
+      downstreamApiKeyId: downstreamKey.id,
+      totalCalls: 2,
+      successCalls: 1,
+      failedCalls: 1,
+      totalTokens: 50,
+    }));
+    expect(rows[0]?.totalCost).toBeCloseTo(0.1, 6);
+    const checkpoint = await db.select().from(schema.analyticsProjectionCheckpoints)
+      .where(eq(schema.analyticsProjectionCheckpoints.projectorKey, "downstream-key-usage-v1"))
+      .get();
+    expect(checkpoint?.lastProxyLogId).toBe(lastId);
   });
 
   it("skips projection while another process lease is active and clears lease after success", async () => {

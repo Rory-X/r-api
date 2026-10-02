@@ -31,6 +31,7 @@ const proxyLogs = sqliteTable('proxy_logs', {
   estimatedCost: real('estimated_cost'),
   modelActual: text('model_actual'),
   modelRequested: text('model_requested'),
+  downstreamApiKeyId: integer('downstream_api_key_id'),
 });
 
 const accounts = sqliteTable('accounts', {
@@ -85,6 +86,17 @@ const modelDayUsage = sqliteTable('model_day_usage', {
   updatedAt: text('updated_at'),
 });
 
+const downstreamKeyDayUsage = sqliteTable('downstream_key_day_usage', {
+  localDay: text('local_day'),
+  downstreamApiKeyId: integer('downstream_api_key_id'),
+  totalCalls: integer('total_calls'),
+  successCalls: integer('success_calls'),
+  failedCalls: integer('failed_calls'),
+  totalTokens: integer('total_tokens'),
+  totalCost: real('total_cost'),
+  updatedAt: text('updated_at'),
+});
+
 const schema = {
   analyticsProjectionCheckpoints,
   proxyLogs,
@@ -93,6 +105,7 @@ const schema = {
   siteDayUsage,
   siteHourUsage,
   modelDayUsage,
+  downstreamKeyDayUsage,
 };
 
 type MockState = {
@@ -101,6 +114,7 @@ type MockState = {
   siteDayRows: Array<Record<string, unknown>>;
   siteHourRows: Array<Record<string, unknown>>;
   modelDayRows: Array<Record<string, unknown>>;
+  downstreamKeyDayRows: Array<Record<string, unknown>>;
   onDuplicateKeyUpdateTables: string[];
 };
 
@@ -110,6 +124,7 @@ const state: MockState = {
   siteDayRows: [],
   siteHourRows: [],
   modelDayRows: [],
+  downstreamKeyDayRows: [],
   onDuplicateKeyUpdateTables: [],
 };
 
@@ -119,6 +134,7 @@ function resetMockState() {
   state.siteDayRows = [];
   state.siteHourRows = [];
   state.modelDayRows = [];
+  state.downstreamKeyDayRows = [];
   state.onDuplicateKeyUpdateTables = [];
 }
 
@@ -128,6 +144,7 @@ function resolveTableName(table: unknown): string {
   if (table === siteDayUsage) return 'site_day_usage';
   if (table === siteHourUsage) return 'site_hour_usage';
   if (table === modelDayUsage) return 'model_day_usage';
+  if (table === downstreamKeyDayUsage) return 'downstream_key_day_usage';
   return 'unknown';
 }
 
@@ -159,6 +176,11 @@ function applyInsert(
 
   if (table === modelDayUsage) {
     state.modelDayRows.push({ ...(values as Record<string, unknown>) });
+    return;
+  }
+
+  if (table === downstreamKeyDayUsage) {
+    state.downstreamKeyDayRows.push({ ...(values as Record<string, unknown>) });
   }
 }
 
@@ -226,6 +248,9 @@ function makeSelectChain() {
       }
       if (fromTable === modelDayUsage) {
         return state.modelDayRows.map((row) => ({ ...row }));
+      }
+      if (fromTable === downstreamKeyDayUsage) {
+        return state.downstreamKeyDayRows.map((row) => ({ ...row }));
       }
       return [];
     },
@@ -308,6 +333,7 @@ describe('usageAggregationService mysql conflict handling', () => {
       estimatedCost: 0.2,
       modelActual: 'gpt-5',
       modelRequested: 'gpt-5',
+      downstreamApiKeyId: 9,
       siteId: 7,
       sitePlatform: 'new-api',
     }];
@@ -316,16 +342,17 @@ describe('usageAggregationService mysql conflict handling', () => {
 
     expect(result).toEqual({
       processedLogs: 1,
+      downstreamKeyBackfilledLogs: 0,
       watermarkId: 1,
       recomputed: false,
     });
-    expect(state.onDuplicateKeyUpdateTables).toEqual([
-      'analytics_projection_checkpoints',
+    expect(state.onDuplicateKeyUpdateTables).toEqual(expect.arrayContaining([
       'site_day_usage',
       'site_hour_usage',
       'model_day_usage',
+      'downstream_key_day_usage',
       'analytics_projection_checkpoints',
-    ]);
+    ]));
     expect(state.siteDayRows).toEqual([
       expect.objectContaining({
         localDay: '2026-04-08',
@@ -351,8 +378,16 @@ describe('usageAggregationService mysql conflict handling', () => {
         totalCalls: 1,
       }),
     ]);
+    expect(state.downstreamKeyDayRows).toEqual([
+      expect.objectContaining({
+        localDay: '2026-04-08',
+        downstreamApiKeyId: 9,
+        totalCalls: 1,
+        totalTokens: 100,
+        totalCost: 0.2,
+      }),
+    ]);
     expect(state.checkpoint).toEqual(expect.objectContaining({
-      projectorKey: 'usage-aggregates-v1',
       lastProxyLogId: 1,
       leaseOwner: null,
       leaseToken: null,

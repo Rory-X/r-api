@@ -18,7 +18,8 @@ import {
   stopObservedWorker,
 } from '../observability/workerHealth.js';
 
-const USAGE_PROJECTOR_KEY = 'usage-aggregates-v1';
+export const USAGE_PROJECTOR_KEY = 'usage-aggregates-v1';
+export const DOWNSTREAM_KEY_USAGE_PROJECTOR_KEY = 'downstream-key-usage-v1';
 const PROJECTION_BATCH_SIZE = 1_000;
 const PROJECTION_MAX_BATCHES_PER_PASS = 120;
 const PROJECTION_INTERVAL_MS = 5_000;
@@ -45,6 +46,7 @@ type ProxyLogProjectionRow = {
   estimatedCost: number | null;
   modelActual: string | null;
   modelRequested: string | null;
+  downstreamApiKeyId: number | null;
   siteId: number | null;
   sitePlatform: string | null;
 };
@@ -88,16 +90,37 @@ type ModelDayUsageDeltaRow = {
   latencyCount: number;
 };
 
+type DownstreamKeyDayUsageDeltaRow = {
+  localDay: string;
+  downstreamApiKeyId: number;
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  totalTokens: number;
+  totalCost: number;
+};
+
 type ProjectionBatchDelta = {
   siteDayRows: SiteDayUsageDeltaRow[];
   siteHourRows: SiteHourUsageDeltaRow[];
   modelDayRows: ModelDayUsageDeltaRow[];
+  downstreamKeyDayRows: DownstreamKeyDayUsageDeltaRow[];
 };
 
 export type ProjectionPassResult = {
   processedLogs: number;
+  downstreamKeyBackfilledLogs: number;
   watermarkId: number;
   recomputed: boolean;
+};
+
+export type UsageAggregationProjectionStatus = {
+  timeZone: string;
+  latestProxyLogId: number;
+  safeProxyLogId: number;
+  lagRows: number;
+  usage: ProjectionCheckpointRow;
+  downstreamKey: ProjectionCheckpointRow;
 };
 
 export type SiteHourUsageAggregateRow = {
@@ -129,9 +152,9 @@ export type ModelDayUsageAggregateRow = {
 let projectionTimer: ReturnType<typeof setInterval> | null = null;
 let projectionInFlight: Promise<ProjectionPassResult> | null = null;
 
-function emptyCheckpoint(): ProjectionCheckpointRow {
+function emptyCheckpoint(projectorKey = USAGE_PROJECTOR_KEY): ProjectionCheckpointRow {
   return {
-    projectorKey: USAGE_PROJECTOR_KEY,
+    projectorKey,
     timeZone: getResolvedTimeZone(),
     lastProxyLogId: 0,
     watermarkCreatedAt: null,
@@ -224,19 +247,21 @@ function normalizeProjectionError(error: unknown) {
   return String(error || 'unknown projection error');
 }
 
-async function readProjectionCheckpoint(): Promise<ProjectionCheckpointRow> {
+async function readProjectionCheckpoint(
+  projectorKey = USAGE_PROJECTOR_KEY,
+): Promise<ProjectionCheckpointRow> {
   const row = await db
     .select()
     .from(schema.analyticsProjectionCheckpoints)
-    .where(eq(schema.analyticsProjectionCheckpoints.projectorKey, USAGE_PROJECTOR_KEY))
+    .where(eq(schema.analyticsProjectionCheckpoints.projectorKey, projectorKey))
     .get();
-  return row || emptyCheckpoint();
+  return row || emptyCheckpoint(projectorKey);
 }
 
-async function ensureProjectionCheckpointExists() {
+async function ensureProjectionCheckpointExists(projectorKey = USAGE_PROJECTOR_KEY) {
   const nowIso = new Date().toISOString();
   const values = {
-    projectorKey: USAGE_PROJECTOR_KEY,
+    projectorKey,
     timeZone: getResolvedTimeZone(),
     lastProxyLogId: 0,
     createdAt: nowIso,
@@ -321,7 +346,7 @@ async function writeProjectionCheckpoint(
 ) {
   const nowIso = new Date().toISOString();
   const values = {
-    projectorKey: USAGE_PROJECTOR_KEY,
+    projectorKey: checkpoint.projectorKey || USAGE_PROJECTOR_KEY,
     timeZone: checkpoint.timeZone ?? getResolvedTimeZone(),
     lastProxyLogId: Math.max(0, Math.trunc(checkpoint.lastProxyLogId || 0)),
     watermarkCreatedAt: checkpoint.watermarkCreatedAt ?? null,
@@ -389,7 +414,13 @@ async function writeProjectionCheckpoint(
     .run();
 }
 
-async function fetchProjectionBatch(afterId: number, limit: number) {
+async function fetchProjectionBatch(afterId: number, limit: number, throughId?: number) {
+  const where = typeof throughId === 'number'
+    ? and(
+      gt(schema.proxyLogs.id, afterId),
+      lte(schema.proxyLogs.id, throughId),
+    )
+    : gt(schema.proxyLogs.id, afterId);
   const rows = await db
     .select({
       id: schema.proxyLogs.id,
@@ -400,13 +431,14 @@ async function fetchProjectionBatch(afterId: number, limit: number) {
       estimatedCost: schema.proxyLogs.estimatedCost,
       modelActual: schema.proxyLogs.modelActual,
       modelRequested: schema.proxyLogs.modelRequested,
+      downstreamApiKeyId: schema.proxyLogs.downstreamApiKeyId,
       siteId: schema.sites.id,
       sitePlatform: schema.sites.platform,
     })
     .from(schema.proxyLogs)
     .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
     .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(gt(schema.proxyLogs.id, afterId))
+    .where(where)
     .orderBy(asc(schema.proxyLogs.id))
     .limit(limit)
     .all();
@@ -418,18 +450,45 @@ function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBat
   const siteDayMap = new Map<string, SiteDayUsageDeltaRow>();
   const siteHourMap = new Map<string, SiteHourUsageDeltaRow>();
   const modelDayMap = new Map<string, ModelDayUsageDeltaRow>();
+  const downstreamKeyDayMap = new Map<string, DownstreamKeyDayUsageDeltaRow>();
 
   for (const row of rows) {
-    const siteId = typeof row.siteId === 'number' && row.siteId > 0 ? row.siteId : null;
-    if (!siteId) continue;
-
     const localDay = toLocalDayKeyFromStoredUtc(row.createdAt);
     const bucketStartUtc = toLocalHourStartUtcFromStoredUtc(row.createdAt);
-    if (!localDay || !bucketStartUtc) continue;
+    if (!localDay) continue;
 
     const status = String(row.status || '').trim().toLowerCase();
     const isSuccess = status === 'success';
     const totalTokens = normalizeNonNegativeInt(row.totalTokens);
+    const downstreamApiKeyId = typeof row.downstreamApiKeyId === 'number' && row.downstreamApiKeyId > 0
+      ? row.downstreamApiKeyId
+      : null;
+    if (downstreamApiKeyId) {
+      const key = `${localDay}:${downstreamApiKeyId}`;
+      const aggregate = downstreamKeyDayMap.get(key) || {
+        localDay,
+        downstreamApiKeyId,
+        totalCalls: 0,
+        successCalls: 0,
+        failedCalls: 0,
+        totalTokens: 0,
+        totalCost: 0,
+      };
+      aggregate.totalCalls += 1;
+      aggregate.successCalls += isSuccess ? 1 : 0;
+      aggregate.failedCalls += isSuccess ? 0 : 1;
+      aggregate.totalTokens += totalTokens;
+      aggregate.totalCost += resolveSiteSpend({
+        estimatedCost: row.estimatedCost,
+        totalTokens: row.totalTokens,
+        platform: row.sitePlatform,
+      });
+      downstreamKeyDayMap.set(key, aggregate);
+    }
+
+    const siteId = typeof row.siteId === 'number' && row.siteId > 0 ? row.siteId : null;
+    if (!siteId || !bucketStartUtc) continue;
+
     const latencyMs = normalizeNonNegativeInt(row.latencyMs);
     const latencyCount = latencyMs > 0 ? 1 : 0;
     const totalSummarySpend = resolveSummarySpend({
@@ -521,6 +580,7 @@ function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBat
     siteDayRows: Array.from(siteDayMap.values()),
     siteHourRows: Array.from(siteHourMap.values()),
     modelDayRows: Array.from(modelDayMap.values()),
+    downstreamKeyDayRows: Array.from(downstreamKeyDayMap.values()),
   };
 }
 
@@ -678,16 +738,62 @@ async function upsertModelDayUsage(tx: typeof db, row: ModelDayUsageDeltaRow, up
     .run();
 }
 
-async function applyProjectionBatch(
-  checkpoint: ProjectionCheckpointRow,
-  rows: ProxyLogProjectionRow[],
-): Promise<ProjectionCheckpointRow> {
-  const lastRow = rows.at(-1);
-  if (!lastRow) return checkpoint;
+async function upsertDownstreamKeyDayUsage(
+  tx: typeof db,
+  row: DownstreamKeyDayUsageDeltaRow,
+  updatedAt: string,
+) {
+  const values = {
+    localDay: row.localDay,
+    downstreamApiKeyId: row.downstreamApiKeyId,
+    totalCalls: row.totalCalls,
+    successCalls: row.successCalls,
+    failedCalls: row.failedCalls,
+    totalTokens: row.totalTokens,
+    totalCost: row.totalCost,
+    updatedAt,
+  };
 
-  const delta = buildProjectionBatchDelta(rows);
-  const updatedAt = new Date().toISOString();
-  const nextCheckpoint = {
+  if (runtimeDbDialect === 'mysql') {
+    await (tx.insert(schema.downstreamKeyDayUsage).values(values) as any)
+      .onDuplicateKeyUpdate({
+        set: {
+          totalCalls: sql`${schema.downstreamKeyDayUsage.totalCalls} + ${row.totalCalls}`,
+          successCalls: sql`${schema.downstreamKeyDayUsage.successCalls} + ${row.successCalls}`,
+          failedCalls: sql`${schema.downstreamKeyDayUsage.failedCalls} + ${row.failedCalls}`,
+          totalTokens: sql`${schema.downstreamKeyDayUsage.totalTokens} + ${row.totalTokens}`,
+          totalCost: sql`${schema.downstreamKeyDayUsage.totalCost} + ${row.totalCost}`,
+          updatedAt,
+        },
+      })
+      .run();
+    return;
+  }
+
+  await (tx.insert(schema.downstreamKeyDayUsage).values(values) as any)
+    .onConflictDoUpdate({
+      target: [
+        schema.downstreamKeyDayUsage.localDay,
+        schema.downstreamKeyDayUsage.downstreamApiKeyId,
+      ],
+      set: {
+        totalCalls: sql`${schema.downstreamKeyDayUsage.totalCalls} + ${row.totalCalls}`,
+        successCalls: sql`${schema.downstreamKeyDayUsage.successCalls} + ${row.successCalls}`,
+        failedCalls: sql`${schema.downstreamKeyDayUsage.failedCalls} + ${row.failedCalls}`,
+        totalTokens: sql`${schema.downstreamKeyDayUsage.totalTokens} + ${row.totalTokens}`,
+        totalCost: sql`${schema.downstreamKeyDayUsage.totalCost} + ${row.totalCost}`,
+        updatedAt,
+      },
+    })
+    .run();
+}
+
+function buildAdvancedCheckpoint(
+  checkpoint: ProjectionCheckpointRow,
+  lastRow: ProxyLogProjectionRow,
+  updatedAt: string,
+): ProjectionCheckpointRow {
+  return {
     ...checkpoint,
     lastProxyLogId: lastRow.id,
     watermarkCreatedAt:
@@ -701,7 +807,31 @@ async function applyProjectionBatch(
     lastSuccessfulAt: updatedAt,
     lastError: null,
     createdAt: checkpoint.createdAt ?? updatedAt,
+    updatedAt,
   };
+}
+
+async function applyProjectionBatch(
+  checkpoint: ProjectionCheckpointRow,
+  downstreamKeyCheckpoint: ProjectionCheckpointRow,
+  rows: ProxyLogProjectionRow[],
+): Promise<{
+  usage: ProjectionCheckpointRow;
+  downstreamKey: ProjectionCheckpointRow;
+}> {
+  const lastRow = rows.at(-1);
+  if (!lastRow) {
+    return { usage: checkpoint, downstreamKey: downstreamKeyCheckpoint };
+  }
+
+  const delta = buildProjectionBatchDelta(rows);
+  const updatedAt = new Date().toISOString();
+  const nextCheckpoint = buildAdvancedCheckpoint(checkpoint, lastRow, updatedAt);
+  const nextDownstreamKeyCheckpoint = buildAdvancedCheckpoint(
+    downstreamKeyCheckpoint,
+    lastRow,
+    updatedAt,
+  );
 
   await db.transaction(async (tx) => {
     for (const row of delta.siteDayRows) {
@@ -713,14 +843,58 @@ async function applyProjectionBatch(
     for (const row of delta.modelDayRows) {
       await upsertModelDayUsage(tx as typeof db, row, updatedAt);
     }
+    for (const row of delta.downstreamKeyDayRows) {
+      await upsertDownstreamKeyDayUsage(tx as typeof db, row, updatedAt);
+    }
     await writeProjectionCheckpoint(tx as typeof db, nextCheckpoint);
+    await writeProjectionCheckpoint(tx as typeof db, nextDownstreamKeyCheckpoint);
   });
 
   clearAnalyticsSnapshots();
   return {
-    ...checkpoint,
-    ...nextCheckpoint,
-    updatedAt,
+    usage: nextCheckpoint,
+    downstreamKey: nextDownstreamKeyCheckpoint,
+  };
+}
+
+async function backfillDownstreamKeyUsage(
+  targetCheckpoint: ProjectionCheckpointRow,
+  maxBatches: number,
+): Promise<{
+  checkpoint: ProjectionCheckpointRow;
+  processedLogs: number;
+  caughtUp: boolean;
+}> {
+  await ensureProjectionCheckpointExists(DOWNSTREAM_KEY_USAGE_PROJECTOR_KEY);
+  let checkpoint = await readProjectionCheckpoint(DOWNSTREAM_KEY_USAGE_PROJECTOR_KEY);
+  let processedLogs = 0;
+
+  for (let index = 0; index < maxBatches && checkpoint.lastProxyLogId < targetCheckpoint.lastProxyLogId; index += 1) {
+    const rows = await fetchProjectionBatch(
+      checkpoint.lastProxyLogId,
+      PROJECTION_BATCH_SIZE,
+      targetCheckpoint.lastProxyLogId,
+    );
+    const lastRow = rows.at(-1);
+    if (!lastRow) break;
+
+    const delta = buildProjectionBatchDelta(rows);
+    const updatedAt = new Date().toISOString();
+    const nextCheckpoint = buildAdvancedCheckpoint(checkpoint, lastRow, updatedAt);
+    await db.transaction(async (tx) => {
+      for (const row of delta.downstreamKeyDayRows) {
+        await upsertDownstreamKeyDayUsage(tx as typeof db, row, updatedAt);
+      }
+      await writeProjectionCheckpoint(tx as typeof db, nextCheckpoint);
+    });
+    checkpoint = nextCheckpoint;
+    processedLogs += rows.length;
+  }
+
+  return {
+    checkpoint,
+    processedLogs,
+    caughtUp: checkpoint.lastProxyLogId >= targetCheckpoint.lastProxyLogId,
   };
 }
 
@@ -769,6 +943,8 @@ async function applyPendingRecompute(checkpoint: ProjectionCheckpointRow) {
     .get();
 
   const restartFromId = restartRow?.id || affectedRow.id;
+  await ensureProjectionCheckpointExists(DOWNSTREAM_KEY_USAGE_PROJECTOR_KEY);
+  const downstreamKeyCheckpoint = await readProjectionCheckpoint(DOWNSTREAM_KEY_USAGE_PROJECTOR_KEY);
   const nextCheckpoint = {
     ...checkpoint,
     lastProxyLogId: Math.max(0, restartFromId - 1),
@@ -778,12 +954,24 @@ async function applyPendingRecompute(checkpoint: ProjectionCheckpointRow) {
     leaseExpiresAt: checkpoint.leaseToken ? buildProjectionLeaseExpiry() : checkpoint.leaseExpiresAt,
     lastProjectedAt: new Date().toISOString(),
   };
+  const nextDownstreamKeyCheckpoint = {
+    ...downstreamKeyCheckpoint,
+    lastProxyLogId: Math.max(0, restartFromId - 1),
+    watermarkCreatedAt: null,
+    recomputeFromId: null,
+    recomputeRequestedAt: null,
+    lastProjectedAt: nextCheckpoint.lastProjectedAt,
+  };
 
   await db.transaction(async (tx) => {
     await tx.delete(schema.siteDayUsage).where(gte(schema.siteDayUsage.localDay, affectedDay)).run();
     await tx.delete(schema.siteHourUsage).where(gte(schema.siteHourUsage.bucketStartUtc, affectedDayStartUtc)).run();
     await tx.delete(schema.modelDayUsage).where(gte(schema.modelDayUsage.localDay, affectedDay)).run();
+    await tx.delete(schema.downstreamKeyDayUsage)
+      .where(gte(schema.downstreamKeyDayUsage.localDay, affectedDay))
+      .run();
     await writeProjectionCheckpoint(tx as typeof db, nextCheckpoint as any);
+    await writeProjectionCheckpoint(tx as typeof db, nextDownstreamKeyCheckpoint as any);
   });
 
   clearAnalyticsSnapshots();
@@ -798,6 +986,7 @@ async function runUsageAggregationProjectionPassImpl(
     const checkpoint = await readProjectionCheckpoint();
     return {
       processedLogs: 0,
+      downstreamKeyBackfilledLogs: 0,
       watermarkId: checkpoint.lastProxyLogId,
       recomputed: false,
     };
@@ -815,11 +1004,23 @@ async function runUsageAggregationProjectionPassImpl(
       checkpoint = await applyPendingRecompute(checkpoint);
     }
 
-    let processedLogs = 0;
     const maxBatches = Math.max(
       1,
       Math.trunc(options.maxBatches || PROJECTION_MAX_BATCHES_PER_PASS),
     );
+    const backfill = await backfillDownstreamKeyUsage(checkpoint, maxBatches);
+    if (!backfill.caughtUp) {
+      await releaseProjectionLease(lease);
+      return {
+        processedLogs: 0,
+        downstreamKeyBackfilledLogs: backfill.processedLogs,
+        watermarkId: checkpoint.lastProxyLogId,
+        recomputed: hadPendingRecompute,
+      };
+    }
+
+    let processedLogs = 0;
+    let downstreamKeyCheckpoint = backfill.checkpoint;
 
     for (let index = 0; index < maxBatches; index += 1) {
       const rows = await fetchProjectionBatch(checkpoint.lastProxyLogId, PROJECTION_BATCH_SIZE);
@@ -827,7 +1028,9 @@ async function runUsageAggregationProjectionPassImpl(
         break;
       }
 
-      checkpoint = await applyProjectionBatch(checkpoint, rows);
+      const projected = await applyProjectionBatch(checkpoint, downstreamKeyCheckpoint, rows);
+      checkpoint = projected.usage;
+      downstreamKeyCheckpoint = projected.downstreamKey;
       processedLogs += rows.length;
 
       if (rows.length < PROJECTION_BATCH_SIZE) {
@@ -838,6 +1041,7 @@ async function runUsageAggregationProjectionPassImpl(
     await releaseProjectionLease(lease);
     return {
       processedLogs,
+      downstreamKeyBackfilledLogs: backfill.processedLogs,
       watermarkId: checkpoint.lastProxyLogId,
       recomputed: hadPendingRecompute,
     };
@@ -879,6 +1083,26 @@ export async function requestUsageAggregatesRecompute(fromLogId = 1): Promise<vo
       lastProjectedAt: checkpoint.lastProjectedAt,
     } as any);
   });
+}
+
+export async function getUsageAggregationProjectionStatus(): Promise<UsageAggregationProjectionStatus> {
+  const [usage, downstreamKey, latestRow] = await Promise.all([
+    readProjectionCheckpoint(USAGE_PROJECTOR_KEY),
+    readProjectionCheckpoint(DOWNSTREAM_KEY_USAGE_PROJECTOR_KEY),
+    db.select({
+      latestProxyLogId: sql<number>`coalesce(max(${schema.proxyLogs.id}), 0)`,
+    }).from(schema.proxyLogs).get(),
+  ]);
+  const latestProxyLogId = Math.max(0, Math.trunc(Number(latestRow?.latestProxyLogId || 0)));
+  const safeProxyLogId = Math.min(usage.lastProxyLogId, downstreamKey.lastProxyLogId);
+  return {
+    timeZone: usage.timeZone || getResolvedTimeZone(),
+    latestProxyLogId,
+    safeProxyLogId,
+    lagRows: Math.max(0, latestProxyLogId - safeProxyLogId),
+    usage,
+    downstreamKey,
+  };
 }
 
 export function startUsageAggregationProjectorScheduler() {

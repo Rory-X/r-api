@@ -6,6 +6,8 @@ import {
   parseStoredUtcDateTime,
   type StoredUtcDateTimeInput,
 } from './localTimeService.js';
+import { readDownstreamKeyDailyUsage } from './costAnalyticsService.js';
+import { getUsageAggregationProjectionStatus } from './usageAggregationService.js';
 
 export type DownstreamKeyTrendRange = '24h' | '7d' | 'all';
 
@@ -264,6 +266,33 @@ async function readAllRangeTrendBuckets(
   return finalizeTrendBuckets(accumulator);
 }
 
+async function readProjectedAllRangeTrendBuckets(
+  downstreamApiKeyId: number,
+  timeZone: string,
+): Promise<DownstreamKeyTrendBucket[]> {
+  const rows = await readDownstreamKeyDailyUsage(downstreamApiKeyId);
+  return rows.map((row) => {
+    const [year, month, day] = row.localDay.split('-').map(Number);
+    const bucketStart = convertZonedPartsToUtcDate({
+      year,
+      month,
+      day,
+      hour: 0,
+      minute: 0,
+      second: 0,
+    }, timeZone);
+    return {
+      startUtc: bucketStart?.toISOString() || null,
+      totalRequests: row.totalRequests,
+      successRequests: row.successRequests,
+      failedRequests: row.failedRequests,
+      successRate: row.successRate,
+      totalTokens: row.totalTokens,
+      totalCost: row.totalCost,
+    };
+  });
+}
+
 async function readWindowedTrendBuckets(
   downstreamApiKeyId: number,
   bucketSeconds: number,
@@ -317,11 +346,25 @@ export async function readDownstreamApiKeyTrendBuckets(input: {
 }): Promise<{
   bucketSeconds: number;
   timeZone: string;
+  source: 'aggregate' | 'raw';
   buckets: DownstreamKeyTrendBucket[];
 }> {
   const bucketSeconds = resolveDownstreamTrendBucketSeconds(input.range);
   const sinceUtc = resolveDownstreamTrendRangeSinceUtc(input.range);
   const timeZone = resolveDownstreamTrendTimeZone(input.timeZone);
+  if (input.range === 'all') {
+    const projection = await getUsageAggregationProjectionStatus();
+    const projectionTimeZone = resolveDownstreamTrendTimeZone(projection.timeZone);
+    if (projectionTimeZone === timeZone) {
+      return {
+        bucketSeconds,
+        timeZone,
+        source: 'aggregate',
+        buckets: await readProjectedAllRangeTrendBuckets(input.downstreamApiKeyId, timeZone),
+      };
+    }
+  }
+
   const buckets = input.range === 'all'
     ? await readAllRangeTrendBuckets(input.downstreamApiKeyId, bucketSeconds, timeZone, sinceUtc)
     : await readWindowedTrendBuckets(input.downstreamApiKeyId, bucketSeconds, sinceUtc, timeZone);
@@ -329,6 +372,7 @@ export async function readDownstreamApiKeyTrendBuckets(input: {
   return {
     bucketSeconds,
     timeZone,
+    source: 'raw',
     buckets,
   };
 }

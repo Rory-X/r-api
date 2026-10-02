@@ -19,6 +19,7 @@ import {
   resolveDownstreamTrendTimeZone,
   type DownstreamKeyTrendRange,
 } from '../../services/downstreamApiKeyTrendService.js';
+import { readDownstreamKeyUsageTotals } from '../../services/costAnalyticsService.js';
 import {
   parseDownstreamApiKeyBatchPayload,
   parseDownstreamApiKeyPayload,
@@ -371,8 +372,17 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     const sinceUtc = resolveRangeSinceUtc(range);
     const ids = keys.map((k) => k.id);
 
-    const usageRows = columnReady
-      ? await db.select({
+    const usageRows = range === 'all'
+      ? (await readDownstreamKeyUsageTotals({ downstreamApiKeyIds: ids })).map((row) => ({
+        keyId: row.downstreamApiKeyId,
+        totalRequests: row.totalRequests,
+        successRequests: row.successRequests,
+        failedRequests: row.failedRequests,
+        totalTokens: row.totalTokens,
+        totalCost: row.totalCost,
+      }))
+      : columnReady
+        ? await db.select({
         keyId: schema.proxyLogs.downstreamApiKeyId,
         totalRequests: sql<number>`count(*)`,
         successRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
@@ -386,8 +396,8 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
           ...(sinceUtc ? [sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`] : []),
         ))
         .groupBy(schema.proxyLogs.downstreamApiKeyId)
-        .all()
-      : [];
+          .all()
+        : [];
 
     const usageByKey = new Map<number, {
       totalRequests: number;
@@ -460,6 +470,17 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     }
 
     const readAggregate = async (range: DownstreamKeyRange) => {
+      if (range === 'all') {
+        const [aggregate] = await readDownstreamKeyUsageTotals({ downstreamApiKeyIds: [id] });
+        return aggregate || {
+          totalRequests: 0,
+          successRequests: 0,
+          failedRequests: 0,
+          successRate: null,
+          totalTokens: 0,
+          totalCost: 0,
+        };
+      }
       const sinceUtc = resolveRangeSinceUtc(range);
       const row = await db.select({
         totalRequests: sql<number>`count(*)`,
@@ -510,7 +531,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     }
 
     const columnReady = await hasProxyLogDownstreamApiKeyIdColumn();
-    if (!columnReady) {
+    if (!columnReady && range !== 'all') {
       return {
         success: true,
         range,
@@ -533,6 +554,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       item: { id: item.id, name: item.name },
       bucketSeconds: trend.bucketSeconds,
       timeZone: trend.timeZone,
+      source: trend.source,
       buckets: trend.buckets,
     };
   });

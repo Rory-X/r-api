@@ -53,6 +53,12 @@ import { getSiteStatsSnapshot } from "../../services/siteStatsSnapshotService.js
 import {
   runUsageAggregationProjectionPass,
 } from "../../services/usageAggregationService.js";
+import {
+  normalizeCostAnalyticsDay,
+  queryCostAnalytics,
+  resolveDefaultCostAnalyticsRange,
+  type CostAnalyticsGroupBy,
+} from "../../services/costAnalyticsService.js";
 import { getRoutingObservabilitySnapshot } from "../../services/routingObservabilityService.js";
 
 function parseBooleanFlag(raw?: string): boolean {
@@ -75,6 +81,19 @@ function normalizeProxyLogsView(raw?: string) {
     return normalized;
   }
   return "full";
+}
+
+function normalizeCostAnalyticsGroupBy(raw?: string): CostAnalyticsGroupBy | null {
+  const normalized = (raw || "").trim().toLowerCase();
+  if (
+    normalized === "downstream_key"
+    || normalized === "downstream_project"
+    || normalized === "model"
+    || normalized === "site"
+  ) {
+    return normalized;
+  }
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1960,6 +1979,61 @@ export async function statsRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  app.get<{
+    Querystring: {
+      groupBy?: string;
+      from?: string;
+      to?: string;
+      downstreamKeyId?: string;
+      project?: string;
+      model?: string;
+      siteId?: string;
+    };
+  }>("/api/stats/costs", async (request, reply) => {
+    const groupBy = normalizeCostAnalyticsGroupBy(request.query.groupBy);
+    if (!groupBy) {
+      return reply.code(400).send({
+        success: false,
+        message: "groupBy 必须是 downstream_key、downstream_project、model 或 site",
+      });
+    }
+    const defaults = resolveDefaultCostAnalyticsRange();
+    const fromDay = request.query.from
+      ? normalizeCostAnalyticsDay(request.query.from)
+      : defaults.fromDay;
+    const toDay = request.query.to
+      ? normalizeCostAnalyticsDay(request.query.to)
+      : defaults.toDay;
+    if (!fromDay || !toDay || fromDay > toDay) {
+      return reply.code(400).send({ success: false, message: "成本统计日期范围无效" });
+    }
+
+    const parseOptionalPositiveInt = (raw?: string) => {
+      if (!raw) return null;
+      const value = Number.parseInt(raw, 10);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    };
+    const downstreamApiKeyId = parseOptionalPositiveInt(request.query.downstreamKeyId);
+    const siteId = parseOptionalPositiveInt(request.query.siteId);
+    if (request.query.downstreamKeyId && downstreamApiKeyId === null) {
+      return reply.code(400).send({ success: false, message: "downstreamKeyId 无效" });
+    }
+    if (request.query.siteId && siteId === null) {
+      return reply.code(400).send({ success: false, message: "siteId 无效" });
+    }
+
+    const result = await queryCostAnalytics({
+      groupBy,
+      fromDay,
+      toDay,
+      downstreamApiKeyId,
+      project: request.query.project?.trim() || null,
+      model: request.query.model?.trim() || null,
+      siteId,
+    });
+    return { success: true, ...result };
+  });
 
   // Site distribution – per-site aggregate data
   app.get<{ Querystring: { days?: string; refresh?: string } }>(

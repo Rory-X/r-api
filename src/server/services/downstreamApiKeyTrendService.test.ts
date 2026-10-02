@@ -30,6 +30,8 @@ describe('downstreamApiKeyTrendService', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.downstreamKeyDayUsage).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.downstreamApiKeys).run();
   });
@@ -75,6 +77,7 @@ describe('downstreamApiKeyTrendService', () => {
 
     expect(trend.bucketSeconds).toBe(86400);
     expect(trend.timeZone).toBe('UTC');
+    expect(trend.source).toBe('raw');
     expect(trend.buckets).toHaveLength(2);
     expect(trend.buckets[0]).toMatchObject({
       startUtc: '2026-04-05T00:00:00.000Z',
@@ -100,6 +103,40 @@ describe('downstreamApiKeyTrendService', () => {
     expect(trendService.resolveDownstreamTrendTimeZone('UTC')).toBe('UTC');
     expect(trendService.resolveDownstreamTrendTimeZone('Invalid/Zone')).toBe(fallback);
     expect(trendService.resolveDownstreamTrendTimeZone('  ')).toBe(fallback);
+  });
+
+  it('keeps all-range trend data after raw logs are deleted in the projection time zone', async () => {
+    const inserted = await db.insert(schema.downstreamApiKeys).values({
+      name: 'retained-trend-key',
+      key: 'sk-retained-trend-key-001',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.proxyLogs).values({
+      downstreamApiKeyId: inserted.id,
+      status: 'success',
+      totalTokens: 300,
+      estimatedCost: 0.6,
+      createdAt: '2026-08-17T01:00:00.000Z',
+    }).run();
+
+    const initial = await trendService.readDownstreamApiKeyTrendBuckets({
+      downstreamApiKeyId: inserted.id,
+      range: 'all',
+    });
+    expect(initial.source).toBe('aggregate');
+    expect(initial.buckets).toMatchObject([
+      { totalRequests: 1, successRequests: 1, totalTokens: 300, totalCost: 0.6 },
+    ]);
+
+    await db.delete(schema.proxyLogs).run();
+    const retained = await trendService.readDownstreamApiKeyTrendBuckets({
+      downstreamApiKeyId: inserted.id,
+      range: 'all',
+    });
+    expect(retained.source).toBe('aggregate');
+    expect(retained.buckets).toMatchObject([
+      { totalRequests: 1, successRequests: 1, totalTokens: 300, totalCost: 0.6 },
+    ]);
   });
 
   it('uses local hour buckets for windowed ranges in half-hour offset time zones', async () => {

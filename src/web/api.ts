@@ -1133,6 +1133,34 @@ export type DownstreamApiKeyTrendResponse = {
   buckets: DownstreamApiKeyTrendBucket[];
 };
 
+export type CostAnalyticsGroupBy = "downstream_key" | "downstream_project" | "model" | "site";
+
+export type CostAnalyticsResponse = {
+  success: boolean;
+  groupBy: CostAnalyticsGroupBy;
+  fromDay: string;
+  toDay: string;
+  timeZone: string;
+  projection: {
+    latestProxyLogId: number;
+    safeProxyLogId: number;
+    lagRows: number;
+  };
+  items: Array<{
+    day: string;
+    dimensionType: CostAnalyticsGroupBy;
+    dimensionId: number | null;
+    dimensionKey: string;
+    dimensionName: string;
+    totalRequests: number;
+    successRequests: number;
+    failedRequests: number;
+    successRate: number | null;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+};
+
 export type SiteAdapterContract = {
   platformName: string;
   protocolFamilies: string[];
@@ -2636,6 +2664,15 @@ export const api = {
     request(`/api/models/check/${accountId}`, { method: "POST" }),
   getSiteDistribution: () => request("/api/stats/site-distribution"),
   getSiteTrend: (days = 7) => request(`/api/stats/site-trend?days=${days}`),
+  getCostAnalytics: (params: {
+    groupBy: CostAnalyticsGroupBy;
+    from?: string;
+    to?: string;
+    downstreamKeyId?: number;
+    project?: string;
+    model?: string;
+    siteId?: number;
+  }) => request<CostAnalyticsResponse>(`/api/stats/costs${buildQueryString(params)}`),
   getSiteSnapshot: async (days = 7, options?: { refresh?: boolean }) => {
     const query = buildQueryString({
       days,
