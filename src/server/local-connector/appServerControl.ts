@@ -9,7 +9,7 @@ import type {
   CodexThreadActiveFlag,
   CodexThreadStatus,
 } from '../services/bridgeContinuationContract.js';
-import { CONNECTOR_VERSION } from './identity.js';
+import { CODEX_DESKTOP_APP_SERVER_CLIENT_INFO } from './identity.js';
 
 export type BridgeContinuationControlCommand = Readonly<{
   taskId: string;
@@ -411,11 +411,7 @@ export class CodexAppServerControlClient {
 
     try {
       await this.request('initialize', {
-        clientInfo: {
-          name: 'metapi-local-connector',
-          title: 'r-api Local Connector',
-          version: CONNECTOR_VERSION,
-        },
+        clientInfo: CODEX_DESKTOP_APP_SERVER_CLIENT_INFO,
         capabilities: {
           experimentalApi: true,
           mcpServerOpenaiFormElicitation: true,

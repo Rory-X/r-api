@@ -37,8 +37,8 @@ const CODEX_OFFICIAL_CLIENT_RULES: readonly CodexOfficialClientRule[] = [
     clientAppId: 'codex_chatgpt_desktop',
     clientAppName: 'Codex Desktop',
     originator: 'codex_chatgpt_desktop',
-    userAgentPrefixes: ['codex_chatgpt_desktop/', 'codex desktop/'],
-    originatorPrefixes: ['codex_chatgpt_desktop', 'codex desktop'],
+    userAgentPrefixes: ['codex_chatgpt_desktop/', 'codex-desktop/', 'codex desktop/'],
+    originatorPrefixes: ['codex_chatgpt_desktop', 'codex-desktop', 'codex desktop'],
   },
   {
     clientAppId: 'codex_atlas',

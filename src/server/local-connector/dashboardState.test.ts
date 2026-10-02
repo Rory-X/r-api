@@ -90,6 +90,7 @@ describe('Local Connector dashboard state', () => {
       dataDir,
       pollIntervalMs: 2_000,
     });
+    const observedAt = new Date().toISOString();
     state.syncThreads([{
       threadId: 'thread-desktop',
       title: 'Desktop task',
@@ -97,13 +98,13 @@ describe('Local Connector dashboard state', () => {
       status: 'not_loaded',
       activeFlags: [],
       createdAt: null,
-      updatedAt: '2026-08-11T03:00:00.000Z',
+      updatedAt: observedAt,
     }]);
     state.syncDesktopSessions([{
       threadId: 'thread-desktop',
       status: 'active',
       activeTurnId: 'turn-desktop',
-      updatedAt: '2026-08-11T03:30:00.000Z',
+      updatedAt: observedAt,
     }]);
 
     const active = await state.snapshot();

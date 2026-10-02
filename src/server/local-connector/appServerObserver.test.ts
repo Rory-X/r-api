@@ -3,12 +3,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 import {
   buildOwnedAppServerSpawnSpec,
   createSocketAppServerTransport,
   normalizeAppServerNotification,
+  startCodexAppServerObserver,
 } from './appServerObserver.js';
 import { canBindLocalTestListener } from '../test-fixtures/localListenerCapability.js';
 
@@ -34,6 +36,55 @@ describe('local connector app server observer', () => {
     expect(spec.executable).toBe('/usr/local/bin/codex');
     expect(spec.argv).toEqual(['app-server']);
     expect(spec.options).toMatchObject({ cwd: '/workspace', shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+
+  it('initializes the observer with the Codex Desktop client identity', async () => {
+    const readable = new PassThrough();
+    const writable = new PassThrough();
+    const messages: Record<string, any>[] = [];
+    let buffer = '';
+    writable.setEncoding('utf8');
+    writable.on('data', (chunk: string) => {
+      buffer += chunk;
+      let newline = buffer.indexOf('\n');
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (line.trim()) {
+          const message = JSON.parse(line) as Record<string, any>;
+          messages.push(message);
+          if (message.method === 'initialize') {
+            readable.write(`${JSON.stringify({ id: message.id, result: { userAgent: 'test' } })}\n`);
+          }
+        }
+        newline = buffer.indexOf('\n');
+      }
+    });
+    const observer = await startCodexAppServerObserver({
+      transportFactory: async () => ({
+        readable,
+        writable,
+        close: async () => {
+          readable.end();
+          writable.end();
+        },
+      }),
+      onEvent: () => undefined,
+    });
+
+    expect(messages[0]).toMatchObject({
+      method: 'initialize',
+      params: {
+        clientInfo: {
+          name: 'codex-desktop',
+          title: 'Codex Desktop',
+          version: '1.0.4',
+        },
+      },
+    });
+    expect(JSON.stringify(messages[0])).not.toContain('metapi-local-connector');
+    expect(messages[1]).toMatchObject({ method: 'initialized' });
+    await observer.close();
   });
 
   itWithLocalListener('speaks WebSocket JSON messages over the Codex unix control socket', async () => {

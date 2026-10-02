@@ -59,6 +59,17 @@ describe('Codex App Server control client', () => {
       'thread/resume',
       'turn/start',
     ]);
+    expect(messages[0]).toMatchObject({
+      method: 'initialize',
+      params: {
+        clientInfo: {
+          name: 'codex-desktop',
+          title: 'Codex Desktop',
+          version: '1.0.4',
+        },
+      },
+    });
+    expect(JSON.stringify(messages[0])).not.toContain('metapi-local-connector');
     expect(messages.at(-1)).toMatchObject({
       method: 'turn/start',
       params: {

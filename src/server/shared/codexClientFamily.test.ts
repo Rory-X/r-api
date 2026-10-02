@@ -31,6 +31,14 @@ describe('codexClientFamily helpers', () => {
     expect(inferCodexOfficialOriginator({
       originator: 'Codex Desktop',
     })).toBe('codex_chatgpt_desktop');
+    expect(detectCodexOfficialClientApp({
+      'user-agent': 'codex-desktop/0.147.0 (Mac OS 26.4.0; arm64)',
+      originator: 'codex-desktop',
+    })).toEqual({
+      clientAppId: 'codex_chatgpt_desktop',
+      clientAppName: 'Codex Desktop',
+      originator: 'codex_chatgpt_desktop',
+    });
   });
 
   it('keeps generic codex family detection broad without inventing a specific originator', () => {

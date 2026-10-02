@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { PassThrough, Writable, type Readable } from 'node:stream';
 import WebSocket from 'ws';
+import { CODEX_DESKTOP_APP_SERVER_CLIENT_INFO } from './identity.js';
 
 export type NormalizedAppServerEvent = {
   title: string;
@@ -398,7 +399,7 @@ export async function startCodexAppServerObserver(input: {
     id: 1,
     method: 'initialize',
     params: {
-      clientInfo: { name: 'metapi-local-connector', title: 'r-api Local Connector', version: '1.0.0' },
+      clientInfo: CODEX_DESKTOP_APP_SERVER_CLIENT_INFO,
       capabilities: { experimentalApi: true },
     },
   });
