@@ -8,11 +8,13 @@ import {
 import { buildRuntimeHealthForAccount } from './accountHealthService.js';
 import { applyAccountUpdateWorkflow } from './accountUpdateWorkflow.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
-import { refreshOauthAccessToken } from './oauth/service.js';
 import { getAdapter } from './platforms/index.js';
 import { rebuildRoutesBestEffort } from './routeRefreshWorkflow.js';
-import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
 import { publishTokenRouterCacheInvalidation } from './tokenRouterCacheInvalidation.js';
+import {
+  getManagedCredentialRefreshDescriptor,
+  refreshManagedAccountCredential,
+} from './managedCredentialRefreshService.js';
 import {
   credentialVaultInternals,
   revokeCredentialVaultItem,
@@ -135,12 +137,16 @@ function isoFromMs(value?: number): string | undefined {
   return value && Number.isFinite(value) && value > 0 ? new Date(value).toISOString() : undefined;
 }
 
-function expiryStatus(expiresAt: string | undefined, nowMs: number): CredentialLifecycleStatus | null {
+function expiryStatus(
+  expiresAt: string | undefined,
+  nowMs: number,
+  expiringWindowMs = EXPIRING_WINDOW_MS,
+): CredentialLifecycleStatus | null {
   if (!expiresAt) return null;
   const expiresAtMs = Date.parse(expiresAt);
   if (!Number.isFinite(expiresAtMs)) return null;
   if (expiresAtMs <= nowMs) return 'expired';
-  if (expiresAtMs - nowMs <= EXPIRING_WINDOW_MS) return 'expiring';
+  if (expiresAtMs - nowMs <= expiringWindowMs) return 'expiring';
   return null;
 }
 
@@ -160,6 +166,7 @@ function lifecycleFromAccount(input: {
   site: SiteRow;
   refreshing: boolean;
   nowMs: number;
+  expiringWindowMs?: number;
 }): Omit<CredentialLifecycleRecord, 'entityType' | 'entityId' | 'site' | 'name' | 'kind' | 'actions'> {
   const { account, site, refreshing, nowMs } = input;
   const sourceStatus = (account.status || 'active').trim().toLowerCase();
@@ -168,11 +175,7 @@ function lifecycleFromAccount(input: {
     ? getSub2ApiAuthFromExtraConfig(account.extraConfig)
     : null;
   const expiresAt = isoFromMs(oauth?.tokenExpiresAt || sub2api?.tokenExpiresAt);
-  const refreshOwner: CredentialRefreshOwner = oauth?.refreshToken || sub2api?.refreshToken
-    ? 'r_api'
-    : accountKind(account, site) === 'session_token'
-      ? 'external'
-      : 'none';
+  const refreshOwner = getManagedCredentialRefreshDescriptor(account, site).owner;
   let status: CredentialLifecycleStatus = 'active';
   let statusReason = '凭证可用';
 
@@ -195,10 +198,10 @@ function lifecycleFromAccount(input: {
     status = 'expired';
     statusReason = '账号凭证已过期';
   } else {
-    const expiry = expiryStatus(expiresAt, nowMs);
+    const expiry = expiryStatus(expiresAt, nowMs, input.expiringWindowMs);
     if (expiry) {
       status = expiry;
-      statusReason = expiry === 'expired' ? '凭证已超过到期时间' : '凭证将在 24 小时内到期';
+      statusReason = expiry === 'expired' ? '凭证已超过到期时间' : '凭证已进入到期提醒窗口';
     } else {
       const health = buildRuntimeHealthForAccount({
         accountStatus: account.status,
@@ -230,7 +233,11 @@ function lifecycleFromAccount(input: {
   };
 }
 
-function lifecycleFromVault(row: VaultRow, nowMs: number): Omit<CredentialLifecycleRecord, 'entityType' | 'entityId' | 'site' | 'name' | 'actions'> {
+function lifecycleFromVault(
+  row: VaultRow,
+  nowMs: number,
+  expiringWindowMs = EXPIRING_WINDOW_MS,
+): Omit<CredentialLifecycleRecord, 'entityType' | 'entityId' | 'site' | 'name' | 'actions'> {
   const sourceStatus = row.status.toLowerCase();
   const expiresAt = row.expiresAt || undefined;
   let status: CredentialLifecycleStatus = 'active';
@@ -245,10 +252,10 @@ function lifecycleFromVault(row: VaultRow, nowMs: number): Omit<CredentialLifecy
     status = 'expired';
     statusReason = 'Vault 凭证已过期';
   } else {
-    const expiry = expiryStatus(expiresAt, nowMs);
+    const expiry = expiryStatus(expiresAt, nowMs, expiringWindowMs);
     if (expiry) {
       status = expiry;
-      statusReason = expiry === 'expired' ? 'Vault 凭证已超过到期时间' : 'Vault 凭证将在 24 小时内到期';
+      statusReason = expiry === 'expired' ? 'Vault 凭证已超过到期时间' : 'Vault 凭证已进入到期提醒窗口';
     }
   }
   const metadata = credentialVaultInternals.parseMetadata(row.metadata);
@@ -298,6 +305,7 @@ export async function listCredentialLifecycle(input: {
   status?: unknown;
   entityType?: unknown;
   nowMs?: number;
+  expiringWindowMs?: number;
 } = {}): Promise<CredentialLifecycleRecord[]> {
   const siteId = normalizeOptionalPositiveId(input.siteId, 'siteId');
   const status = normalizeLifecycleStatus(input.status);
@@ -305,6 +313,9 @@ export async function listCredentialLifecycle(input: {
     ? undefined
     : normalizeEntityType(input.entityType);
   const nowMs = typeof input.nowMs === 'number' && Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const expiringWindowMs = typeof input.expiringWindowMs === 'number' && Number.isFinite(input.expiringWindowMs)
+    ? Math.max(0, input.expiringWindowMs)
+    : EXPIRING_WINDOW_MS;
 
   const provenanceRows = await db.select().from(schema.credentialImportProvenance)
     .orderBy(desc(schema.credentialImportProvenance.createdAt), desc(schema.credentialImportProvenance.id)).all() as ProvenanceRow[];
@@ -335,6 +346,7 @@ export async function listCredentialLifecycle(input: {
         site: row.sites,
         refreshing: refreshingIds.has(row.accounts.id),
         nowMs,
+        expiringWindowMs,
       });
       const record: CredentialLifecycleRecord = {
         entityType: 'account',
@@ -360,7 +372,7 @@ export async function listCredentialLifecycle(input: {
       .where(vaultConditions.length > 0 ? and(...vaultConditions) : undefined)
       .orderBy(asc(schema.credentialVaultItems.id)).all() as VaultRow[];
     for (const row of vaultRows) {
-      const base = lifecycleFromVault(row, nowMs);
+      const base = lifecycleFromVault(row, nowMs, expiringWindowMs);
       const site = row.siteId ? siteById.get(row.siteId) : undefined;
       const record: CredentialLifecycleRecord = {
         entityType: 'vault_item',
@@ -424,24 +436,11 @@ async function validateVaultCredential(id: number): Promise<string> {
 }
 
 async function refreshAccountCredential(row: { account: AccountRow; site: SiteRow }): Promise<string> {
-  const oauth = getOauthInfoFromAccount(row.account);
-  if (oauth?.refreshToken) {
-    const result = await refreshOauthAccessToken(row.account.id, { reason: 'manual', force: true });
-    return result.reused ? '已复用其他执行者刷新的 OAuth 凭证' : 'OAuth 凭证刷新完成';
+  try {
+    return await refreshManagedAccountCredential({ ...row, reason: 'manual' });
+  } catch (error) {
+    throw new CredentialLifecycleError((error as Error)?.message || '凭证刷新失败');
   }
-  const sub2api = row.site.platform.toLowerCase() === 'sub2api'
-    ? getSub2ApiAuthFromExtraConfig(row.account.extraConfig)
-    : null;
-  if (sub2api?.refreshToken) {
-    await refreshSub2ApiManagedSessionSingleflight({
-      account: row.account,
-      site: row.site,
-      currentAccessToken: row.account.accessToken,
-      currentExtraConfig: row.account.extraConfig,
-    });
-    return 'Sub2API 凭证刷新完成';
-  }
-  throw new CredentialLifecycleError('该账号没有由 r-api 托管的 refresh token');
 }
 
 function stripSecretExtraConfig(value: string | null): string | null {

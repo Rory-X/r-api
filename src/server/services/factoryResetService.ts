@@ -54,6 +54,8 @@ async function clearAllBusinessData() {
     await tx.delete(schema.localConnectorActions).run();
     await tx.delete(schema.localConnectorPairings).run();
     await tx.delete(schema.localConnectorDevices).run();
+    await tx.delete(schema.credentialLifecycleAudits).run();
+    await tx.delete(schema.credentialRefreshJobs).run();
     await tx.delete(schema.credentialImportProvenance).run();
     await tx.delete(schema.credentialImportItems).run();
     await tx.delete(schema.credentialImportJobs).run();

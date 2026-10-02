@@ -26,6 +26,8 @@ describe('credential lifecycle routes', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.credentialLifecycleAudits).run();
+    await db.delete(schema.credentialRefreshJobs).run();
     await db.delete(schema.events).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -69,6 +71,8 @@ describe('credential lifecycle routes', () => {
       payload: {
         action: 'disable',
         items: [{ entityType: 'account', entityId: accountId }],
+        operatorId: 'admin:route-test',
+        source: 'webui',
       },
     });
     expect(disabled.statusCode, disabled.body).toBe(200);
@@ -77,6 +81,32 @@ describe('credential lifecycle routes', () => {
       succeeded: 1,
       failed: 0,
       items: [{ success: true, status: 'disabled' }],
+    });
+
+    const audits = await app.inject({
+      method: 'GET',
+      url: '/api/credential-lifecycle/audits?source=native&operatorId=admin%3Aroute-test&status=disabled',
+    });
+    expect(audits.statusCode, audits.body).toBe(200);
+    expect(audits.json()).toMatchObject({
+      success: true,
+      total: 1,
+      items: [{
+        entityType: 'account',
+        entityId: accountId,
+        credentialSource: 'native',
+        operatorId: 'admin:route-test',
+        action: 'disable',
+        status: 'disabled',
+        outcome: 'succeeded',
+      }],
+    });
+
+    const policy = await app.inject({ method: 'GET', url: '/api/credential-lifecycle/policy' });
+    expect(policy.statusCode, policy.body).toBe(200);
+    expect(policy.json()).toMatchObject({
+      success: true,
+      policy: { automaticRemindersEnabled: true, retryMaxAttempts: 8 },
     });
   });
 });

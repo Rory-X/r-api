@@ -61,9 +61,9 @@ import {
   stopChannelRecoveryProbeScheduler,
 } from './services/channelRecoveryProbeService.js';
 import {
-  startSub2ApiManagedRefreshScheduler,
-  stopSub2ApiManagedRefreshScheduler,
-} from './services/sub2apiRefreshScheduler.js';
+  startCredentialLifecycleScheduler,
+  stopCredentialLifecycleScheduler,
+} from './services/credentialLifecycleOperationsService.js';
 import { startUpdateCenterPolling, stopUpdateCenterPolling } from './services/updateCenterPollingService.js';
 import {
   startAdminSnapshotWarmScheduler,
@@ -359,7 +359,7 @@ if (!config.demoMode) {
   startSiteAnnouncementPolling();
   startModelAvailabilityProbeScheduler();
   startChannelRecoveryProbeScheduler();
-  startSub2ApiManagedRefreshScheduler();
+  await startCredentialLifecycleScheduler();
   startUpdateCenterPolling();
   startUsageAggregationProjectorScheduler();
   startAdminSnapshotWarmScheduler();
@@ -399,7 +399,7 @@ app.addHook('onClose', async () => {
   await stopInteractionRequestExpiryScheduler();
   await stopFeishuInteractionAdapterScheduler();
   await stopLocalConnectorHealthScheduler();
-  await stopSub2ApiManagedRefreshScheduler();
+  await stopCredentialLifecycleScheduler();
   await stopOAuthLoopbackCallbackServers();
   await shutdownOpenTelemetry();
 });

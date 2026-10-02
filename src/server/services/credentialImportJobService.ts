@@ -16,6 +16,7 @@ import {
   type CredentialPromotionItem,
   type CredentialPromotionResult,
 } from './credentialPromotionService.js';
+import { recordCredentialLifecycleAudit } from './credentialLifecycleAuditService.js';
 
 const MAX_IMPORT_CANDIDATES = 500;
 const DEFAULT_OPERATOR_ID = 'webui:admin';
@@ -485,7 +486,7 @@ async function persistPromotionResult(
     itemRows.map((row) => [row.sourceIndex, row] as const),
   );
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: typeof db) => {
     for (const resultItem of result.items) {
       const item = itemByIndex.get(resultItem.index);
       if (!item) continue;
@@ -520,6 +521,37 @@ async function persistPromotionResult(
           importAction: resultItem.status,
           createdAt: now,
         }).run();
+      }
+      const auditTargets: Array<{ type: string; id: number }> = targets.length > 0
+        ? targets
+        : [{ type: 'import_item', id: item.id }];
+      const outcome = resultItem.status === 'failed'
+        ? 'failed'
+        : resultItem.status === 'skipped'
+          ? 'deferred'
+          : 'succeeded';
+      for (const target of auditTargets) {
+        await recordCredentialLifecycleAudit({
+          entityType: target.type,
+          entityId: target.id,
+          siteId: job.siteId,
+          provider: item.provider,
+          credentialSource: item.sourceFormat,
+          operatorId: job.operatorId,
+          action: 'import',
+          status: resultItem.status,
+          outcome,
+          message: resultItem.message || null,
+          metadata: {
+            importJobId: job.id,
+            importItemId: item.id,
+            sourceIndex: item.sourceIndex,
+            target: job.target,
+            conflictPolicy: job.conflictPolicy,
+          },
+          dedupeKey: `credential-import:${job.id}:${item.id}:${target.type}:${target.id}`,
+          createdAt: new Date(now),
+        }, tx);
       }
     }
 

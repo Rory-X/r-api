@@ -51,6 +51,8 @@ describe('factoryResetService', () => {
     await db.delete(schema.proxyVideoTasks).run();
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.accountTokens).run();
+    await db.delete(schema.credentialLifecycleAudits).run();
+    await db.delete(schema.credentialRefreshJobs).run();
     await db.delete(schema.credentialVaultItems).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.tokenRoutes).run();
@@ -81,6 +83,25 @@ describe('factoryResetService', () => {
       kind: 'session_token',
       ciphertext: 'vault-v1:test',
       fingerprint: 'reset-fingerprint',
+    }).run();
+    await db.insert(schema.credentialRefreshJobs).values({
+      entityType: 'account',
+      entityId: 99,
+      siteId: site.id,
+      provider: 'codex',
+      status: 'retry_wait',
+      nextAttemptAt: '2026-08-18T12:00:00.000Z',
+    }).run();
+    await db.insert(schema.credentialLifecycleAudits).values({
+      entityType: 'account',
+      entityId: 99,
+      siteId: site.id,
+      provider: 'codex',
+      credentialSource: 'native',
+      operatorId: 'system:test',
+      action: 'refresh',
+      status: 'refresh_failed',
+      outcome: 'deferred',
     }).run();
     await db.insert(schema.adminTotpConfigs).values({
       id: 'primary',
@@ -143,6 +164,8 @@ describe('factoryResetService', () => {
     expect(ensureDefaultSitesSeeded).toHaveBeenCalledTimes(1);
     expect(await db.select().from(schema.sites).all()).toHaveLength(0);
     expect(await db.select().from(schema.credentialVaultItems).all()).toHaveLength(0);
+    expect(await db.select().from(schema.credentialRefreshJobs).all()).toHaveLength(0);
+    expect(await db.select().from(schema.credentialLifecycleAudits).all()).toHaveLength(0);
     expect(await db.select().from(schema.adminTotpConfigs).all()).toMatchObject([{
       id: 'primary',
       encryptedSecret: 'v1.test.test.test',

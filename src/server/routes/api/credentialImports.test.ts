@@ -8,13 +8,18 @@ import { resetRequestRateLimitStore } from '../../middleware/requestRateLimit.js
 describe('credential import preview routes', () => {
   let app: FastifyInstance;
   let credentialImportRoutes: typeof import('./credentialImports.js')['credentialImportRoutes'];
+  let credentialLifecycleRoutes: typeof import('./credentialLifecycle.js')['credentialLifecycleRoutes'];
+  let db: typeof import('../../db/index.js')['db'];
+  let schema: typeof import('../../db/index.js')['schema'];
   let dataDir = '';
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-credential-import-routes-'));
     process.env.DATA_DIR = dataDir;
     await import('../../db/migrate.js');
+    ({ db, schema } = await import('../../db/index.js'));
     ({ credentialImportRoutes } = await import('./credentialImports.js'));
+    ({ credentialLifecycleRoutes } = await import('./credentialLifecycle.js'));
   });
 
   afterAll(() => {
@@ -26,6 +31,7 @@ describe('credential import preview routes', () => {
     resetRequestRateLimitStore();
     app = Fastify();
     await app.register(credentialImportRoutes);
+    await app.register(credentialLifecycleRoutes);
   });
 
   it('returns safe previews without exposing credential material', async () => {
@@ -210,5 +216,52 @@ describe('credential import preview routes', () => {
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json().message).toContain('幂等键');
     expect(conflict.body).not.toContain('different-route-secret');
+  });
+
+  it('writes successful import results to the shared credential audit query', async () => {
+    const input = { api_key: 'sk-import-audit-secret', name: 'audit import' };
+    const site = await db.insert(schema.sites).values({
+      name: 'Import Audit Vault Site',
+      url: 'https://import-audit-vault.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/credential-imports/preview',
+      payload: { target: 'vault', siteId: site.id, operatorId: 'admin:import-audit', input },
+    });
+    expect(preview.statusCode, preview.body).toBe(200);
+
+    const promoted = await app.inject({
+      method: 'POST',
+      url: '/api/credential-imports/promote',
+      payload: {
+        target: 'vault',
+        siteId: site.id,
+        operatorId: 'admin:import-audit',
+        importJobId: preview.json().importJobId,
+        batchFingerprint: preview.json().batchFingerprint,
+        input,
+      },
+    });
+    expect(promoted.statusCode, promoted.body).toBe(200);
+    expect(promoted.json()).toMatchObject({ success: true, imported: 1, failed: 0 });
+
+    const audits = await app.inject({
+      method: 'GET',
+      url: '/api/credential-lifecycle/audits?action=import&operatorId=admin%3Aimport-audit',
+    });
+    expect(audits.statusCode, audits.body).toBe(200);
+    expect(audits.json()).toMatchObject({
+      success: true,
+      total: 1,
+      items: [{
+        action: 'import',
+        operatorId: 'admin:import-audit',
+        outcome: 'succeeded',
+        metadata: expect.objectContaining({ importJobId: preview.json().importJobId }),
+      }],
+    });
+    expect(audits.body).not.toContain('sk-import-audit-secret');
   });
 });

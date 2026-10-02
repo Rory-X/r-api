@@ -1675,6 +1675,57 @@ export type CredentialLifecycleActionResult = {
   message: string;
 };
 
+export type CredentialLifecyclePolicy = {
+  expiryWarningLeadMinutes: number;
+  automaticRemindersEnabled: boolean;
+  automaticRefreshEnabled: boolean;
+  defaultRefreshLeadMinutes: number;
+  providerRefreshLeadMinutes: Record<string, number>;
+  retryBaseSeconds: number;
+  retryMaxSeconds: number;
+  retryMaxAttempts: number;
+  ownerConflictRetrySeconds: number;
+  schedulerIntervalSeconds: number;
+  updatedAt: string | null;
+};
+
+export type CredentialRefreshJob = {
+  id: number;
+  entityType: string;
+  entityId: number;
+  siteId?: number | null;
+  provider?: string | null;
+  refreshOwner: "r_api" | "external" | "none";
+  status: "pending" | "retry_wait" | "running" | "succeeded" | "failed_terminal" | "owner_conflict" | "cancelled";
+  failureClass?: "rate_limited" | "provider_unavailable" | "owner_conflict" | "auth_invalid" | "transient" | "unknown" | null;
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string | null;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type CredentialLifecycleAudit = {
+  id: number;
+  entityType: string;
+  entityId: number;
+  siteId: number | null;
+  provider: string | null;
+  credentialSource: string;
+  operatorId: string;
+  action: string;
+  status: string;
+  outcome: string;
+  message: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string | null;
+};
+
 export type CredentialImportTarget = "new_api" | "sub2api" | "native_oauth" | "api_key" | "vault";
 export type CredentialConflictPolicy = "skip" | "update" | "create_duplicate";
 
@@ -2195,6 +2246,8 @@ export const api = {
   runCredentialLifecycleAction: (data: {
     action: CredentialLifecycleAction;
     items: Array<{ entityType: CredentialLifecycleEntityType; entityId: number }>;
+    operatorId?: string;
+    source?: string;
   }) => request<{
     success: true;
     action: CredentialLifecycleAction;
@@ -2206,6 +2259,77 @@ export const api = {
     body: JSON.stringify(data),
     timeoutMs: data.action === "refresh" || data.action === "validate" ? 120_000 : 30_000,
   }),
+  getCredentialLifecyclePolicy: () => request<{ success: true; policy: CredentialLifecyclePolicy }>(
+    "/api/credential-lifecycle/policy",
+  ),
+  updateCredentialLifecyclePolicy: (data: {
+    policy: Partial<Omit<CredentialLifecyclePolicy, "updatedAt">>;
+    operatorId?: string;
+  }) => request<{ success: true; policy: CredentialLifecyclePolicy }>(
+    "/api/credential-lifecycle/policy",
+    { method: "PUT", body: JSON.stringify(data) },
+  ),
+  setCredentialRefreshOwner: (accountId: number, data: {
+    refreshOwner: "r_api" | "external" | "none";
+    operatorId?: string;
+  }) => request<{ success: true; accountId: number; refreshOwner: "r_api" | "external" | "none" }>(
+    `/api/credential-lifecycle/accounts/${accountId}/refresh-owner`,
+    { method: "PUT", body: JSON.stringify(data) },
+  ),
+  getCredentialRefreshQueue: (params?: {
+    status?: string;
+    provider?: string;
+    failureClass?: string;
+    limit?: number;
+    offset?: number;
+  }) => request<{
+    success: true;
+    items: CredentialRefreshJob[];
+    total: number;
+    providerStates: Array<{
+      provider: string;
+      nextAllowedAt?: string | null;
+      lastStartedAt?: string | null;
+      lastCompletedAt?: string | null;
+      consecutiveFailureCount: number;
+      lastError?: string | null;
+    }>;
+  }>("/api/credential-lifecycle/refresh-queue" + buildQueryString(params)),
+  runCredentialRefreshQueue: (maxJobs?: number) => request<{
+    success: true;
+    reminders: number;
+    queued: number;
+    claimed: number;
+    succeeded: number;
+    failed: number;
+    deferred: number;
+  }>("/api/credential-lifecycle/refresh-queue/run", {
+    method: "POST",
+    body: JSON.stringify({ maxJobs }),
+    timeoutMs: 120_000,
+  }),
+  retryCredentialRefreshJob: (jobId: number, operatorId?: string) => request<{
+    success: true;
+    jobId: number;
+    status: "pending";
+    nextAttemptAt: string;
+  }>(`/api/credential-lifecycle/refresh-queue/${jobId}/retry`, {
+    method: "POST",
+    body: JSON.stringify({ operatorId }),
+  }),
+  getCredentialLifecycleAudits: (params?: {
+    source?: string;
+    operatorId?: string;
+    status?: string;
+    action?: string;
+    outcome?: string;
+    entityType?: string;
+    entityId?: number;
+    limit?: number;
+    offset?: number;
+  }) => request<{ success: true; items: CredentialLifecycleAudit[]; total: number }>(
+    "/api/credential-lifecycle/audits" + buildQueryString(params),
+  ),
   previewCredentialImport: (data: {
     input: unknown;
     target?: CredentialImportTarget;

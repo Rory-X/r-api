@@ -1578,6 +1578,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.modelSyncStates).run();
     await tx.delete(schema.oauthRefreshLeases).run();
     await tx.delete(schema.oauthRefreshProviderStates).run();
+    await tx.delete(schema.credentialLifecycleAudits).run();
+    await tx.delete(schema.credentialRefreshJobs).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.credentialVaultItems).run();
     await tx.delete(schema.accounts).run();
