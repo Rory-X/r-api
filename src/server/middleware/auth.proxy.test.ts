@@ -4,12 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
 const acquireDownstreamConcurrencyLeaseMock = vi.fn();
+const reserveManagedKeyRequestMock = vi.fn();
+const reserveDownstreamKeyQuotaMock = vi.fn();
+const settleDownstreamKeyQuotaReservationMock = vi.fn();
 const releaseConcurrencyLeaseMock = vi.fn();
 
 vi.mock('../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
   acquireDownstreamConcurrencyLease: (...args: unknown[]) => acquireDownstreamConcurrencyLeaseMock(...args),
+  reserveManagedKeyRequest: (...args: unknown[]) => reserveManagedKeyRequestMock(...args),
+  reserveDownstreamKeyQuota: (...args: unknown[]) => reserveDownstreamKeyQuotaMock(...args),
+  settleDownstreamKeyQuotaReservation: (...args: unknown[]) => settleDownstreamKeyQuotaReservationMock(...args),
   createInternalDownstreamPolicySnapshot: (token: string) => ({
     capturedAt: '2026-08-13T00:00:00.000Z',
     source: 'internal',
@@ -46,11 +52,17 @@ describe('proxyAuthMiddleware', () => {
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
     acquireDownstreamConcurrencyLeaseMock.mockReset();
+    reserveManagedKeyRequestMock.mockReset();
+    reserveDownstreamKeyQuotaMock.mockReset();
+    settleDownstreamKeyQuotaReservationMock.mockReset();
     releaseConcurrencyLeaseMock.mockReset();
     acquireDownstreamConcurrencyLeaseMock.mockResolvedValue({
       ok: true,
       lease: { release: releaseConcurrencyLeaseMock },
     });
+    reserveManagedKeyRequestMock.mockResolvedValue({ ok: true, remaining: null, resetAt: null });
+    reserveDownstreamKeyQuotaMock.mockResolvedValue({ ok: true, reservation: null, windows: [] });
+    settleDownstreamKeyQuotaReservationMock.mockResolvedValue(true);
   });
 
   afterEach(() => {

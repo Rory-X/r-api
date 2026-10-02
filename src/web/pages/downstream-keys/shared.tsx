@@ -15,6 +15,7 @@ export type SummaryItem = {
   usedCost: number;
   maxRequests: number | null;
   usedRequests: number;
+  requestsPerMinute: number | null;
   maxConcurrency: number | null;
   policyVersion: number;
   supportedModels: string[];

@@ -114,6 +114,7 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
   | 'expiresAt'
   | 'maxCost'
   | 'maxRequests'
+  | 'requestsPerMinute'
   | 'maxConcurrency'
   | 'supportedModels'
   | 'allowedRouteIds'
@@ -1840,6 +1841,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           maxCost: row.maxCost ?? null,
           usedCost: runtimeDownstream?.usedCost ?? row.usedCost ?? 0,
           maxRequests: row.maxRequests ?? null,
+          requestsPerMinute: row.requestsPerMinute ?? null,
           usedRequests: runtimeDownstream?.usedRequests ?? row.usedRequests ?? 0,
           maxConcurrency: row.maxConcurrency ?? null,
           policyVersion: 1,

@@ -17,6 +17,9 @@ const recordFailureMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
 const acquireDownstreamConcurrencyLeaseMock = vi.fn();
+const reserveManagedKeyRequestMock = vi.fn();
+const reserveDownstreamKeyQuotaMock = vi.fn();
+const settleDownstreamKeyQuotaReservationMock = vi.fn();
 const releaseDownstreamConcurrencyLeaseMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
@@ -69,6 +72,9 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
   acquireDownstreamConcurrencyLease: (...args: unknown[]) => acquireDownstreamConcurrencyLeaseMock(...args),
+  reserveManagedKeyRequest: (...args: unknown[]) => reserveManagedKeyRequestMock(...args),
+  reserveDownstreamKeyQuota: (...args: unknown[]) => reserveDownstreamKeyQuotaMock(...args),
+  settleDownstreamKeyQuotaReservation: (...args: unknown[]) => settleDownstreamKeyQuotaReservationMock(...args),
   resolveDownstreamPolicySnapshot: (auth: any) => auth.snapshot || {
     capturedAt: '2026-08-03T00:00:00.000Z',
     source: auth.source,
@@ -409,7 +415,10 @@ describeWithLocalListener('responses websocket transport', () => {
     recordFailureMock.mockReset();
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
-    acquireDownstreamConcurrencyLeaseMock.mockReset();
+  acquireDownstreamConcurrencyLeaseMock.mockReset();
+  reserveManagedKeyRequestMock.mockReset();
+  reserveDownstreamKeyQuotaMock.mockReset();
+  settleDownstreamKeyQuotaReservationMock.mockReset();
     releaseDownstreamConcurrencyLeaseMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
@@ -450,10 +459,13 @@ describeWithLocalListener('responses websocket transport', () => {
         siteWeightMultipliers: {},
       },
     });
-    acquireDownstreamConcurrencyLeaseMock.mockResolvedValue({
-      ok: true,
-      lease: { release: releaseDownstreamConcurrencyLeaseMock },
-    });
+  acquireDownstreamConcurrencyLeaseMock.mockResolvedValue({
+    ok: true,
+    lease: { release: releaseDownstreamConcurrencyLeaseMock },
+  });
+  reserveManagedKeyRequestMock.mockResolvedValue({ ok: true, remaining: null, resetAt: null });
+  reserveDownstreamKeyQuotaMock.mockResolvedValue({ ok: true, reservation: null, windows: [] });
+  settleDownstreamKeyQuotaReservationMock.mockResolvedValue(true);
     upstreamMessageHandler = (socket, parsed, requestIndex) => {
       const responseId = `resp_upstream_${requestIndex}`;
       socket.send(JSON.stringify({

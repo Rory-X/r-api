@@ -203,7 +203,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
               firstByteLatencyMs,
             )
           ));
-          recordDownstreamCostUsage(request, estimatedCost);
+          recordDownstreamCostUsage(request, estimatedCost, resolvedUsage.totalTokens);
           logProxy(
             selected,
             requestedModel,
@@ -322,7 +322,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             firstByteLatencyMs,
           )
         ));
-        recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamCostUsage(request, estimatedCost, resolvedUsage.totalTokens);
         logProxy(
           selected,
           requestedModel,

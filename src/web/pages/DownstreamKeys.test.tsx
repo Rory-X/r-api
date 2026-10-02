@@ -246,6 +246,9 @@ describe('DownstreamKeys page', () => {
       expect(text).toContain('下游密钥');
       expect(text).not.toContain('全局主密钥');
       expect(text).toContain('范围概览');
+      expect(text).toContain('项目用量与成本');
+      expect(text).toContain('项目A');
+      expect(text).toContain('$0.420000');
       expect(text).toContain('筛选与列表');
       expect(text).toContain('smoke-key');
       expect(text).toContain('sk-s****0315');

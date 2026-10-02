@@ -397,7 +397,7 @@ export async function recordSurfaceSuccess(input: {
     billingDetails?: unknown;
     upstreamPath?: string | null;
   }) => Promise<void>;
-  recordDownstreamCost?: (estimatedCost: number) => void;
+  recordDownstreamCost?: (estimatedCost: number, totalTokens?: number | null) => void;
   bestEffortMetrics?: {
     errorLabel: string;
   };
@@ -464,7 +464,7 @@ export async function recordSurfaceSuccess(input: {
     input.selected.account.id,
     input.firstByteLatencyMs ?? null,
   );
-  input.recordDownstreamCost?.(estimatedCost);
+  input.recordDownstreamCost?.(estimatedCost, resolvedUsage.totalTokens);
   const logTokens = resolvedUsage.usageSource === 'unknown'
     ? {
       promptTokens: null,

@@ -1,13 +1,22 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
-import { db, schema } from '../db/index.js';
+import { db, runtimeDbDialect, schema } from '../db/index.js';
 import {
   EMPTY_DOWNSTREAM_ROUTING_POLICY,
   type DownstreamCredentialRef,
   type DownstreamExcludedCredentialRef,
   type DownstreamRoutingPolicy,
 } from './downstreamPolicyTypes.js';
+import {
+  readDownstreamKeyQuotaWindows,
+  recordDownstreamKeyQuotaUsage,
+  reserveDownstreamKeyQuota,
+  settleDownstreamKeyQuotaReservation,
+  type QuotaMetric,
+} from './downstreamKeyQuotaService.js';
+
+export { reserveDownstreamKeyQuota, settleDownstreamKeyQuotaReservation } from './downstreamKeyQuotaService.js';
 
 export type DownstreamApiKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 
@@ -25,6 +34,7 @@ export type DownstreamApiKeyPolicyView = {
   usedCost: number;
   maxRequests: number | null;
   usedRequests: number;
+  requestsPerMinute: number | null;
   maxConcurrency: number | null;
   policyVersion: number;
   supportedModels: string[];
@@ -63,7 +73,12 @@ export type DownstreamTokenAuthFailure = {
   ok: false;
   statusCode: number;
   error: string;
-  reason: 'missing' | 'invalid' | 'disabled' | 'expired' | 'over_cost' | 'over_requests';
+  reason: 'missing' | 'invalid' | 'disabled' | 'expired' | 'over_cost' | 'over_requests' | 'rate_limited' | 'quota_exceeded';
+  retryAfterSeconds?: number;
+  remaining?: number;
+  resetAt?: string;
+  limit?: number;
+  metric?: QuotaMetric;
 };
 
 export type DownstreamTokenAuthResult = DownstreamTokenAuthSuccess | DownstreamTokenAuthFailure;
@@ -97,9 +112,24 @@ export type DownstreamConcurrencyAcquireResult =
     retryAfterSeconds: number;
   };
 
+export type DownstreamRateLimitResult =
+  | { ok: true; remaining: number | null; resetAt: string | null; limit?: number; metric?: QuotaMetric }
+  | {
+    ok: false;
+    statusCode: 429;
+    error: string;
+    reason: 'requests_per_minute' | 'quota_exceeded';
+    retryAfterSeconds: number;
+    remaining: 0;
+    resetAt: string;
+    limit?: number;
+    metric?: QuotaMetric;
+  };
+
 const MAX_DOWNSTREAM_CONCURRENCY = 10_000;
 const DEFAULT_CONCURRENCY_LEASE_TTL_MS = 90_000;
 const DEFAULT_CONCURRENCY_LEASE_HEARTBEAT_MS = 30_000;
+const RATE_WINDOW_KIND = 'minute';
 
 function isRegexModelPattern(pattern: string): boolean {
   return pattern.trim().toLowerCase().startsWith('re:');
@@ -533,6 +563,7 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
     usedCost: Number(row.usedCost || 0),
     maxRequests: row.maxRequests ?? null,
     usedRequests: Number(row.usedRequests || 0),
+    requestsPerMinute: row.requestsPerMinute ?? null,
     maxConcurrency: row.maxConcurrency ?? null,
     policyVersion: normalizePolicyVersion(row.policyVersion),
     supportedModels,
@@ -635,6 +666,22 @@ export async function authorizeDownstreamToken(token: string): Promise<Downstrea
         statusCode: 403,
         error: 'API key has exceeded max requests',
         reason: 'over_requests',
+      };
+    }
+
+    const quotaWindows = await readDownstreamKeyQuotaWindows({ keyId: managed.id });
+    const exhaustedQuota = quotaWindows.find((window) => window.enforcement === 'hard' && window.remaining <= 0);
+    if (exhaustedQuota) {
+      return {
+        ok: false,
+        statusCode: 429,
+        error: `API key ${exhaustedQuota.metric} quota reached`,
+        reason: 'quota_exceeded',
+        retryAfterSeconds: Math.max(1, Math.ceil((Date.parse(exhaustedQuota.windowEnd) - Date.now()) / 1_000)),
+        remaining: 0,
+        resetAt: exhaustedQuota.windowEnd,
+        limit: exhaustedQuota.limitValue + exhaustedQuota.burstValue,
+        metric: exhaustedQuota.metric,
       };
     }
 
@@ -880,6 +927,140 @@ export async function acquireDownstreamConcurrencyLease(
   };
 }
 
+function getUtcMinuteWindow(now = new Date()): { start: string; resetAt: string; retryAfterSeconds: number } {
+  const startMs = Math.floor(now.getTime() / 60_000) * 60_000;
+  const resetMs = startMs + 60_000;
+  return {
+    start: new Date(startMs).toISOString(),
+    resetAt: new Date(resetMs).toISOString(),
+    retryAfterSeconds: Math.max(1, Math.ceil((resetMs - now.getTime()) / 1_000)),
+  };
+}
+
+async function ensureRateWindow(keyId: number, windowStart: string, nowIso: string): Promise<void> {
+  const values = {
+    downstreamApiKeyId: keyId,
+    windowKind: RATE_WINDOW_KIND,
+    windowStart,
+    reservedRequests: 0,
+    updatedAt: nowIso,
+  };
+  if (runtimeDbDialect === 'mysql') {
+    await (db.insert(schema.downstreamApiKeyRateWindows).values(values) as any)
+      .onDuplicateKeyUpdate({
+        set: { windowStart: sql`${schema.downstreamApiKeyRateWindows.windowStart}` },
+      })
+      .run();
+    return;
+  }
+  await (db.insert(schema.downstreamApiKeyRateWindows).values(values) as any)
+    .onConflictDoNothing({
+      target: [
+        schema.downstreamApiKeyRateWindows.downstreamApiKeyId,
+        schema.downstreamApiKeyRateWindows.windowKind,
+        schema.downstreamApiKeyRateWindows.windowStart,
+      ],
+    })
+    .run();
+}
+
+export async function reserveManagedKeyRequest(
+  keyId: number,
+  requestsPerMinute: number | null | undefined,
+  now = new Date(),
+): Promise<DownstreamRateLimitResult> {
+  const limit = requestsPerMinute == null ? null : Math.max(0, Math.trunc(Number(requestsPerMinute)));
+  let legacyResult: Extract<DownstreamRateLimitResult, { ok: true }> = { ok: true, remaining: null, resetAt: null };
+  if (limit !== null) {
+    const window = getUtcMinuteWindow(now);
+    const nowIso = now.toISOString();
+    await db.delete(schema.downstreamApiKeyRateWindows).where(and(
+      eq(schema.downstreamApiKeyRateWindows.downstreamApiKeyId, keyId),
+      eq(schema.downstreamApiKeyRateWindows.windowKind, RATE_WINDOW_KIND),
+      lte(schema.downstreamApiKeyRateWindows.windowStart, new Date(now.getTime() - 3_600_000).toISOString()),
+    )).run();
+    await ensureRateWindow(keyId, window.start, nowIso);
+
+    const updated = await db.update(schema.downstreamApiKeyRateWindows).set({
+      reservedRequests: sql`${schema.downstreamApiKeyRateWindows.reservedRequests} + 1`,
+      updatedAt: nowIso,
+    }).where(and(
+      eq(schema.downstreamApiKeyRateWindows.downstreamApiKeyId, keyId),
+      eq(schema.downstreamApiKeyRateWindows.windowKind, RATE_WINDOW_KIND),
+      eq(schema.downstreamApiKeyRateWindows.windowStart, window.start),
+      sql`${schema.downstreamApiKeyRateWindows.reservedRequests} < ${limit}`,
+    )).run();
+
+    if (Number(updated?.changes || 0) === 0) {
+      return {
+        ok: false,
+        statusCode: 429,
+        error: 'API key requests-per-minute limit reached',
+        reason: 'requests_per_minute',
+        retryAfterSeconds: window.retryAfterSeconds,
+        remaining: 0,
+        resetAt: window.resetAt,
+        limit,
+        metric: 'requests',
+      };
+    }
+    const current = await db.select({
+      reservedRequests: schema.downstreamApiKeyRateWindows.reservedRequests,
+    }).from(schema.downstreamApiKeyRateWindows).where(and(
+      eq(schema.downstreamApiKeyRateWindows.downstreamApiKeyId, keyId),
+      eq(schema.downstreamApiKeyRateWindows.windowKind, RATE_WINDOW_KIND),
+      eq(schema.downstreamApiKeyRateWindows.windowStart, window.start),
+    )).get();
+    const reservedRequests = Math.max(0, Math.trunc(Number(current?.reservedRequests || 0)));
+    legacyResult = {
+      ok: true,
+      remaining: Math.max(0, limit - reservedRequests),
+      resetAt: window.resetAt,
+      limit,
+      metric: 'requests',
+    };
+  }
+
+  const quotaResult = await reserveDownstreamKeyQuota({ keyId, amounts: { requests: 1 }, now });
+  if (!quotaResult.ok) {
+    return {
+      ok: false,
+      statusCode: quotaResult.statusCode,
+      error: quotaResult.error,
+      reason: 'quota_exceeded',
+      retryAfterSeconds: quotaResult.retryAfterSeconds,
+      remaining: 0,
+      resetAt: quotaResult.resetAt,
+      limit: quotaResult.limit,
+      metric: quotaResult.metric,
+    };
+  }
+  if (quotaResult.reservation) {
+    await settleDownstreamKeyQuotaReservation(quotaResult.reservation.token, { requests: 1 }, now);
+  }
+  const quotaWindow = quotaResult.windows.find((window) => window.metric === 'requests');
+  if (!quotaWindow) return legacyResult;
+  const quotaRemaining = quotaWindow.remaining;
+  if (legacyResult.remaining === null) {
+    return {
+      ok: true,
+      remaining: quotaRemaining,
+      resetAt: quotaWindow.windowEnd,
+      limit: quotaWindow.limitValue + quotaWindow.burstValue,
+      metric: 'requests',
+    };
+  }
+  return {
+    ok: true,
+    remaining: Math.min(legacyResult.remaining, quotaRemaining),
+    resetAt: Date.parse(legacyResult.resetAt || '') <= Date.parse(quotaWindow.windowEnd)
+      ? legacyResult.resetAt
+      : quotaWindow.windowEnd,
+    limit: legacyResult.limit,
+    metric: 'requests',
+  };
+}
+
 export async function consumeManagedKeyRequest(keyId: number): Promise<void> {
   const nowIso = new Date().toISOString();
   await db.update(schema.downstreamApiKeys).set({
@@ -900,6 +1081,13 @@ export async function recordManagedKeyCostUsage(keyId: number, estimatedCost: nu
     lastUsedAt: nowIso,
     updatedAt: nowIso,
   }).where(eq(schema.downstreamApiKeys.id, keyId)).run();
+  await recordDownstreamKeyQuotaUsage(keyId, 'cost', cost);
+}
+
+export async function recordManagedKeyTokenUsage(keyId: number, totalTokens: number): Promise<void> {
+  const tokens = Math.max(0, Math.trunc(Number(totalTokens)));
+  if (tokens <= 0) return;
+  await recordDownstreamKeyQuotaUsage(keyId, 'total_tokens', tokens);
 }
 
 export function normalizeDownstreamApiKeyPayload(input: {
@@ -912,6 +1100,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   expiresAt?: unknown;
   maxCost?: unknown;
   maxRequests?: unknown;
+  requestsPerMinute?: unknown;
   maxConcurrency?: unknown;
   supportedModels?: unknown;
   allowedRouteIds?: unknown;
@@ -943,6 +1132,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
 
   const maxCost = normalizePositiveNumberOrNull(input.maxCost);
   const maxRequests = normalizePositiveIntegerOrNull(input.maxRequests);
+  const requestsPerMinute = normalizePositiveIntegerOrNull(input.requestsPerMinute);
   const maxConcurrency = normalizeMaxConcurrencyOrNull(input.maxConcurrency);
   const supportedModels = normalizeSupportedModelsInput(input.supportedModels);
   const allowedRouteIds = normalizeAllowedRouteIdsInput(input.allowedRouteIds);
@@ -961,6 +1151,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
     expiresAt,
     maxCost,
     maxRequests,
+    requestsPerMinute,
     maxConcurrency,
     supportedModels,
     allowedRouteIds,

@@ -45,6 +45,7 @@ type DownstreamApiKeyItem = {
   usedCost: number;
   maxRequests: number | null;
   usedRequests: number;
+  requestsPerMinute: number | null;
   maxConcurrency: number | null;
   policyVersion: number;
   supportedModels: string[];
@@ -349,6 +350,7 @@ function buildEditorForm(
     tags: normalizeTags(Array.isArray(item?.tags) ? item!.tags : []),
     maxCost: item?.maxCost === null || item?.maxCost === undefined ? '' : String(item.maxCost),
     maxRequests: item?.maxRequests === null || item?.maxRequests === undefined ? '' : String(item.maxRequests),
+    requestsPerMinute: item?.requestsPerMinute === null || item?.requestsPerMinute === undefined ? '' : String(item.requestsPerMinute),
     maxConcurrency: item?.maxConcurrency === null || item?.maxConcurrency === undefined ? '' : String(item.maxConcurrency),
     expiresAt: toDateTimeLocal(item?.expiresAt),
     enabled: item?.enabled ?? true,
@@ -647,6 +649,7 @@ export default function DownstreamKeys() {
         usedCost: raw?.usedCost ?? item.usedCost,
         maxRequests: raw?.maxRequests ?? item.maxRequests,
         usedRequests: raw?.usedRequests ?? item.usedRequests,
+        requestsPerMinute: raw?.requestsPerMinute ?? item.requestsPerMinute,
         maxConcurrency: raw?.maxConcurrency ?? item.maxConcurrency,
         policyVersion: raw?.policyVersion ?? item.policyVersion,
         supportedModels: raw?.supportedModels ?? item.supportedModels,
@@ -861,6 +864,7 @@ export default function DownstreamKeys() {
         expiresAt: editorForm.expiresAt ? new Date(editorForm.expiresAt).toISOString() : null,
         maxCost: editorForm.maxCost.trim() ? Number(editorForm.maxCost.trim()) : null,
         maxRequests: editorForm.maxRequests.trim() ? Number(editorForm.maxRequests.trim()) : null,
+        requestsPerMinute: editorForm.requestsPerMinute.trim() ? Number(editorForm.requestsPerMinute.trim()) : null,
         maxConcurrency: editorForm.maxConcurrency.trim() ? Number(editorForm.maxConcurrency.trim()) : null,
         supportedModels: uniqStrings(editorForm.selectedModels),
         allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
@@ -1246,6 +1250,7 @@ export default function DownstreamKeys() {
                   <MobileField label="倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
                   <MobileField label="额度" value={`${row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? '成本不限' : formatMoney(row.maxCost)}`} stacked />
                   <MobileField label="并发" value={row.maxConcurrency == null ? '不限' : row.maxConcurrency.toLocaleString()} />
+                  <MobileField label="限流" value={row.requestsPerMinute == null ? '不限' : `${row.requestsPerMinute.toLocaleString()}/分钟`} />
                   <MobileField label="用量" value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
                   <MobileField label="最近使用" value={formatIso(row.lastUsedAt)} stacked />
                 </MobileCard>
@@ -1309,6 +1314,7 @@ export default function DownstreamKeys() {
                         <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()}</div>
                         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.maxCost == null ? '成本不限' : `成本 ${formatMoney(row.maxCost)}`}</div>
                         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.maxConcurrency == null ? '并发不限' : `并发 ${row.maxConcurrency.toLocaleString()}`}</div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.requestsPerMinute == null ? '每分钟不限' : `${row.requestsPerMinute.toLocaleString()}/分钟`}</div>
                         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : '永久有效'}</div>
                       </td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>

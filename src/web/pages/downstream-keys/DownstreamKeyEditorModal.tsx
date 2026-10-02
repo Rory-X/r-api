@@ -41,6 +41,7 @@ export type DownstreamKeyEditorForm = {
   tags: string[];
   maxCost: string;
   maxRequests: string;
+  requestsPerMinute: string;
   maxConcurrency: string;
   expiresAt: string;
   enabled: boolean;
@@ -453,6 +454,10 @@ export default function DownstreamKeyEditorModal({
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">请求额度</div>
           <NumberField min={0} step={1} value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
+        </div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">每分钟请求</div>
+          <NumberField min={0} step={1} value={form.requestsPerMinute} onChange={(e) => onChange((prev) => ({ ...prev, requestsPerMinute: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">最大并发</div>

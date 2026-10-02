@@ -22,6 +22,7 @@ function item(input: {
     usedCost: 0,
     maxRequests: null,
     usedRequests: 0,
+    requestsPerMinute: null,
     maxConcurrency: null,
     policyVersion: 1,
     supportedModels: [],

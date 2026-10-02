@@ -29,6 +29,7 @@ const downstreamApiKeyPayloadSchema = z.object({
   expiresAt: z.union([z.string(), z.null()]).optional(),
   maxCost: z.union([z.number(), z.string(), z.null()]).optional(),
   maxRequests: z.union([z.number(), z.string(), z.null()]).optional(),
+  requestsPerMinute: z.union([z.number(), z.string(), z.null()]).optional(),
   maxConcurrency: z.union([z.number(), z.string(), z.null()]).optional(),
   supportedModels: z.union([z.string(), z.array(z.string())]).optional(),
   allowedRouteIds: z.union([z.string(), z.array(z.union([z.number(), z.string()]))]).optional(),
@@ -50,8 +51,26 @@ const downstreamApiKeyBatchPayloadSchema = z.object({
   tags: z.union([z.string(), z.array(z.string())]).optional(),
 }).passthrough();
 
+const downstreamKeyQuotaPolicySchema = z.object({
+  metric: z.string(),
+  scopeType: z.enum(['key', 'model', 'site']).optional(),
+  scopeValue: z.union([z.string(), z.null()]).optional(),
+  windowType: z.enum(['fixed', 'calendar_day', 'calendar_month']),
+  windowSeconds: z.union([z.number(), z.string(), z.null()]).optional(),
+  limitValue: z.union([z.number(), z.string()]),
+  burstValue: z.union([z.number(), z.string()]).optional(),
+  enforcement: z.enum(['hard', 'soft']).optional(),
+  warningThresholds: z.array(z.union([z.number(), z.string()])).optional(),
+  enabled: z.boolean().optional(),
+}).passthrough();
+
+const downstreamKeyQuotaPoliciesPayloadSchema = z.object({
+  policies: z.array(downstreamKeyQuotaPolicySchema).max(100),
+}).strict();
+
 export type DownstreamApiKeyBatchPayload = z.output<typeof downstreamApiKeyBatchPayloadSchema>;
 export type DownstreamApiKeyPayload = z.output<typeof downstreamApiKeyPayloadSchema>;
+export type DownstreamKeyQuotaPoliciesPayload = z.output<typeof downstreamKeyQuotaPoliciesPayloadSchema>;
 
 function normalizeDownstreamApiKeyPayloadInput(input: unknown): unknown {
   return input === undefined ? {} : input;
@@ -89,6 +108,9 @@ function formatDownstreamApiKeyPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'maxRequests') {
     return 'Invalid maxRequests. Expected number, string, or null.';
+  }
+  if (firstPath === 'requestsPerMinute') {
+    return 'Invalid requestsPerMinute. Expected number, string, or null.';
   }
   if (firstPath === 'maxConcurrency') {
     return 'Invalid maxConcurrency. Expected number, string, or null.';
@@ -151,4 +173,9 @@ export function parseDownstreamApiKeyPayload(input: unknown):
 export function parseDownstreamApiKeyBatchPayload(input: unknown):
 { success: true; data: DownstreamApiKeyBatchPayload } | { success: false; error: string } {
   return parseDownstreamApiKeyRoutePayload(downstreamApiKeyBatchPayloadSchema, input);
+}
+
+export function parseDownstreamKeyQuotaPoliciesPayload(input: unknown):
+{ success: true; data: DownstreamKeyQuotaPoliciesPayload } | { success: false; error: string } {
+  return parseDownstreamApiKeyRoutePayload(downstreamKeyQuotaPoliciesPayloadSchema, input);
 }

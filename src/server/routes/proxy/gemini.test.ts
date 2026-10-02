@@ -17,6 +17,7 @@ const explainSelectionMock = vi.fn();
 const invalidateTokenRouterCacheMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
+const reserveManagedKeyRequestMock = vi.fn();
 const isModelAllowedByPolicyOrAllowedRoutesMock = vi.fn();
 const dbSelectAllMock = vi.fn();
 const dbSelectGetMock = vi.fn();
@@ -83,6 +84,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
 vi.mock('../../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
+  reserveManagedKeyRequest: (...args: unknown[]) => reserveManagedKeyRequestMock(...args),
   acquireDownstreamConcurrencyLease: async () => ({ ok: true, lease: null }),
   resolveDownstreamPolicySnapshot: (auth: any) => auth.snapshot || {
     capturedAt: '2026-08-03T00:00:00.000Z',
@@ -206,6 +208,7 @@ describe('gemini native proxy routes', () => {
     explainSelectionMock.mockReset();
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
+    reserveManagedKeyRequestMock.mockReset();
     isModelAllowedByPolicyOrAllowedRoutesMock.mockReset();
     dbInsertMock.mockClear();
     dbInsertValuesMock.mockClear();
@@ -239,6 +242,7 @@ describe('gemini native proxy routes', () => {
       key: { id: 91, name: 'gemini-project' },
       policy: {},
     });
+    reserveManagedKeyRequestMock.mockResolvedValue({ ok: true, remaining: null, resetAt: null });
     fetchModelPricingCatalogMock.mockResolvedValue(null);
     refreshModelsAndRebuildRoutesMock.mockResolvedValue(undefined);
     dbSelectGetMock.mockResolvedValue(null);

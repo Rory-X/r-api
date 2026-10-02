@@ -1021,8 +1021,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
               retryCount,
               upstreamPath: successfulUpstreamPath,
               logSuccess: failureToolkit.log,
-              recordDownstreamCost: (estimatedCost) => {
-                recordDownstreamCostUsage(request, estimatedCost);
+              recordDownstreamCost: (estimatedCost, totalTokens) => {
+                recordDownstreamCostUsage(request, estimatedCost, totalTokens);
               },
               bestEffortMetrics: {
                 errorLabel: '[responses] post-stream bookkeeping failed:',
@@ -1528,8 +1528,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
             retryCount,
             upstreamPath: successfulUpstreamPath,
             logSuccess: failureToolkit.log,
-            recordDownstreamCost: (estimatedCost) => {
-              recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamCost: (estimatedCost, totalTokens) => {
+          recordDownstreamCostUsage(request, estimatedCost, totalTokens);
             },
             bestEffortMetrics: {
               errorLabel: '[responses] post-response bookkeeping failed:',

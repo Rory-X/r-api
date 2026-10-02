@@ -163,7 +163,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
             firstByteLatencyMs,
           )
         ));
-        recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamCostUsage(request, estimatedCost, resolvedUsage.totalTokens);
         logProxy(
           selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId,
           resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails, clientContext, downstreamPath,

@@ -23,7 +23,14 @@ import { readDownstreamKeyUsageTotals } from '../../services/costAnalyticsServic
 import {
   parseDownstreamApiKeyBatchPayload,
   parseDownstreamApiKeyPayload,
+  parseDownstreamKeyQuotaPoliciesPayload,
 } from '../../contracts/downstreamApiKeyRoutePayloads.js';
+import {
+  listDownstreamKeyLimitPolicies,
+  readDownstreamKeyQuotaWindows,
+  replaceDownstreamKeyLimitPolicies,
+  type DownstreamKeyLimitPolicyInput,
+} from '../../services/downstreamKeyQuotaService.js';
 
 function parseRouteId(raw: string): number | null {
   const id = Number.parseInt(raw, 10);
@@ -566,6 +573,36 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get<{ Params: { id: string } }>('/api/downstream-keys/:id/quota-policies', async (request, reply) => {
+    const id = parseRouteId(request.params.id);
+    if (!id) return reply.code(400).send({ success: false, message: 'id 无效' });
+    const key = await getDownstreamApiKeyById(id);
+    if (!key) return reply.code(404).send({ success: false, message: 'API key 不存在' });
+    return {
+      success: true,
+      policies: await listDownstreamKeyLimitPolicies(id),
+      windows: await readDownstreamKeyQuotaWindows({ keyId: id }),
+    };
+  });
+
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/downstream-keys/:id/quota-policies', async (request, reply) => {
+    const id = parseRouteId(request.params.id);
+    if (!id) return reply.code(400).send({ success: false, message: 'id 无效' });
+    const key = await getDownstreamApiKeyById(id);
+    if (!key) return reply.code(404).send({ success: false, message: 'API key 不存在' });
+    const parsed = parseDownstreamKeyQuotaPoliciesPayload(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error });
+    try {
+      const policies = await replaceDownstreamKeyLimitPolicies(id, parsed.data.policies as DownstreamKeyLimitPolicyInput[]);
+      return { success: true, policies, windows: await readDownstreamKeyQuotaWindows({ keyId: id }) };
+    } catch (error) {
+      return reply.code(400).send({
+        success: false,
+        message: error instanceof Error ? error.message : String(error || '配额策略无效'),
+      });
+    }
+  });
+
   app.post<{ Body: unknown }>('/api/downstream-keys', async (request, reply) => {
     const parsedBody = parseDownstreamApiKeyPayload(request.body);
     if (!parsedBody.success) {
@@ -617,6 +654,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
           maxCost: normalized.maxCost,
           usedCost: 0,
           maxRequests: normalized.maxRequests,
+          requestsPerMinute: normalized.requestsPerMinute,
           usedRequests: 0,
           maxConcurrency: normalized.maxConcurrency,
           policyVersion: 1,
@@ -679,6 +717,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         expiresAt: hasOwn('expiresAt') ? body.expiresAt : existing.expiresAt,
         maxCost: hasOwn('maxCost') ? body.maxCost : existing.maxCost,
         maxRequests: hasOwn('maxRequests') ? body.maxRequests : existing.maxRequests,
+        requestsPerMinute: hasOwn('requestsPerMinute') ? body.requestsPerMinute : existing.requestsPerMinute,
         maxConcurrency: hasOwn('maxConcurrency') ? body.maxConcurrency : existing.maxConcurrency,
         supportedModels: hasOwn('supportedModels') ? body.supportedModels : existingView.supportedModels,
         allowedRouteIds: hasOwn('allowedRouteIds') ? body.allowedRouteIds : existingView.allowedRouteIds,
@@ -723,6 +762,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         expiresAt: normalized.expiresAt,
         maxCost: normalized.maxCost,
         maxRequests: normalized.maxRequests,
+        requestsPerMinute: normalized.requestsPerMinute,
         maxConcurrency: normalized.maxConcurrency,
         policyVersion: sql`coalesce(${schema.downstreamApiKeys.policyVersion}, 1) + 1`,
         supportedModels: toPersistenceJson(normalized.supportedModels),

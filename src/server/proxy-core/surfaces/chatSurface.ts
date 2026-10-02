@@ -680,8 +680,8 @@ export async function handleChatSurfaceRequest(
             retryCount,
             upstreamPath: successfulUpstreamPath,
             logSuccess: failureToolkit.log,
-            recordDownstreamCost: (estimatedCost) => {
-              recordDownstreamCostUsage(request, estimatedCost);
+            recordDownstreamCost: (estimatedCost, totalTokens) => {
+              recordDownstreamCostUsage(request, estimatedCost, totalTokens);
             },
             bestEffortMetrics: {
               errorLabel: '[proxy/chat] failed to record success metrics',
@@ -1044,8 +1044,8 @@ export async function handleChatSurfaceRequest(
         retryCount,
         upstreamPath: successfulUpstreamPath,
         logSuccess: failureToolkit.log,
-        recordDownstreamCost: (estimatedCost) => {
-          recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamCost: (estimatedCost, totalTokens) => {
+          recordDownstreamCostUsage(request, estimatedCost, totalTokens);
         },
         bestEffortMetrics: {
           errorLabel: '[proxy/chat] failed to record success metrics',

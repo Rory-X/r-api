@@ -28,6 +28,7 @@ describe('downstreamApiKeyService', () => {
 
   beforeEach(async () => {
     await db.delete(schema.downstreamApiKeyLeases).run();
+    await db.delete(schema.downstreamApiKeyRateWindows).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.tokenRoutes).run();
   });
@@ -82,6 +83,37 @@ describe('downstreamApiKeyService', () => {
     expect(r2.ok).toBe(false);
     expect(r3.ok).toBe(false);
     expect(r4.ok).toBe(false);
+  });
+
+  it('atomically reserves requests inside a UTC minute window', async () => {
+    const row = await db.insert(schema.downstreamApiKeys).values({
+      name: 'rpm-key',
+      key: 'sk-rpm-key',
+      enabled: true,
+      requestsPerMinute: 2,
+    }).returning().get();
+    const firstAt = new Date('2026-08-20T12:34:10.000Z');
+
+    const first = await service.reserveManagedKeyRequest(row.id, row.requestsPerMinute, firstAt);
+    const second = await service.reserveManagedKeyRequest(row.id, row.requestsPerMinute, new Date('2026-08-20T12:34:20.000Z'));
+    const third = await service.reserveManagedKeyRequest(row.id, row.requestsPerMinute, new Date('2026-08-20T12:34:30.000Z'));
+    const nextWindow = await service.reserveManagedKeyRequest(row.id, row.requestsPerMinute, new Date('2026-08-20T12:35:00.000Z'));
+
+    expect(first).toMatchObject({ ok: true, remaining: 1, resetAt: '2026-08-20T12:35:00.000Z' });
+    expect(second).toMatchObject({ ok: true, remaining: 0, resetAt: '2026-08-20T12:35:00.000Z' });
+    expect(third).toMatchObject({
+      ok: false,
+      statusCode: 429,
+      reason: 'requests_per_minute',
+      remaining: 0,
+      resetAt: '2026-08-20T12:35:00.000Z',
+    });
+    expect(nextWindow).toMatchObject({ ok: true, remaining: 1, resetAt: '2026-08-20T12:36:00.000Z' });
+
+    const windows = await db.select().from(schema.downstreamApiKeyRateWindows)
+      .where(eq(schema.downstreamApiKeyRateWindows.downstreamApiKeyId, row.id)).all();
+    expect(windows).toHaveLength(2);
+    expect(windows.map((window) => window.reservedRequests)).toEqual([2, 1]);
   });
 
   it('parses policy fields and supports model matching patterns', async () => {

@@ -11,6 +11,7 @@ import {
   consumeManagedKeyRequest,
   isModelAllowedByPolicyOrAllowedRoutes,
   resolveDownstreamPolicySnapshot,
+  reserveManagedKeyRequest,
   type DownstreamConcurrencyLease,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
@@ -655,6 +656,15 @@ async function handleResponsesWebsocketConnection(
           const leaseResult = await acquireDownstreamConcurrencyLease(turnSnapshot);
           if (!leaseResult.ok) {
             writeResponsesWebsocketError(socket, leaseResult.statusCode, leaseResult.error);
+            return;
+          }
+          const rateLimitResult = await reserveManagedKeyRequest(
+            turnAuthResult.key.id,
+            turnAuthResult.key.requestsPerMinute,
+          );
+          if (!rateLimitResult.ok) {
+            await leaseResult.lease?.release();
+            writeResponsesWebsocketError(socket, rateLimitResult.statusCode, rateLimitResult.error);
             return;
           }
           turnLease = leaseResult.lease;

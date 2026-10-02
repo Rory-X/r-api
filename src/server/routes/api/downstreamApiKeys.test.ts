@@ -29,6 +29,11 @@ describe('downstream api keys routes', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.downstreamKeyDayUsage).run();
+    await db.delete(schema.downstreamKeyQuotaReservations).run();
+    await db.delete(schema.downstreamKeyUsageWindows).run();
+    await db.delete(schema.downstreamKeyLimitPolicies).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.tokenRoutes).run();
@@ -51,6 +56,40 @@ describe('downstream api keys routes', () => {
     expect(rendered).toContain('date_trunc');
     expect(rendered).toContain('cast');
     expect(rendered).toContain('timestamp');
+  });
+
+  it('manages normalized quota policies and reports current windows', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: { name: 'quota-route-key', key: 'sk-quota-route-key', enabled: true },
+    });
+    expect(createRes.statusCode).toBe(200);
+    const keyId = (createRes.json() as { item: { id: number } }).item.id;
+
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${keyId}/quota-policies`,
+      payload: {
+        policies: [
+          { metric: 'requests', windowType: 'fixed', windowSeconds: 60, limitValue: 30 },
+          { metric: 'cost', windowType: 'calendar_day', limitValue: 12.5, enforcement: 'soft', warningThresholds: [0.7, 0.85, 1] },
+        ],
+      },
+    });
+    expect(updateRes.statusCode).toBe(200);
+    expect(updateRes.json()).toMatchObject({
+      success: true,
+      policies: expect.arrayContaining([
+        expect.objectContaining({ metric: 'requests', windowType: 'fixed', limitValue: 30 }),
+        expect.objectContaining({ metric: 'cost', windowType: 'calendar_day', enforcement: 'soft' }),
+      ]),
+      windows: expect.any(Array),
+    });
+
+    const readRes = await app.inject({ method: 'GET', url: `/api/downstream-keys/${keyId}/quota-policies` });
+    expect(readRes.statusCode).toBe(200);
+    expect(readRes.json()).toMatchObject({ success: true, policies: expect.any(Array), windows: expect.any(Array) });
   });
 
   it('creates, updates, resets and deletes downstream api keys', async () => {

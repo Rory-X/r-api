@@ -8,6 +8,7 @@ import {
   consumeManagedKeyRequest,
   createInternalDownstreamPolicySnapshot,
   resolveDownstreamPolicySnapshot,
+  reserveManagedKeyRequest,
   verifyDownstreamPolicySnapshotActive,
   type DownstreamPolicyActiveResult,
   type DownstreamPolicySnapshot,
@@ -302,7 +303,18 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
 
   const authResult = await authorizeDownstreamToken(token);
   if (!authResult.ok) {
-    reply.code(authResult.statusCode).send({ error: authResult.error });
+    if (authResult.retryAfterSeconds !== undefined) {
+      reply.header('Retry-After', String(authResult.retryAfterSeconds));
+    }
+    reply.code(authResult.statusCode).send({
+      error: authResult.error,
+      reason: authResult.reason,
+      ...(authResult.retryAfterSeconds !== undefined ? { retryAfterSeconds: authResult.retryAfterSeconds } : {}),
+      ...(authResult.remaining !== undefined ? { remaining: authResult.remaining } : {}),
+      ...(authResult.resetAt ? { resetAt: authResult.resetAt } : {}),
+      ...(authResult.limit !== undefined ? { limit: authResult.limit } : {}),
+      ...(authResult.metric ? { metric: authResult.metric } : {}),
+    });
     return;
   }
 
@@ -314,6 +326,34 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
     }
     reply.code(leaseResult.statusCode).send({ error: leaseResult.error });
     return;
+  }
+
+  const rateLimitResult = await reserveManagedKeyRequest(
+    authResult.key.id,
+    authResult.key.requestsPerMinute,
+  );
+  if (!rateLimitResult.ok) {
+    await leaseResult.lease?.release();
+    reply.header('Retry-After', String(rateLimitResult.retryAfterSeconds));
+    reply.header('X-RateLimit-Limit', String(rateLimitResult.limit ?? authResult.key.requestsPerMinute));
+    reply.header('X-RateLimit-Remaining', String(rateLimitResult.remaining));
+    reply.header('X-RateLimit-Reset', rateLimitResult.resetAt);
+    reply.code(rateLimitResult.statusCode).send({
+      error: rateLimitResult.error,
+      reason: rateLimitResult.reason,
+      retryAfterSeconds: rateLimitResult.retryAfterSeconds,
+      remaining: rateLimitResult.remaining,
+      resetAt: rateLimitResult.resetAt,
+    });
+    return;
+  }
+  if (rateLimitResult.remaining !== null && rateLimitResult.resetAt) {
+    reply.header('X-RateLimit-Limit', String(rateLimitResult.limit ?? authResult.key.requestsPerMinute));
+    reply.header('X-RateLimit-Remaining', String(rateLimitResult.remaining));
+    reply.header('X-RateLimit-Reset', rateLimitResult.resetAt);
+    reply.header('RateLimit-Limit', String(rateLimitResult.limit ?? authResult.key.requestsPerMinute));
+    reply.header('RateLimit-Remaining', String(rateLimitResult.remaining));
+    reply.header('RateLimit-Reset', rateLimitResult.resetAt);
   }
 
   let released = false;

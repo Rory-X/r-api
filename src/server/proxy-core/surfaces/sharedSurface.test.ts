@@ -1187,7 +1187,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       },
     });
     expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.42, 'upstream-model', 33, null);
-    expect(recordDownstreamCost).toHaveBeenCalledWith(0.42);
+    expect(recordDownstreamCost).toHaveBeenCalledWith(0.42, 28);
     expect(logSuccess).toHaveBeenCalledWith({
       selected: {
         channel: { id: 11, routeId: 22 },
@@ -1370,7 +1370,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       expect.any(Error),
     );
     expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0, 'upstream-model', 33, null);
-    expect(recordDownstreamCost).toHaveBeenCalledWith(0);
+    expect(recordDownstreamCost).toHaveBeenCalledWith(0, 15);
     expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
       promptTokens: 10,
       completionTokens: 5,

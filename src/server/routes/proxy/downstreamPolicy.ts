@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getProxyAuthContext, verifyProxyAuthContextActive } from '../../middleware/auth.js';
-import { isModelAllowedByPolicyOrAllowedRoutes, recordManagedKeyCostUsage } from '../../services/downstreamApiKeyService.js';
+import { isModelAllowedByPolicyOrAllowedRoutes, recordManagedKeyCostUsage, recordManagedKeyTokenUsage } from '../../services/downstreamApiKeyService.js';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY, type DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 
 export function getDownstreamRoutingPolicy(request: FastifyRequest): DownstreamRoutingPolicy {
@@ -40,8 +40,11 @@ export async function ensureModelAllowedForDownstreamKey(
   return false;
 }
 
-export function recordDownstreamCostUsage(request: FastifyRequest, estimatedCost: number): void {
+export function recordDownstreamCostUsage(request: FastifyRequest, estimatedCost: number, totalTokens?: number | null): void {
   const authContext = getProxyAuthContext(request);
   if (!authContext || authContext.keyId === null) return;
   void recordManagedKeyCostUsage(authContext.keyId, estimatedCost);
+  if (totalTokens !== null && totalTokens !== undefined) {
+    void recordManagedKeyTokenUsage(authContext.keyId, totalTokens);
+  }
 }
