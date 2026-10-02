@@ -414,6 +414,69 @@
       "when": 1786971927979,
       "tag": "0058_lyrical_purifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1787053649847,
+      "tag": "0059_flashy_eternals",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1787054393262,
+      "tag": "0060_perfect_fantastic_four",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1787054440539,
+      "tag": "0061_slippery_mantis",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1787224554655,
+      "tag": "0062_last_nick_fury",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1787224717148,
+      "tag": "0063_flowery_zaladane",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1787225698356,
+      "tag": "0064_quiet_spacker_dave",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "6",
+      "when": 1787226769109,
+      "tag": "0065_thankful_ultimo",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "6",
+      "when": 1787227467788,
+      "tag": "0066_lively_titania",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1787227708279,
+      "tag": "0067_closed_zodiak",
+      "breakpoints": true
     }
   ]
 }

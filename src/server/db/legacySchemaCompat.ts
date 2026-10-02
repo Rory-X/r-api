@@ -27,6 +27,7 @@ import {
   SITE_TABLE_COMPATIBILITY_SPECS,
   type SiteSchemaInspector,
 } from './siteSchemaCompatibility.js';
+import { DOWNSTREAM_API_KEY_COLUMN_COMPATIBILITY_SPECS } from './downstreamApiKeySchemaCompatibility.js';
 
 export type LegacySchemaCompatClassification = 'legacy' | 'forbidden';
 
@@ -51,10 +52,6 @@ const BOOTSTRAP_OWNED_LEGACY_COLUMNS = [
   'proxy_video_tasks.upstream_response_meta',
   'proxy_video_tasks.last_upstream_status',
   'proxy_video_tasks.last_polled_at',
-  'downstream_api_keys.group_name',
-  'downstream_api_keys.tags',
-  'downstream_api_keys.max_concurrency',
-  'downstream_api_keys.policy_version',
   'proxy_logs.billing_details',
   'proxy_logs.is_stream',
   'proxy_logs.first_byte_latency_ms',
@@ -101,6 +98,7 @@ const LEGACY_COMPAT_COLUMNS = new Set([
   ...ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
   ...ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
   ...PROXY_FILE_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
+  ...DOWNSTREAM_API_KEY_COLUMN_COMPATIBILITY_SPECS.map((spec) => `downstream_api_keys.${spec.column}`),
   ...BOOTSTRAP_OWNED_LEGACY_COLUMNS,
 ]);
 

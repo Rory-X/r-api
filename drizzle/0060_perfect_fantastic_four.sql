@@ -1,0 +1,40 @@
+CREATE TABLE `site_runtime_health_states` (
+	`scope_key` text PRIMARY KEY NOT NULL,
+	`site_id` integer NOT NULL,
+	`scope` text NOT NULL,
+	`model_name` text,
+	`recovery_state` text DEFAULT 'healthy' NOT NULL,
+	`penalty_score` real DEFAULT 0 NOT NULL,
+	`latency_ema_ms` real,
+	`first_byte_latency_ema_ms` real,
+	`first_byte_sample_count` integer DEFAULT 0 NOT NULL,
+	`transient_failure_streak` integer DEFAULT 0 NOT NULL,
+	`last_transient_failure_at` text,
+	`recent_success_count` real DEFAULT 0 NOT NULL,
+	`recent_failure_count` real DEFAULT 0 NOT NULL,
+	`recent_window_updated_at` text NOT NULL,
+	`breaker_level` integer DEFAULT 0 NOT NULL,
+	`breaker_until` text,
+	`recovery_success_count` integer DEFAULT 0 NOT NULL,
+	`last_probe_at` text,
+	`last_probe_success_at` text,
+	`last_failure_at` text,
+	`last_success_at` text,
+	`last_failure_reason` text,
+	`last_failure_domain` text,
+	`last_failure_endpoint_id` integer,
+	`probe_lease_owner` text,
+	`probe_lease_token` text,
+	`probe_lease_channel_id` integer,
+	`probe_lease_expires_at` text,
+	`created_at` text DEFAULT (datetime('now')),
+	`updated_at` text DEFAULT (datetime('now')),
+	FOREIGN KEY (`site_id`) REFERENCES `sites`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "site_runtime_health_states_scope_check" CHECK("site_runtime_health_states"."scope" in ('site', 'model')),
+	CONSTRAINT "site_runtime_health_states_recovery_state_check" CHECK("site_runtime_health_states"."recovery_state" in ('healthy', 'open', 'recovering')),
+	CONSTRAINT "site_runtime_health_states_breaker_level_non_negative" CHECK("site_runtime_health_states"."breaker_level" >= 0)
+);
+--> statement-breakpoint
+CREATE INDEX `site_runtime_health_states_site_scope_idx` ON `site_runtime_health_states` (`site_id`,`scope`);--> statement-breakpoint
+CREATE INDEX `site_runtime_health_states_state_breaker_idx` ON `site_runtime_health_states` (`recovery_state`,`breaker_until`);--> statement-breakpoint
+CREATE INDEX `site_runtime_health_states_lease_expires_idx` ON `site_runtime_health_states` (`probe_lease_expires_at`);

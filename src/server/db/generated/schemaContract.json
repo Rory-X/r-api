@@ -498,6 +498,234 @@
         }
       }
     },
+    "alert_incidents": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "rule_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "severity": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'error'",
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'open'",
+          "primaryKey": false
+        },
+        "entity_type": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "entity_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "occurrence_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "first_seen_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_seen_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "acknowledged_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "acknowledged_by": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "resolved_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "suppressed_until": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "escalation_step": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "next_escalation_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_notified_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "alert_occurrences": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "incident_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "observed_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "value_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "alert_policies": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "rule_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "grouping_window_sec": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "300",
+          "primaryKey": false
+        },
+        "steps_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "analytics_projection_checkpoints": {
       "columns": {
         "projector_key": {
@@ -600,6 +828,124 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "archive_manifests": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "resource": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'writing'",
+          "primaryKey": false
+        },
+        "schema_version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "row_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "min_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "max_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "min_created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "max_created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "storage_driver": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'local'",
+          "primaryKey": false
+        },
+        "object_key": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "byte_size": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "sha256": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "started_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "committed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "deleted_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
           "primaryKey": false
         }
       }
@@ -1542,6 +1888,206 @@
         }
       }
     },
+    "credential_lifecycle_audits": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "entity_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "entity_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'unknown'",
+          "primaryKey": false
+        },
+        "operator_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "action": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "outcome": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "message": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "dedupe_key": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "credential_refresh_jobs": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "entity_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'account'",
+          "primaryKey": false
+        },
+        "entity_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "refresh_owner": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'r_api'",
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "failure_class": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "attempt_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "max_attempts": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "8",
+          "primaryKey": false
+        },
+        "next_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_attempt_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_success_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "credential_vault_items": {
       "columns": {
         "id": {
@@ -1672,6 +2218,46 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "downstream_api_key_rate_windows": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_start": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reserved_requests": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
           "primaryKey": false
         },
         "updated_at": {
@@ -1820,6 +2406,292 @@
           "logicalType": "json",
           "notNull": false,
           "defaultValue": null,
+          "primaryKey": false
+        },
+        "requests_per_minute": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "downstream_key_day_usage": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "local_day": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "total_calls": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "success_calls": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "failed_calls": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_tokens": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_cost": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "downstream_key_limit_policies": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metric": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'key'",
+          "primaryKey": false
+        },
+        "scope_value": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_seconds": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "limit_value": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "burst_value": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "enforcement": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'hard'",
+          "primaryKey": false
+        },
+        "warning_thresholds_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "downstream_key_quota_reservations": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "reservation_token": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pending'",
+          "primaryKey": false
+        },
+        "amount_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_ids_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "settled_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "released_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "downstream_key_usage_windows": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "policy_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_start": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "window_end": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "used_value": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "reserved_value": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
           "primaryKey": false
         }
       }
@@ -4263,6 +5135,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "archived_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -4496,6 +5374,12 @@
         },
         "bridge_continuation_number": {
           "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "archived_at": {
+          "logicalType": "datetime",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
@@ -5144,6 +6028,190 @@
         }
       }
     },
+    "site_runtime_health_states": {
+      "columns": {
+        "scope_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recovery_state": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'healthy'",
+          "primaryKey": false
+        },
+        "penalty_score": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "latency_ema_ms": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "first_byte_latency_ema_ms": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "first_byte_sample_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "transient_failure_streak": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_transient_failure_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recent_success_count": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "recent_failure_count": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "recent_window_updated_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "breaker_level": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "breaker_until": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recovery_success_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_probe_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_probe_success_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_success_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_reason": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_domain": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_endpoint_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "probe_lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "probe_lease_token": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "probe_lease_channel_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "probe_lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "sites": {
       "columns": {
         "id": {
@@ -5550,6 +6618,82 @@
       "unique": false
     },
     {
+      "name": "alert_incidents_entity_idx",
+      "table": "alert_incidents",
+      "columns": [
+        "entity_type",
+        "entity_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_incidents_fingerprint_unique",
+      "table": "alert_incidents",
+      "columns": [
+        "fingerprint"
+      ],
+      "unique": true
+    },
+    {
+      "name": "alert_incidents_last_seen_idx",
+      "table": "alert_incidents",
+      "columns": [
+        "last_seen_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_incidents_lease_expires_at_idx",
+      "table": "alert_incidents",
+      "columns": [
+        "lease_expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_incidents_rule_status_idx",
+      "table": "alert_incidents",
+      "columns": [
+        "rule_key",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_incidents_status_escalation_idx",
+      "table": "alert_incidents",
+      "columns": [
+        "status",
+        "next_escalation_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_occurrences_incident_observed_idx",
+      "table": "alert_occurrences",
+      "columns": [
+        "incident_id",
+        "observed_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_policies_enabled_idx",
+      "table": "alert_policies",
+      "columns": [
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "alert_policies_rule_key_unique",
+      "table": "alert_policies",
+      "columns": [
+        "rule_key"
+      ],
+      "unique": true
+    },
+    {
       "name": "analytics_projection_checkpoints_lease_expires_at_idx",
       "table": "analytics_projection_checkpoints",
       "columns": [
@@ -5562,6 +6706,41 @@
       "table": "analytics_projection_checkpoints",
       "columns": [
         "recompute_from_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "archive_manifests_max_id_idx",
+      "table": "archive_manifests",
+      "columns": [
+        "resource",
+        "max_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "archive_manifests_object_key_unique",
+      "table": "archive_manifests",
+      "columns": [
+        "object_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "archive_manifests_resource_created_at_idx",
+      "table": "archive_manifests",
+      "columns": [
+        "resource",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "archive_manifests_status_updated_at_idx",
+      "table": "archive_manifests",
+      "columns": [
+        "status",
+        "updated_at"
       ],
       "unique": false
     },
@@ -5843,6 +7022,103 @@
       "unique": false
     },
     {
+      "name": "credential_lifecycle_audits_action_created_at_idx",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "action",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_lifecycle_audits_dedupe_key_unique",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "dedupe_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "credential_lifecycle_audits_entity_created_at_idx",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "entity_type",
+        "entity_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_lifecycle_audits_operator_created_at_idx",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "operator_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_lifecycle_audits_source_created_at_idx",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "credential_source",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_lifecycle_audits_status_created_at_idx",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "status",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_refresh_jobs_entity_unique",
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "entity_type",
+        "entity_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "credential_refresh_jobs_failure_class_idx",
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "failure_class"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_refresh_jobs_provider_status_idx",
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "provider",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_refresh_jobs_site_id_idx",
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_refresh_jobs_status_next_attempt_idx",
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "status",
+        "next_attempt_at"
+      ],
+      "unique": false
+    },
+    {
       "name": "credential_vault_items_account_id_idx",
       "table": "credential_vault_items",
       "columns": [
@@ -5916,6 +7192,34 @@
       "unique": true
     },
     {
+      "name": "downstream_api_key_rate_windows_key_updated_idx",
+      "table": "downstream_api_key_rate_windows",
+      "columns": [
+        "downstream_api_key_id",
+        "updated_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_api_key_rate_windows_key_window_unique",
+      "table": "downstream_api_key_rate_windows",
+      "columns": [
+        "downstream_api_key_id",
+        "window_kind",
+        "window_start"
+      ],
+      "unique": true
+    },
+    {
+      "name": "downstream_api_key_rate_windows_window_lookup_idx",
+      "table": "downstream_api_key_rate_windows",
+      "columns": [
+        "window_kind",
+        "window_start"
+      ],
+      "unique": false
+    },
+    {
       "name": "downstream_api_keys_enabled_idx",
       "table": "downstream_api_keys",
       "columns": [
@@ -5944,6 +7248,114 @@
       "table": "downstream_api_keys",
       "columns": [
         "name"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_day_usage_day_idx",
+      "table": "downstream_key_day_usage",
+      "columns": [
+        "local_day"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_day_usage_day_key_unique",
+      "table": "downstream_key_day_usage",
+      "columns": [
+        "local_day",
+        "downstream_api_key_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "downstream_key_day_usage_key_id_idx",
+      "table": "downstream_key_day_usage",
+      "columns": [
+        "downstream_api_key_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_limit_policies_key_enabled_idx",
+      "table": "downstream_key_limit_policies",
+      "columns": [
+        "downstream_api_key_id",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_limit_policies_key_metric_scope_window_unique",
+      "table": "downstream_key_limit_policies",
+      "columns": [
+        "downstream_api_key_id",
+        "metric",
+        "scope_type",
+        "scope_value",
+        "window_type",
+        "window_seconds"
+      ],
+      "unique": true
+    },
+    {
+      "name": "downstream_key_limit_policies_metric_window_idx",
+      "table": "downstream_key_limit_policies",
+      "columns": [
+        "metric",
+        "window_type"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_quota_reservations_key_created_idx",
+      "table": "downstream_key_quota_reservations",
+      "columns": [
+        "downstream_api_key_id",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_quota_reservations_status_expiry_idx",
+      "table": "downstream_key_quota_reservations",
+      "columns": [
+        "status",
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_quota_reservations_token_unique",
+      "table": "downstream_key_quota_reservations",
+      "columns": [
+        "reservation_token"
+      ],
+      "unique": true
+    },
+    {
+      "name": "downstream_key_usage_windows_policy_updated_idx",
+      "table": "downstream_key_usage_windows",
+      "columns": [
+        "policy_id",
+        "updated_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "downstream_key_usage_windows_policy_window_unique",
+      "table": "downstream_key_usage_windows",
+      "columns": [
+        "policy_id",
+        "window_start"
+      ],
+      "unique": true
+    },
+    {
+      "name": "downstream_key_usage_windows_window_end_idx",
+      "table": "downstream_key_usage_windows",
+      "columns": [
+        "window_end"
       ],
       "unique": false
     },
@@ -6703,6 +8115,15 @@
       "unique": false
     },
     {
+      "name": "proxy_logs_archived_at_idx",
+      "table": "proxy_logs",
+      "columns": [
+        "archived_at",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
       "name": "proxy_logs_attempt_id_created_at_idx",
       "table": "proxy_logs",
       "columns": [
@@ -6814,6 +8235,15 @@
       "columns": [
         "request_row_id",
         "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_requests_archived_at_idx",
+      "table": "proxy_requests",
+      "columns": [
+        "archived_at",
+        "updated_at"
       ],
       "unique": false
     },
@@ -7093,6 +8523,32 @@
       "unique": false
     },
     {
+      "name": "site_runtime_health_states_lease_expires_idx",
+      "table": "site_runtime_health_states",
+      "columns": [
+        "probe_lease_expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_runtime_health_states_site_scope_idx",
+      "table": "site_runtime_health_states",
+      "columns": [
+        "site_id",
+        "scope"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_runtime_health_states_state_breaker_idx",
+      "table": "site_runtime_health_states",
+      "columns": [
+        "recovery_state",
+        "breaker_until"
+      ],
+      "unique": false
+    },
+    {
       "name": "sites_platform_url_unique",
       "table": "sites",
       "columns": [
@@ -7184,6 +8640,27 @@
       ]
     },
     {
+      "name": "alert_incidents_fingerprint_unique",
+      "table": "alert_incidents",
+      "columns": [
+        "fingerprint"
+      ]
+    },
+    {
+      "name": "alert_policies_rule_key_unique",
+      "table": "alert_policies",
+      "columns": [
+        "rule_key"
+      ]
+    },
+    {
+      "name": "archive_manifests_object_key_unique",
+      "table": "archive_manifests",
+      "columns": [
+        "object_key"
+      ]
+    },
+    {
       "name": "bridge_continuation_events_delivery_id_unique",
       "table": "bridge_continuation_events",
       "columns": [
@@ -7258,6 +8735,21 @@
       ]
     },
     {
+      "name": "credential_lifecycle_audits_dedupe_key_unique",
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "dedupe_key"
+      ]
+    },
+    {
+      "name": "credential_refresh_jobs_entity_unique",
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "entity_type",
+        "entity_id"
+      ]
+    },
+    {
       "name": "downstream_api_key_leases_key_slot_unique",
       "table": "downstream_api_key_leases",
       "columns": [
@@ -7273,10 +8765,54 @@
       ]
     },
     {
+      "name": "downstream_api_key_rate_windows_key_window_unique",
+      "table": "downstream_api_key_rate_windows",
+      "columns": [
+        "downstream_api_key_id",
+        "window_kind",
+        "window_start"
+      ]
+    },
+    {
       "name": "downstream_api_keys_key_unique",
       "table": "downstream_api_keys",
       "columns": [
         "key"
+      ]
+    },
+    {
+      "name": "downstream_key_day_usage_day_key_unique",
+      "table": "downstream_key_day_usage",
+      "columns": [
+        "local_day",
+        "downstream_api_key_id"
+      ]
+    },
+    {
+      "name": "downstream_key_limit_policies_key_metric_scope_window_unique",
+      "table": "downstream_key_limit_policies",
+      "columns": [
+        "downstream_api_key_id",
+        "metric",
+        "scope_type",
+        "scope_value",
+        "window_type",
+        "window_seconds"
+      ]
+    },
+    {
+      "name": "downstream_key_quota_reservations_token_unique",
+      "table": "downstream_key_quota_reservations",
+      "columns": [
+        "reservation_token"
+      ]
+    },
+    {
+      "name": "downstream_key_usage_windows_policy_window_unique",
+      "table": "downstream_key_usage_windows",
+      "columns": [
+        "policy_id",
+        "window_start"
       ]
     },
     {
@@ -7612,6 +9148,17 @@
       "onDelete": "CASCADE"
     },
     {
+      "table": "alert_occurrences",
+      "columns": [
+        "incident_id"
+      ],
+      "referencedTable": "alert_incidents",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
       "table": "bridge_continuation_events",
       "columns": [
         "task_id"
@@ -7755,6 +9302,28 @@
       "onDelete": "SET NULL"
     },
     {
+      "table": "credential_lifecycle_audits",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "credential_refresh_jobs",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
       "table": "credential_vault_items",
       "columns": [
         "account_id"
@@ -7782,6 +9351,50 @@
         "downstream_api_key_id"
       ],
       "referencedTable": "downstream_api_keys",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "downstream_api_key_rate_windows",
+      "columns": [
+        "downstream_api_key_id"
+      ],
+      "referencedTable": "downstream_api_keys",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "downstream_key_limit_policies",
+      "columns": [
+        "downstream_api_key_id"
+      ],
+      "referencedTable": "downstream_api_keys",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "downstream_key_quota_reservations",
+      "columns": [
+        "downstream_api_key_id"
+      ],
+      "referencedTable": "downstream_api_keys",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "downstream_key_usage_windows",
+      "columns": [
+        "policy_id"
+      ],
+      "referencedTable": "downstream_key_limit_policies",
       "referencedColumns": [
         "id"
       ],
@@ -8251,6 +9864,17 @@
     },
     {
       "table": "site_hour_usage",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_runtime_health_states",
       "columns": [
         "site_id"
       ],

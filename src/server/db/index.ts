@@ -12,6 +12,7 @@ import {
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
+import { ensureDownstreamApiKeySchemaCompatibility } from './downstreamApiKeySchemaCompatibility.js';
 import { executeLegacyCompat, executeLegacyCompatSync } from './legacySchemaCompat.js';
 import { config } from '../config.js';
 import { ensureRuntimeDatabaseReady } from '../runtimeDatabaseBootstrap.js';
@@ -29,6 +30,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'credential_vault_items',
   'credential_import_items',
   'credential_import_provenance',
+  'credential_lifecycle_audits',
   'oauth_refresh_leases',
   'account_tokens',
   'checkin_logs',
@@ -49,9 +51,17 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'downstream_api_keys',
   'downstream_api_key_leases',
   'notification_outbox',
+  'archive_manifests',
+  'downstream_api_key_rate_windows',
+  'downstream_key_limit_policies',
+  'downstream_key_usage_windows',
+  'downstream_key_quota_reservations',
   'bridge_continuation_events',
   'site_announcements',
   'events',
+  'alert_incidents',
+  'alert_occurrences',
+  'alert_policies',
 ]);
 
 export let runtimeDbDialect: RuntimeDbDialect = config.dbType;
@@ -587,6 +597,9 @@ function ensureDownstreamApiKeySchema() {
       supported_models text,
       allowed_route_ids text,
       site_weight_multipliers text,
+      excluded_site_ids text,
+      allowed_credential_refs text,
+      excluded_credential_refs text,
       last_used_at text,
       created_at text DEFAULT (datetime('now')),
       updated_at text DEFAULT (datetime('now'))
@@ -610,22 +623,11 @@ function ensureDownstreamApiKeySchema() {
     ON downstream_api_keys(expires_at);
   `);
 
-  if (!tableColumnExists('downstream_api_keys', 'group_name')) {
-    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN group_name text;');
-  }
-
-  if (!tableColumnExists('downstream_api_keys', 'tags')) {
-    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN tags text;');
-  }
-
-  if (!tableColumnExists('downstream_api_keys', 'max_concurrency')) {
-    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN max_concurrency integer;');
-  }
-
-  if (!tableColumnExists('downstream_api_keys', 'policy_version')) {
-    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN policy_version integer NOT NULL DEFAULT 1;');
-  }
-
+  ensureDownstreamApiKeySchemaCompatibility({
+    tableExists,
+    columnExists: tableColumnExists,
+    execute: execSqliteLegacyCompat,
+  });
 }
 
 function ensureProxyLogBillingDetailsSchema() {

@@ -46,6 +46,53 @@ export const siteApiEndpoints = sqliteTable('site_api_endpoints', {
   siteCooldownIdx: index('site_api_endpoints_site_cooldown_idx').on(table.siteId, table.cooldownUntil),
 }));
 
+/** Queryable runtime health state and fenced recovery-probe lease per Site/model scope. */
+export const siteRuntimeHealthStates = sqliteTable('site_runtime_health_states', {
+  scopeKey: text('scope_key').primaryKey(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  scope: text('scope').notNull(),
+  modelName: text('model_name'),
+  recoveryState: text('recovery_state').notNull().default('healthy'),
+  penaltyScore: real('penalty_score').notNull().default(0),
+  latencyEmaMs: real('latency_ema_ms'),
+  firstByteLatencyEmaMs: real('first_byte_latency_ema_ms'),
+  firstByteSampleCount: integer('first_byte_sample_count').notNull().default(0),
+  transientFailureStreak: integer('transient_failure_streak').notNull().default(0),
+  lastTransientFailureAt: text('last_transient_failure_at'),
+  recentSuccessCount: real('recent_success_count').notNull().default(0),
+  recentFailureCount: real('recent_failure_count').notNull().default(0),
+  recentWindowUpdatedAt: text('recent_window_updated_at').notNull(),
+  breakerLevel: integer('breaker_level').notNull().default(0),
+  breakerUntil: text('breaker_until'),
+  recoverySuccessCount: integer('recovery_success_count').notNull().default(0),
+  lastProbeAt: text('last_probe_at'),
+  lastProbeSuccessAt: text('last_probe_success_at'),
+  lastFailureAt: text('last_failure_at'),
+  lastSuccessAt: text('last_success_at'),
+  lastFailureReason: text('last_failure_reason'),
+  lastFailureDomain: text('last_failure_domain'),
+  lastFailureEndpointId: integer('last_failure_endpoint_id'),
+  probeLeaseOwner: text('probe_lease_owner'),
+  probeLeaseToken: text('probe_lease_token'),
+  probeLeaseChannelId: integer('probe_lease_channel_id'),
+  probeLeaseExpiresAt: text('probe_lease_expires_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteScopeIdx: index('site_runtime_health_states_site_scope_idx').on(table.siteId, table.scope),
+  stateBreakerIdx: index('site_runtime_health_states_state_breaker_idx').on(table.recoveryState, table.breakerUntil),
+  leaseExpiresIdx: index('site_runtime_health_states_lease_expires_idx').on(table.probeLeaseExpiresAt),
+  scopeCheck: check('site_runtime_health_states_scope_check', sql`${table.scope} in ('site', 'model')`),
+  recoveryStateCheck: check(
+    'site_runtime_health_states_recovery_state_check',
+    sql`${table.recoveryState} in ('healthy', 'open', 'recovering')`,
+  ),
+  breakerLevelNonNegative: check(
+    'site_runtime_health_states_breaker_level_non_negative',
+    sql`${table.breakerLevel} >= 0`,
+  ),
+}));
+
 export const siteDisabledModels = sqliteTable('site_disabled_models', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
@@ -747,6 +794,61 @@ export const oauthRefreshProviderStates = sqliteTable('oauth_refresh_provider_st
   nextAllowedAtIdx: index('oauth_refresh_provider_states_next_allowed_at_idx').on(table.nextAllowedAt),
 }));
 
+/** Durable work queue for managed credential refresh attempts. */
+export const credentialRefreshJobs = sqliteTable('credential_refresh_jobs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  entityType: text('entity_type').notNull().default('account'),
+  entityId: integer('entity_id').notNull(),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  provider: text('provider'),
+  refreshOwner: text('refresh_owner').notNull().default('r_api'),
+  status: text('status').notNull().default('pending'),
+  failureClass: text('failure_class'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(8),
+  nextAttemptAt: text('next_attempt_at'),
+  lastAttemptAt: text('last_attempt_at'),
+  lastSuccessAt: text('last_success_at'),
+  lastError: text('last_error'),
+  leaseOwner: text('lease_owner'),
+  leaseExpiresAt: text('lease_expires_at'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  entityUnique: uniqueIndex('credential_refresh_jobs_entity_unique').on(table.entityType, table.entityId),
+  statusNextAttemptIdx: index('credential_refresh_jobs_status_next_attempt_idx').on(table.status, table.nextAttemptAt),
+  providerStatusIdx: index('credential_refresh_jobs_provider_status_idx').on(table.provider, table.status),
+  siteIdIdx: index('credential_refresh_jobs_site_id_idx').on(table.siteId),
+  failureClassIdx: index('credential_refresh_jobs_failure_class_idx').on(table.failureClass),
+  attemptCountNonNegative: check('credential_refresh_jobs_attempt_count_non_negative', sql`${table.attemptCount} >= 0`),
+  maxAttemptsPositive: check('credential_refresh_jobs_max_attempts_positive', sql`${table.maxAttempts} > 0`),
+}));
+
+/** Structured, secret-free audit trail for credential lifecycle operations. */
+export const credentialLifecycleAudits = sqliteTable('credential_lifecycle_audits', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  entityType: text('entity_type').notNull(),
+  entityId: integer('entity_id').notNull(),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  provider: text('provider'),
+  credentialSource: text('credential_source').notNull().default('unknown'),
+  operatorId: text('operator_id').notNull(),
+  action: text('action').notNull(),
+  status: text('status').notNull(),
+  outcome: text('outcome').notNull(),
+  message: text('message'),
+  metadata: text('metadata'),
+  dedupeKey: text('dedupe_key'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  dedupeKeyUnique: uniqueIndex('credential_lifecycle_audits_dedupe_key_unique').on(table.dedupeKey),
+  entityCreatedAtIdx: index('credential_lifecycle_audits_entity_created_at_idx').on(table.entityType, table.entityId, table.createdAt),
+  sourceCreatedAtIdx: index('credential_lifecycle_audits_source_created_at_idx').on(table.credentialSource, table.createdAt),
+  operatorCreatedAtIdx: index('credential_lifecycle_audits_operator_created_at_idx').on(table.operatorId, table.createdAt),
+  statusCreatedAtIdx: index('credential_lifecycle_audits_status_created_at_idx').on(table.status, table.createdAt),
+  actionCreatedAtIdx: index('credential_lifecycle_audits_action_created_at_idx').on(table.action, table.createdAt),
+}));
+
 export const accountTokens = sqliteTable('account_tokens', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
@@ -953,6 +1055,7 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   errorMessage: text('error_message'),
   retryCount: integer('retry_count').default(0),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
+  archivedAt: text('archived_at'),
 }, (table) => ({
   createdAtIdx: index('proxy_logs_created_at_idx').on(table.createdAt),
   accountCreatedIdx: index('proxy_logs_account_created_at_idx').on(table.accountId, table.createdAt),
@@ -963,6 +1066,7 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   clientFamilyCreatedIdx: index('proxy_logs_client_family_created_at_idx').on(table.clientFamily, table.createdAt),
   requestCreatedIdx: index('proxy_logs_request_id_created_at_idx').on(table.requestId, table.createdAt),
   attemptCreatedIdx: index('proxy_logs_attempt_id_created_at_idx').on(table.attemptId, table.createdAt),
+  archivedAtIdx: index('proxy_logs_archived_at_idx').on(table.archivedAt, table.createdAt),
 }));
 
 export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
@@ -1052,6 +1156,7 @@ export const proxyRequests = sqliteTable('proxy_requests', {
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   finishedAt: text('finished_at'),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+  archivedAt: text('archived_at'),
 }, (table) => ({
   requestIdUnique: uniqueIndex('proxy_requests_request_id_unique').on(table.requestId),
   statusUpdatedIdx: index('proxy_requests_status_updated_at_idx').on(table.status, table.updatedAt),
@@ -1059,6 +1164,7 @@ export const proxyRequests = sqliteTable('proxy_requests', {
   threadCreatedIdx: index('proxy_requests_thread_created_at_idx').on(table.clientThreadId, table.createdAt),
   bridgeTaskCreatedIdx: index('proxy_requests_bridge_task_created_at_idx').on(table.bridgeTaskId, table.createdAt),
   modelCreatedIdx: index('proxy_requests_model_created_at_idx').on(table.requestedModel, table.createdAt),
+  archivedAtIdx: index('proxy_requests_archived_at_idx').on(table.archivedAt, table.updatedAt),
 }));
 
 export const proxyRequestAttempts = sqliteTable('proxy_request_attempts', {
@@ -1219,6 +1325,34 @@ export const analyticsProjectionCheckpoints = sqliteTable('analytics_projection_
   leaseExpiresAtIdx: index('analytics_projection_checkpoints_lease_expires_at_idx').on(table.leaseExpiresAt),
 }));
 
+/** Immutable audit trail for local NDJSON archive batches. */
+export const archiveManifests = sqliteTable('archive_manifests', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  resource: text('resource').notNull(),
+  status: text('status').notNull().default('writing'), // 'writing' | 'committed' | 'source_deleted' | 'failed'
+  schemaVersion: integer('schema_version').notNull().default(1),
+  rowCount: integer('row_count').notNull().default(0),
+  minId: integer('min_id'),
+  maxId: integer('max_id'),
+  minCreatedAt: text('min_created_at'),
+  maxCreatedAt: text('max_created_at'),
+  storageDriver: text('storage_driver').notNull().default('local'),
+  objectKey: text('object_key'),
+  byteSize: integer('byte_size'),
+  sha256: text('sha256'),
+  startedAt: text('started_at').default(sql`(datetime('now'))`),
+  committedAt: text('committed_at'),
+  deletedAt: text('deleted_at'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  resourceCreatedIdx: index('archive_manifests_resource_created_at_idx').on(table.resource, table.createdAt),
+  statusUpdatedIdx: index('archive_manifests_status_updated_at_idx').on(table.status, table.updatedAt),
+  objectKeyUnique: uniqueIndex('archive_manifests_object_key_unique').on(table.objectKey),
+  maxIdIdx: index('archive_manifests_max_id_idx').on(table.resource, table.maxId),
+}));
+
 export const siteDayUsage = sqliteTable('site_day_usage', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   localDay: text('local_day').notNull(),
@@ -1292,6 +1426,28 @@ export const modelDayUsage = sqliteTable('model_day_usage', {
   ),
 }));
 
+export const downstreamKeyDayUsage = sqliteTable('downstream_key_day_usage', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  localDay: text('local_day').notNull(),
+  downstreamApiKeyId: integer('downstream_api_key_id').notNull(),
+  totalCalls: integer('total_calls').notNull().default(0),
+  successCalls: integer('success_calls').notNull().default(0),
+  failedCalls: integer('failed_calls').notNull().default(0),
+  totalTokens: integer('total_tokens').notNull().default(0),
+  totalCost: real('total_cost').notNull().default(0),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  dayKeyUnique: uniqueIndex('downstream_key_day_usage_day_key_unique')
+    .on(table.localDay, table.downstreamApiKeyId),
+  dayIdx: index('downstream_key_day_usage_day_idx').on(table.localDay),
+  keyIdx: index('downstream_key_day_usage_key_id_idx').on(table.downstreamApiKeyId),
+  nonNegative: check(
+    'downstream_key_day_usage_non_negative',
+    sql`${table.totalCalls} >= 0 and ${table.successCalls} >= 0 and ${table.failedCalls} >= 0 and ${table.totalTokens} >= 0 and ${table.totalCost} >= 0`,
+  ),
+}));
+
 export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
@@ -1305,6 +1461,7 @@ export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   usedCost: real('used_cost').default(0),
   maxRequests: integer('max_requests'),
   usedRequests: integer('used_requests').default(0),
+  requestsPerMinute: integer('requests_per_minute'),
   maxConcurrency: integer('max_concurrency'),
   policyVersion: integer('policy_version').notNull().default(1),
   supportedModels: text('supported_models'), // JSON array<string>
@@ -1321,6 +1478,88 @@ export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   nameIdx: index('downstream_api_keys_name_idx').on(table.name),
   enabledIdx: index('downstream_api_keys_enabled_idx').on(table.enabled),
   expiresAtIdx: index('downstream_api_keys_expires_at_idx').on(table.expiresAt),
+}));
+
+export const downstreamApiKeyRateWindows = sqliteTable('downstream_api_key_rate_windows', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  downstreamApiKeyId: integer('downstream_api_key_id').notNull().references(() => downstreamApiKeys.id, { onDelete: 'cascade' }),
+  windowKind: text('window_kind').notNull(),
+  windowStart: text('window_start').notNull(),
+  reservedRequests: integer('reserved_requests').notNull().default(0),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  keyWindowUnique: uniqueIndex('downstream_api_key_rate_windows_key_window_unique')
+    .on(table.downstreamApiKeyId, table.windowKind, table.windowStart),
+  windowLookupIdx: index('downstream_api_key_rate_windows_window_lookup_idx')
+    .on(table.windowKind, table.windowStart),
+  keyUpdatedIdx: index('downstream_api_key_rate_windows_key_updated_idx')
+    .on(table.downstreamApiKeyId, table.updatedAt),
+}));
+
+/** Declarative time-window limits for managed downstream keys. */
+export const downstreamKeyLimitPolicies = sqliteTable('downstream_key_limit_policies', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  downstreamApiKeyId: integer('downstream_api_key_id').notNull().references(() => downstreamApiKeys.id, { onDelete: 'cascade' }),
+  metric: text('metric').notNull(), // 'requests' | 'input_tokens' | 'output_tokens' | 'total_tokens' | 'cost'
+  scopeType: text('scope_type').notNull().default('key'), // 'key' | 'model' | 'site'
+  scopeValue: text('scope_value'),
+  windowType: text('window_type').notNull(), // 'fixed' | 'calendar_day' | 'calendar_month'
+  windowSeconds: integer('window_seconds'),
+  limitValue: real('limit_value').notNull(),
+  burstValue: real('burst_value').notNull().default(0),
+  enforcement: text('enforcement').notNull().default('hard'), // 'hard' | 'soft'
+  warningThresholdsJson: text('warning_thresholds_json'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  keyMetricScopeWindowUnique: uniqueIndex('downstream_key_limit_policies_key_metric_scope_window_unique')
+    .on(table.downstreamApiKeyId, table.metric, table.scopeType, table.scopeValue, table.windowType, table.windowSeconds),
+  keyEnabledIdx: index('downstream_key_limit_policies_key_enabled_idx')
+    .on(table.downstreamApiKeyId, table.enabled),
+  metricWindowIdx: index('downstream_key_limit_policies_metric_window_idx')
+    .on(table.metric, table.windowType),
+}));
+
+/** Current usage and reservations for one policy window. */
+export const downstreamKeyUsageWindows = sqliteTable('downstream_key_usage_windows', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  policyId: integer('policy_id').notNull().references(() => downstreamKeyLimitPolicies.id, { onDelete: 'cascade' }),
+  windowStart: text('window_start').notNull(),
+  windowEnd: text('window_end').notNull(),
+  usedValue: real('used_value').notNull().default(0),
+  reservedValue: real('reserved_value').notNull().default(0),
+  version: integer('version').notNull().default(0),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  policyWindowUnique: uniqueIndex('downstream_key_usage_windows_policy_window_unique')
+    .on(table.policyId, table.windowStart),
+  windowEndIdx: index('downstream_key_usage_windows_window_end_idx').on(table.windowEnd),
+  policyUpdatedIdx: index('downstream_key_usage_windows_policy_updated_idx').on(table.policyId, table.updatedAt),
+  nonNegative: check(
+    'downstream_key_usage_windows_non_negative',
+    sql`${table.usedValue} >= 0 and ${table.reservedValue} >= 0`,
+  ),
+}));
+
+/** Durable request-level reservations so crashed workers can be recovered. */
+export const downstreamKeyQuotaReservations = sqliteTable('downstream_key_quota_reservations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  reservationToken: text('reservation_token').notNull(),
+  downstreamApiKeyId: integer('downstream_api_key_id').notNull().references(() => downstreamApiKeys.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'), // 'pending' | 'settled' | 'released' | 'expired'
+  amountJson: text('amount_json').notNull(),
+  windowIdsJson: text('window_ids_json').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  settledAt: text('settled_at'),
+  releasedAt: text('released_at'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  tokenUnique: uniqueIndex('downstream_key_quota_reservations_token_unique').on(table.reservationToken),
+  statusExpiryIdx: index('downstream_key_quota_reservations_status_expiry_idx').on(table.status, table.expiresAt),
+  keyCreatedIdx: index('downstream_key_quota_reservations_key_created_idx').on(table.downstreamApiKeyId, table.createdAt),
 }));
 
 export const downstreamApiKeyLeases = sqliteTable('downstream_api_key_leases', {
@@ -1377,6 +1616,64 @@ export const events = sqliteTable('events', {
   readCreatedIdx: index('events_read_created_at_idx').on(table.read, table.createdAt),
   typeCreatedIdx: index('events_type_created_at_idx').on(table.type, table.createdAt),
   createdAtIdx: index('events_created_at_idx').on(table.createdAt),
+}));
+
+/** Durable incident state, separate from notification delivery state. */
+export const alertIncidents = sqliteTable('alert_incidents', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fingerprint: text('fingerprint').notNull(),
+  ruleKey: text('rule_key').notNull(),
+  severity: text('severity').notNull().default('error'),
+  status: text('status').notNull().default('open'), // 'open' | 'acknowledged' | 'resolved' | 'suppressed'
+  entityType: text('entity_type'),
+  entityId: text('entity_id'),
+  occurrenceCount: integer('occurrence_count').notNull().default(0),
+  firstSeenAt: text('first_seen_at').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
+  acknowledgedAt: text('acknowledged_at'),
+  acknowledgedBy: text('acknowledged_by'),
+  resolvedAt: text('resolved_at'),
+  suppressedUntil: text('suppressed_until'),
+  escalationStep: integer('escalation_step').notNull().default(0),
+  nextEscalationAt: text('next_escalation_at'),
+  leaseOwner: text('lease_owner'),
+  leaseToken: text('lease_token'),
+  leaseExpiresAt: text('lease_expires_at'),
+  lastNotifiedAt: text('last_notified_at'),
+  lastMessage: text('last_message'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  fingerprintUnique: uniqueIndex('alert_incidents_fingerprint_unique').on(table.fingerprint),
+  statusEscalationIdx: index('alert_incidents_status_escalation_idx').on(table.status, table.nextEscalationAt),
+  leaseExpiresAtIdx: index('alert_incidents_lease_expires_at_idx').on(table.leaseExpiresAt),
+  ruleStatusIdx: index('alert_incidents_rule_status_idx').on(table.ruleKey, table.status),
+  entityIdx: index('alert_incidents_entity_idx').on(table.entityType, table.entityId),
+  lastSeenIdx: index('alert_incidents_last_seen_idx').on(table.lastSeenAt),
+}));
+
+export const alertOccurrences = sqliteTable('alert_occurrences', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  incidentId: integer('incident_id').notNull().references(() => alertIncidents.id, { onDelete: 'cascade' }),
+  observedAt: text('observed_at').notNull(),
+  valueJson: text('value_json'),
+  message: text('message'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  incidentObservedIdx: index('alert_occurrences_incident_observed_idx').on(table.incidentId, table.observedAt),
+}));
+
+export const alertPolicies = sqliteTable('alert_policies', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ruleKey: text('rule_key').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  groupingWindowSec: integer('grouping_window_sec').notNull().default(300),
+  stepsJson: text('steps_json').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  ruleKeyUnique: uniqueIndex('alert_policies_rule_key_unique').on(table.ruleKey),
+  enabledIdx: index('alert_policies_enabled_idx').on(table.enabled),
 }));
 
 export const notificationOutbox = sqliteTable('notification_outbox', {

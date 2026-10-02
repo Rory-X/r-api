@@ -10,6 +10,7 @@ describe('legacySchemaCompat architecture boundaries', () => {
     const source = readSource('./legacySchemaCompat.ts');
 
     expect(source).toContain('ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS');
+    expect(source).toContain('DOWNSTREAM_API_KEY_COLUMN_COMPATIBILITY_SPECS');
     expect(source).toContain('PROXY_FILE_COLUMN_COMPATIBILITY_SPECS');
     expect(source).toContain('ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS');
     expect(source).toContain('SITE_COLUMN_COMPATIBILITY_SPECS');
