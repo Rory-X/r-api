@@ -1041,6 +1041,33 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.service_tier).toBe('auto');
   });
 
+  it('preserves the Codex Desktop user-agent on the final upstream request', () => {
+    const downstreamUserAgent = 'codex-desktop/0.147.0 (Mac OS 26.4.0; arm64) dumb (codex-desktop; 1.0.4)';
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: true,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'codex',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello from desktop' }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {
+        'user-agent': downstreamUserAgent,
+      },
+      providerHeaders: {
+        Originator: 'codex-desktop',
+      },
+    } as any);
+
+    expect(request.headers['User-Agent']).toBe(downstreamUserAgent);
+    expect(request.headers.Originator).toBe('codex_chatgpt_desktop');
+  });
+
   it('reuses a stable codex session id when the same downstream continuity key is provided', () => {
     const firstRequest = buildUpstreamEndpointRequest({
       endpoint: 'responses',

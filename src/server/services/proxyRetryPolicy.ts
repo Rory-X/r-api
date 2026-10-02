@@ -1,4 +1,5 @@
 import {
+  classifyOperationalFailure,
   classifyRetryErrorScope,
   isChannelLocalFailure,
   isExplicitRequestFailure,
@@ -103,9 +104,10 @@ export function classifyProxyRetryFailure(
     replaySafety?: ReplaySafety;
   } = {},
 ): ProxyRetryClassification {
+  const classification = classifyOperationalFailure({ status, rawErrorText: upstreamErrorText });
   return {
     retryable: shouldRetryProxyRequest(status, upstreamErrorText),
-    scope: classifyRetryErrorScope({ status, rawErrorText: upstreamErrorText }),
+    scope: classification.errorScope || classifyRetryErrorScope({ status, rawErrorText: upstreamErrorText }),
     retryOwner: options.retryOwner ?? 'cooperative',
     replaySafety: options.replaySafety ?? 'safe_only',
   };

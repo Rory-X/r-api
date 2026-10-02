@@ -7,6 +7,29 @@
  * route handlers to a particular upstream gateway.
  */
 
+import {
+  classifyOperationalFailure,
+  isChannelLocalFailure,
+  isExplicitRequestFailure,
+  isGenericUpstreamBadRequest,
+  type OperationalErrorScope,
+  type OperationalFailureClassification,
+} from './operationalFailureContract.js';
+
+export {
+  isChannelLocalFailure,
+  isExplicitRequestFailure,
+  isGenericUpstreamBadRequest,
+} from './operationalFailureContract.js';
+
+export type {
+  OperationalAlertCategory,
+  OperationalAlertSeverity,
+  OperationalFailureCode,
+  OperationalFailureClassification,
+  OperationalHealthDomain,
+} from './operationalFailureContract.js';
+
 export type RetryOwner = 'local_proxy' | 'upstream_gateway' | 'cooperative';
 
 /**
@@ -23,14 +46,11 @@ export type AttemptCommitState =
   | 'completed'
   | 'sent_unknown';
 
-export type RetryErrorScope =
-  | 'request'
-  | 'transport'
-  | 'credential'
-  | 'model_capability'
-  | 'upstream_gateway'
-  | 'stream'
-  | 'unknown';
+export type RetryErrorScope = OperationalErrorScope;
+
+export type ProxyRetryFailureClassification = OperationalFailureClassification;
+
+export { classifyOperationalFailure } from './operationalFailureContract.js';
 
 const RETRYABLE_PRE_OUTPUT_STREAM_FAILURE_PATTERNS: RegExp[] = [
   /overload(?:ed)?/i,
@@ -79,100 +99,6 @@ export type RetryBudgetSpend = {
   credentialRotation?: boolean;
   channelSwitch?: boolean;
 };
-
-const EXPLICIT_REQUEST_FAILURE_PATTERNS: RegExp[] = [
-  /invalid\s+request\s+body/i,
-  /request\s+validation/i,
-  /validation\s+(?:failed|error)/i,
-  /missing\s+required/i,
-  /required\s+parameter/i,
-  /unknown\s+parameter/i,
-  /unrecognized\s+(?:field|key|parameter)/i,
-  /invalid\s+(?:[^\s]+\s+)?parameter/i,
-  /(?:parameter|field|value)\s+[^\s]+\s+must\s+be/i,
-  /malformed/i,
-  /invalid\s+json/i,
-  /cannot\s+parse/i,
-  /unsupported\s+media\s+type/i,
-  /unprocessable/i,
-  /previous_response_not_found/i,
-];
-
-const CHANNEL_LOCAL_FAILURE_PATTERNS: RegExp[] = [
-  /unsupported\s+(?:legacy\s+)?protocol/i,
-  /please\s+use\s+\/v1\/(?:responses|messages|chat\/completions)/i,
-  /does\s+not\s+allow\s+\/v1\/[a-z0-9/_:-]+\s+dispatch/i,
-  /unsupported\s+(?:endpoint|path)/i,
-  /unknown\s+endpoint/i,
-  /unrecognized\s+request\s+url/i,
-  /no\s+route\s+matched/i,
-];
-
-function matchesFailurePattern(patterns: RegExp[], rawErrorText?: string | null): boolean {
-  const text = String(rawErrorText || '').trim();
-  return text.length > 0 && patterns.some((pattern) => pattern.test(text));
-}
-
-function extractStructuredFailure(rawErrorText?: string | null): {
-  message: string;
-  type: string;
-  code: string;
-} | null {
-  const text = String(rawErrorText || '').trim();
-  if (!text.startsWith('{')) return null;
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (!parsed || typeof parsed !== 'object') return null;
-    const root = parsed as Record<string, unknown>;
-    const error = root.error && typeof root.error === 'object'
-      ? root.error as Record<string, unknown>
-      : root;
-    return {
-      message: typeof error.message === 'string' ? error.message.replace(/\s+/g, ' ').trim() : '',
-      type: typeof error.type === 'string' ? error.type.trim() : '',
-      code: typeof error.code === 'string' ? error.code.trim() : '',
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function isExplicitRequestFailure(rawErrorText?: string | null): boolean {
-  return matchesFailurePattern(EXPLICIT_REQUEST_FAILURE_PATTERNS, rawErrorText);
-}
-
-export function isChannelLocalFailure(rawErrorText?: string | null): boolean {
-  return matchesFailurePattern(CHANNEL_LOCAL_FAILURE_PATTERNS, rawErrorText);
-}
-
-/**
- * Some compatibility gateways erase the real cause and only return a bare
- * `400 Bad Request` (or an empty `upstream_error`). That response is not enough
- * evidence to declare the downstream request invalid on every channel.
- */
-export function isGenericUpstreamBadRequest(
-  status: number,
-  rawErrorText?: string | null,
-): boolean {
-  if (status !== 400 || isExplicitRequestFailure(rawErrorText)) return false;
-
-  const text = String(rawErrorText || '').replace(/\s+/g, ' ').trim();
-  if (!text) return true;
-  const structured = extractStructuredFailure(text);
-  if (structured) {
-    const genericMessage = !structured.message
-      || /^(?:400\s+)?bad\s+request[.!]?$/i.test(structured.message);
-    const genericType = !structured.type || /^upstream_error$/i.test(structured.type);
-    const genericCode = !structured.code || /^(?:400|bad_request|upstream_error)$/i.test(structured.code);
-    if (genericMessage && genericType && genericCode) return true;
-  }
-
-  return (
-    /^(?:400\s+)?bad\s+request[.!]?$/i.test(text)
-    || /upstream\s+returned\s+http\s+400(?::\s*(?:400\s+)?bad\s+request[.!]?)?$/i.test(text)
-    || /^(?:\[upstream:[^\]]+\]\s*)?(?:upstream\s+returned\s+http\s+400:\s*)?upstream_error[.!]?$/i.test(text)
-  );
-}
 
 export type RetryBudgetExhaustion =
   | 'elapsed'
@@ -308,35 +234,5 @@ export function classifyRetryErrorScope(input: {
   status?: number;
   rawErrorText?: string | null;
 }): RetryErrorScope {
-  const status = input.status ?? 0;
-  const text = (input.rawErrorText || '').trim();
-
-  if (status === 401 || status === 403 || /invalid\s+(?:api\s+key|access\s+token)|token\s+expired/i.test(text)) {
-    return 'credential';
-  }
-  if (
-    /unsupported\s+model|model\s+not\s+supported|does\s+not\s+exist|unknown\s+model|no\s+such\s+model/i.test(text)
-  ) {
-    return 'model_capability';
-  }
-  if (isChannelLocalFailure(text)) {
-    return 'upstream_gateway';
-  }
-  if (isExplicitRequestFailure(text) || status === 422) {
-    return 'request';
-  }
-  if (isGenericUpstreamBadRequest(status, text)) return 'unknown';
-  if (status === 400) return 'request';
-  if (
-    status === 408
-    || status === 425
-    || status === 429
-    || status >= 500
-    || /timed\s+out|connection\s+(?:reset|refused)|econn(?:reset|refused)|rate\s+limit|quota/i.test(text)
-  ) {
-    return 'upstream_gateway';
-  }
-  if (/stream|sse|websocket/i.test(text)) return 'stream';
-  if (/network|dns|socket|fetch/i.test(text)) return 'transport';
-  return 'unknown';
+  return classifyOperationalFailure(input).errorScope;
 }

@@ -1,7 +1,5 @@
-import {
-  classifyRetryErrorScope,
-  type RetryErrorScope,
-} from './proxyRetryContract.js';
+import { classifyOperationalFailure } from './operationalFailureContract.js';
+import type { RetryErrorScope } from './proxyRetryContract.js';
 
 export type ProxyHealthDomain =
   | 'endpoint'
@@ -71,21 +69,11 @@ export function classifyProxyHealthDomain(input: {
   status?: number;
   errorText?: string | null;
 }): ProxyHealthDomain {
-  const errorText = String(input.errorText || '').trim();
-  if (/unsupported\s+model|model\s+(?:is\s+)?not\s+supported|model\s+unsupported|unknown\s+model|no\s+such\s+model|model.*does\s+not\s+exist/i.test(errorText)) {
-    return 'model_capability';
-  }
-  if (/unsupported\s+(?:legacy\s+)?protocol|unsupported\s+endpoint|unknown\s+endpoint|unknown\s+path|no\s+route\s+matched|does\s+not\s+allow\s+\/v1\//i.test(errorText)) {
-    return 'gateway';
-  }
-  if (/econn(?:reset|refused)|enotfound|network\s+error|fetch\s+failed|dns|socket\s+(?:hang\s+up|error)/i.test(errorText)) {
-    return 'endpoint';
-  }
-  const scope = input.scope || classifyRetryErrorScope({
+  if (input.scope) return resolveProxyHealthDomain(input.scope);
+  return classifyOperationalFailure({
     status: input.status,
-    rawErrorText: errorText,
-  });
-  return resolveProxyHealthDomain(scope);
+    rawErrorText: input.errorText,
+  }).healthDomain;
 }
 
 export function buildProxyHealthMutation(domain: ProxyHealthDomain): ProxyHealthMutation {
