@@ -1343,7 +1343,7 @@ export default function Settings() {
               aria-selected={activeSettingsSection === section.key}
               aria-controls={`settings-${section.key}`}
               tabIndex={activeSettingsSection === section.key ? 0 : -1}
-              onClick={(event) => selectSettingsSection(section.key, event?.currentTarget ?? null)}
+              onClick={(event) => selectSettingsSection(section.key, event.currentTarget)}
               onKeyDown={(event) => handleSettingsNavKeyDown(event, index)}
             >
               <span className="settings-main-nav-index">{String(index + 1).padStart(2, '0')}</span>

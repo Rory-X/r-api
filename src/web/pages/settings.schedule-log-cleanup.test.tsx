@@ -236,7 +236,9 @@ describe('Settings log cleanup schedule', () => {
       expect(securityPanel.props.hidden).toBe(false);
       expect(dataPanel.props.hidden).toBe(true);
 
-      await act(async () => { dataNavigation.props.onClick(); });
+      await act(async () => {
+        dataNavigation.props.onClick({ currentTarget: null });
+      });
 
       expect(dataNavigation.props['aria-selected']).toBe(true);
       expect(securityPanel.props.hidden).toBe(true);
