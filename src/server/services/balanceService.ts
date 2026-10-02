@@ -6,14 +6,13 @@ import { appendSessionTokenRebindHint, isTokenExpiredError } from './alertRules.
 import { reportTokenExpired } from './alertService.js';
 import {
   buildStoredSub2ApiSubscriptionSummary,
-  getAutoReloginConfig,
   getCredentialModeFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
-import { decryptAccountPassword } from './accountCredentialService.js';
+import { tryAutoRelogin } from './accountReloginService.js';
 import { extractRuntimeHealth, setAccountRuntimeHealth } from './accountHealthService.js';
 import { updateTodayIncomeSnapshot } from './todayIncomeRewardService.js';
 import type { BalanceInfo } from './platforms/base.js';
@@ -209,34 +208,6 @@ async function fetchTodayIncomeFromLogs(params: {
   return Math.round(totalIncome * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
-  const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
-
-  const relogin = getAutoReloginConfig(account.extraConfig);
-  if (!relogin) return null;
-
-  const password = decryptAccountPassword(relogin.passwordCipher);
-  if (!password) return null;
-
-  const loginResult = await withAccountProxyOverride(
-    resolveProxyUrlFromExtraConfig(account.extraConfig),
-    () => adapter.login(site.url, relogin.username, password),
-  );
-  if (!loginResult.success || !loginResult.accessToken) return null;
-
-  await db.update(schema.accounts)
-    .set({
-      accessToken: loginResult.accessToken,
-      status: account.status === 'expired' ? 'active' : account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return loginResult.accessToken;
-}
-
 export async function refreshBalance(accountId: number) {
   const rows = await db
     .select()
@@ -296,7 +267,7 @@ export async function refreshBalance(accountId: number) {
     };
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeAccessToken = account.accessToken;
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
@@ -362,9 +333,16 @@ export async function refreshBalance(accountId: number) {
         await handleBalanceError(retryErr);
       }
     } else if (shouldAttemptAutoRelogin(message)) {
-      const refreshedAccessToken = await tryAutoRelogin(account, site);
-      if (refreshedAccessToken) {
-        activeAccessToken = refreshedAccessToken;
+      const relogin = await tryAutoRelogin(account, site);
+      if (relogin) {
+        activeAccessToken = relogin.accessToken;
+        // Adopt the id the re-login reported and advance activeExtraConfig.
+        // `readBalance` closes over `platformUserId`, so without this the retry
+        // still sends the stale `New-Api-User`; and `nextExtraConfig` further down
+        // starts from `activeExtraConfig`, so the pre-login copy would be written
+        // back over the id tryAutoRelogin() just persisted.
+        if (relogin.platformUserId) platformUserId = relogin.platformUserId;
+        if (relogin.extraConfig) activeExtraConfig = relogin.extraConfig;
         try {
           balanceInfo = await readBalance(activeAccessToken);
         } catch (retryErr: any) {
@@ -399,14 +377,32 @@ export async function refreshBalance(accountId: number) {
     } catch {}
   }
 
+  const hasTodayIncomeUpdate =
+    typeof balanceInfo.todayIncome === 'number' && Number.isFinite(balanceInfo.todayIncome);
+  const hasSubscriptionUpdate =
+    !!balanceInfo.subscriptionSummary && isSub2ApiPlatform(site.platform);
   let nextExtraConfig = activeExtraConfig;
-  if (typeof balanceInfo.todayIncome === 'number' && Number.isFinite(balanceInfo.todayIncome)) {
-    nextExtraConfig = updateTodayIncomeSnapshot(nextExtraConfig, balanceInfo.todayIncome);
-  }
-  if (balanceInfo.subscriptionSummary && isSub2ApiPlatform(site.platform)) {
-    nextExtraConfig = mergeAccountExtraConfig(nextExtraConfig, {
-      sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(balanceInfo.subscriptionSummary),
-    });
+  let shouldPersistNextExtraConfig = false;
+
+  if (hasTodayIncomeUpdate || hasSubscriptionUpdate) {
+    // A retried balance request or income fallback may outlive another settings
+    // update. Merge only the new balance metadata into the latest configuration
+    // instead of replaying the snapshot captured immediately after re-login.
+    const latestAccount = await db.select({ extraConfig: schema.accounts.extraConfig })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    nextExtraConfig = latestAccount ? latestAccount.extraConfig : activeExtraConfig;
+
+    if (hasTodayIncomeUpdate) {
+      nextExtraConfig = updateTodayIncomeSnapshot(nextExtraConfig, balanceInfo.todayIncome!);
+    }
+    if (hasSubscriptionUpdate) {
+      nextExtraConfig = mergeAccountExtraConfig(nextExtraConfig, {
+        sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(balanceInfo.subscriptionSummary!),
+      });
+    }
+    shouldPersistNextExtraConfig = true;
   }
 
   const existingRuntimeHealth = extractRuntimeHealth(nextExtraConfig);
@@ -420,7 +416,7 @@ export async function refreshBalance(accountId: number) {
     lastBalanceRefresh: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  if (nextExtraConfig !== account.extraConfig) {
+  if (shouldPersistNextExtraConfig) {
     updates.extraConfig = nextExtraConfig;
   }
 

@@ -8,14 +8,13 @@ import { reportTokenExpired } from './alertService.js';
 import { refreshBalance } from './balanceService.js';
 import { parseCheckinRewardAmount } from './checkinRewardParser.js';
 import {
-  getAutoReloginConfig,
   getPlatformUserIdFromExtraConfig,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
-import { decryptAccountPassword } from './accountCredentialService.js';
+import { tryAutoRelogin } from './accountReloginService.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
@@ -91,34 +90,6 @@ function inferRewardFromBalanceDelta(previousBalance: unknown, latestBalance: un
   const delta = after - before;
   if (!Number.isFinite(delta) || delta <= 0) return 0;
   return Math.round(delta * 1_000_000) / 1_000_000;
-}
-
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
-  const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
-
-  const relogin = getAutoReloginConfig(account.extraConfig);
-  if (!relogin) return null;
-
-  const password = decryptAccountPassword(relogin.passwordCipher);
-  if (!password) return null;
-
-  const result = await withAccountProxyOverride(
-    resolveProxyUrlFromExtraConfig(account.extraConfig),
-    () => adapter.login(site.url, relogin.username, password),
-  );
-  if (!result.success || !result.accessToken) return null;
-
-  await db.update(schema.accounts)
-    .set({
-      accessToken: result.accessToken,
-      updatedAt: new Date().toISOString(),
-      status: account.status === 'expired' ? 'active' : account.status,
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return result.accessToken;
 }
 
 export async function checkinAccount(accountId: number, options?: { skipEvent?: boolean; scheduleMode?: 'cron' | 'interval'; manual?: boolean; automatic?: boolean }) {
@@ -214,7 +185,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   const guessedPlatformUserId = storedPlatformUserId
     ? undefined
     : guessPlatformUserIdFromUsername(account.username);
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
 
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.accessToken;
@@ -222,9 +193,11 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     () => adapter.checkin(site.url, activeAccessToken, platformUserId));
 
   if (!result.success && shouldAttemptAutoRelogin(result.message)) {
-    const refreshedAccessToken = await tryAutoRelogin(account, site);
-    if (refreshedAccessToken) {
-      activeAccessToken = refreshedAccessToken;
+    const relogin = await tryAutoRelogin(account, site);
+    if (relogin) {
+      activeAccessToken = relogin.accessToken;
+      if (relogin.platformUserId) platformUserId = relogin.platformUserId;
+      if (relogin.extraConfig) account.extraConfig = relogin.extraConfig;
       result = await withAccountProxyOverride(accountProxyUrl,
         () => adapter.checkin(site.url, activeAccessToken, platformUserId));
     }
@@ -263,10 +236,15 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     if (shouldAdvanceLastCheckinAt) {
       updates.lastCheckinAt = new Date().toISOString();
     }
-    if (!storedPlatformUserId && guessedPlatformUserId) {
-      updates.extraConfig = mergeAccountExtraConfig(account.extraConfig, {
-        platformUserId: guessedPlatformUserId,
-      });
+    if (guessedPlatformUserId && !getPlatformUserIdFromExtraConfig(account.extraConfig)) {
+      const latest = await db.select({ extraConfig: schema.accounts.extraConfig }).from(schema.accounts)
+        .where(eq(schema.accounts.id, account.id)).get();
+      const latestExtraConfig = latest ? latest.extraConfig : account.extraConfig;
+      if (!getPlatformUserIdFromExtraConfig(latestExtraConfig)) {
+        updates.extraConfig = mergeAccountExtraConfig(latestExtraConfig, {
+          platformUserId: guessedPlatformUserId,
+        });
+      }
     }
     if (account.status === 'expired') {
       updates.status = 'active';

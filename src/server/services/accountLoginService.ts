@@ -4,7 +4,7 @@ import { insertAndGetById } from '../db/insertHelpers.js';
 import { encryptAccountPassword } from './accountCredentialService.js';
 import { convergeAccountMutation } from './accountMutationWorkflow.js';
 import {
-  guessPlatformUserIdFromUsername,
+  resolvePlatformUserIdFromLogin,
   mergeAccountExtraConfig,
 } from './accountExtraConfig.js';
 import { getAdapter } from './platforms/index.js';
@@ -92,7 +92,15 @@ export async function loginAndPersistAccount(input: {
     };
   }
 
-  const guessedPlatformUserId = guessPlatformUserIdFromUsername(input.username);
+  const existing = await db.select().from(schema.accounts)
+    .where(and(
+      eq(schema.accounts.siteId, input.siteId),
+      eq(schema.accounts.username, input.username),
+    ))
+    .get();
+  const platformUserId = resolvePlatformUserIdFromLogin(
+    loginResult.platformUserId, input.username, existing?.extraConfig,
+  );
   let apiToken: string | null = null;
   let apiTokens: Array<{
     name?: string | null;
@@ -103,14 +111,14 @@ export async function loginAndPersistAccount(input: {
     apiToken = await adapter.getApiToken(
       site.url,
       loginResult.accessToken,
-      guessedPlatformUserId,
+      platformUserId,
     );
   } catch {}
   try {
     apiTokens = await adapter.getApiTokens(
       site.url,
       loginResult.accessToken,
-      guessedPlatformUserId,
+      platformUserId,
     );
   } catch {}
 
@@ -118,12 +126,6 @@ export async function loginAndPersistAccount(input: {
     apiTokens.find((token) => token.enabled !== false && token.key)?.key
     || apiToken
     || null;
-  const existing = await db.select().from(schema.accounts)
-    .where(and(
-      eq(schema.accounts.siteId, input.siteId),
-      eq(schema.accounts.username, input.username),
-    ))
-    .get();
 
   const extraConfigPatch: Record<string, unknown> = {
     credentialMode: 'session',
@@ -133,8 +135,12 @@ export async function loginAndPersistAccount(input: {
       updatedAt: new Date().toISOString(),
     },
   };
-  if (guessedPlatformUserId) extraConfigPatch.platformUserId = guessedPlatformUserId;
-  const extraConfig = mergeAccountExtraConfig(existing?.extraConfig, extraConfigPatch);
+  if (platformUserId) extraConfigPatch.platformUserId = platformUserId;
+  const latestExisting = existing
+    ? await db.select({ extraConfig: schema.accounts.extraConfig }).from(schema.accounts)
+      .where(eq(schema.accounts.id, existing.id)).get()
+    : undefined;
+  const extraConfig = mergeAccountExtraConfig(latestExisting ? latestExisting.extraConfig : existing?.extraConfig, extraConfigPatch);
 
   let accountId = existing?.id;
   if (existing) {

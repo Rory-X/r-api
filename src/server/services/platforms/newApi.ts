@@ -1,4 +1,4 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement } from './base.js';
+import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement, type LoginResult } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import {
@@ -53,25 +53,21 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   private authHeaders(accessToken: string, userId?: number): Record<string, string> {
-    return {
-      Authorization: `Bearer ${accessToken}`,
-      ...this.userIdHeaders(userId),
-    };
+    const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+    this.appendUserIdCompatibilityHeaders(headers, userId);
+    return headers;
   }
 
-  private userIdHeaders(userId?: number | null): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (userId) {
-      const value = String(userId);
-      headers['New-API-User'] = value;
-      headers['Veloera-User'] = value;
-      headers['voapi-user'] = value;
-      headers['User-id'] = value;
-      headers['X-User-Id'] = value;
-      headers['Rix-Api-User'] = value;
-      headers['neo-api-user'] = value;
-    }
-    return headers;
+  private appendUserIdCompatibilityHeaders(headers: Record<string, string>, userId?: number | null): void {
+    if (!userId) return;
+    const value = String(userId);
+    headers['New-API-User'] = value;
+    headers['Veloera-User'] = value;
+    headers['voapi-user'] = value;
+    headers['User-id'] = value;
+    headers['X-User-Id'] = value;
+    headers['Rix-Api-User'] = value;
+    headers['neo-api-user'] = value;
   }
 
   private buildCookieCandidates(token: string): string[] {
@@ -79,16 +75,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     if (!trimmed) return [];
 
     const raw = trimmed.startsWith('Bearer ') ? trimmed.slice(7).trim() : trimmed;
-    const candidates: string[] = [];
-
-    if (raw.includes('=')) {
-      candidates.push(raw);
+    if (this.isCookieHeaderCredential(raw)) {
+      return [raw];
     }
 
-    candidates.push(`session=${raw}`);
-    candidates.push(`token=${raw}`);
+    return [`session=${raw}`, `token=${raw}`];
+  }
 
-    return Array.from(new Set(candidates));
+  private isCookieHeaderCredential(token: string): boolean {
+    return /(^|;\s*)(session|token|auth_token|access_token|jwt|jwt_token)=/i.test(token);
   }
 
   private decodeBase64Loose(value: string): string | null {
@@ -608,6 +603,28 @@ export class NewApiAdapter extends BasePlatformAdapter {
     );
   }
 
+  private shouldPreferCheckinFailureMessage(
+    currentMessage: string | undefined,
+    nextMessage: string | null | undefined,
+  ): boolean {
+    const next = typeof nextMessage === 'string' ? nextMessage.trim() : '';
+    if (!next) return false;
+    if (!currentMessage) return true;
+
+    if (this.isHtmlJsonParseErrorMessage(currentMessage) && !this.isHtmlJsonParseErrorMessage(next)) {
+      return true;
+    }
+
+    const currentLooksLikeMissingEndpoint =
+      this.isMissingCheckinEndpointMessage(currentMessage)
+      || /^HTTP\s+404:/i.test(currentMessage);
+    if (currentLooksLikeMissingEndpoint && this.isCookieSessionFailureMessage(next)) {
+      return true;
+    }
+
+    return false;
+  }
+
   private async detectCookieSessionFailureMessage(
     baseUrl: string,
     accessToken: string,
@@ -705,7 +722,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const headers: Record<string, string> = { Cookie: cookie };
-        Object.assign(headers, this.userIdHeaders(platformUserId));
+        this.appendUserIdCompatibilityHeaders(headers, platformUserId);
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, { headers });
         if (res?.success && res?.data) return res;
         if (typeof res?.message === 'string' && res.message.trim()) {
@@ -721,9 +738,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
     for (const cookie of this.buildCookieCandidates(token)) {
       for (const id of candidates) {
         try {
-          const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
-            headers: { Cookie: cookie, ...this.userIdHeaders(id) },
-          });
+          const headers: Record<string, string> = { Cookie: cookie };
+          this.appendUserIdCompatibilityHeaders(headers, id);
+          const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, { headers });
           if (res?.success && res?.data) return id;
         } catch {}
       }
@@ -748,7 +765,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const headers: Record<string, string> = { Cookie: cookie };
-        Object.assign(headers, this.userIdHeaders(userId));
+        this.appendUserIdCompatibilityHeaders(headers, userId);
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/token/?p=0&size=100`, { headers });
         const normalized = this.normalizeTokenItems(this.parseTokenItems(res));
         if (normalized.length > 0) return normalized;
@@ -761,7 +778,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const headers: Record<string, string> = { Cookie: cookie };
-        Object.assign(headers, this.userIdHeaders(userId));
+        this.appendUserIdCompatibilityHeaders(headers, userId);
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/models`, { headers });
         if (Array.isArray(res?.data) && res.data.length > 0) return res.data.filter(Boolean);
         if (res?.data && typeof res.data === 'object') {
@@ -874,7 +891,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     username: string,
     password: string,
-  ): Promise<{ success: boolean; accessToken?: string; username?: string; message?: string }> {
+  ): Promise<LoginResult> {
     try {
       const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
@@ -888,11 +905,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
 
       const accessToken = this.extractLoginAccessToken(res);
+      const platformUserId = this.extractLoginUserId(res);
       if (res?.success && accessToken) {
         return {
           success: true,
           accessToken,
           username,
+          platformUserId,
         };
       }
       if (res?.success && this.hasUsableSessionCookie(cookieHeader)) {
@@ -900,6 +919,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
           success: true,
           accessToken: cookieHeader,
           username,
+          platformUserId,
         };
       }
 
@@ -1012,22 +1032,32 @@ export class NewApiAdapter extends BasePlatformAdapter {
   async checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult> {
     const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
     let firstFailureMessage: string | undefined;
-
-    try {
-      const headers = this.authHeaders(accessToken, resolvedUserId || undefined);
-
-      const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
-        method: 'POST',
-        headers,
-      });
-      if (res?.success) {
-        return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
+    const rememberFailure = (message?: string | null) => {
+      if (this.shouldPreferCheckinFailureMessage(firstFailureMessage, message)) {
+        firstFailureMessage = String(message).trim();
       }
-      const directMessage = this.extractResponseMessage(res);
-      if (directMessage) firstFailureMessage = directMessage;
-    } catch (err) {
-      const parsed = this.formatRequestErrorMessage(err);
-      if (parsed) firstFailureMessage = parsed;
+    };
+
+    const rawCredential = (accessToken || '').trim().startsWith('Bearer ')
+      ? (accessToken || '').trim().slice(7).trim()
+      : (accessToken || '').trim();
+    if (!this.isCookieHeaderCredential(rawCredential)) {
+      try {
+        const headers = this.authHeaders(accessToken, resolvedUserId || undefined);
+
+        const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
+          method: 'POST',
+          headers,
+        });
+        if (res?.success) {
+          return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
+        }
+        const directMessage = this.extractResponseMessage(res);
+        rememberFailure(directMessage);
+      } catch (err) {
+        const parsed = this.formatRequestErrorMessage(err);
+        rememberFailure(parsed);
+      }
     }
 
     if (firstFailureMessage && !this.shouldFallbackToCookieCheckin(firstFailureMessage)) {
@@ -1037,13 +1067,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const tryCookieCheckin = async (cookieUserId?: number | null): Promise<CheckinResult | null> => {
       for (const cookie of this.buildCookieCandidates(accessToken)) {
         try {
+          const headers: Record<string, string> = {
+            Cookie: cookie,
+            'X-Requested-With': 'XMLHttpRequest',
+          };
+          this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
           const signInRes = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/sign_in`, {
             method: 'POST',
             body: '{}',
-            headers: {
-              Cookie: cookie,
-              'X-Requested-With': 'XMLHttpRequest',
-            },
+            headers,
           });
           if (signInRes?.success) {
             return {
@@ -1053,15 +1085,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
             };
           }
           const signInMessage = this.extractResponseMessage(signInRes);
-          if (!firstFailureMessage && signInMessage) firstFailureMessage = signInMessage;
+          rememberFailure(signInMessage);
         } catch (err) {
           const parsed = this.formatRequestErrorMessage(err);
-          if (!firstFailureMessage && parsed) firstFailureMessage = parsed;
+          rememberFailure(parsed);
         }
 
         try {
           const headers: Record<string, string> = { Cookie: cookie };
-          Object.assign(headers, this.userIdHeaders(cookieUserId));
+          this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
           const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/checkin`, {
             method: 'POST',
             headers,
@@ -1070,10 +1102,10 @@ export class NewApiAdapter extends BasePlatformAdapter {
             return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
           }
           const cookieMessage = this.extractResponseMessage(res);
-          if (cookieMessage) firstFailureMessage = cookieMessage;
+          rememberFailure(cookieMessage);
         } catch (err) {
           const parsed = this.formatRequestErrorMessage(err);
-          if (parsed) firstFailureMessage = parsed;
+          rememberFailure(parsed);
         }
       }
 
@@ -1220,7 +1252,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     for (const cookie of this.buildCookieCandidates(accessToken)) {
       try {
         const headers: Record<string, string> = { Cookie: cookie };
-        Object.assign(headers, this.userIdHeaders(cookieUserId));
+        this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/token/`, {
           method: 'POST',
           headers,
@@ -1263,7 +1295,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
     for (const cookie of this.buildCookieCandidates(accessToken)) {
       const headers: Record<string, string> = { Cookie: cookie };
-      Object.assign(headers, this.userIdHeaders(cookieUserId));
+      this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
 
       try {
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self/groups`, { headers });
@@ -1331,7 +1363,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
     for (const cookie of this.buildCookieCandidates(accessToken)) {
       const headers: Record<string, string> = { Cookie: cookie };
-      Object.assign(headers, this.userIdHeaders(cookieUserId));
+      this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
 
       try {
         if (!tokenId) {
