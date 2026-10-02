@@ -33,6 +33,11 @@ describe('proxyLogRetentionService', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.downstreamKeyDayUsage).run();
+    await db.delete(schema.modelDayUsage).run();
+    await db.delete(schema.siteHourUsage).run();
+    await db.delete(schema.siteDayUsage).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();

@@ -80,6 +80,10 @@ import {
   stopNotificationOutboxWorker,
 } from './services/notificationOutboxService.js';
 import {
+  startAlertEscalationWorker,
+  stopAlertEscalationWorker,
+} from './services/alertIncidentService.js';
+import {
   startBrowserRecoveryTaskSweeper,
   stopBrowserRecoveryTaskSweeper,
 } from './services/browserCredentialRecoveryService.js';
@@ -366,6 +370,7 @@ if (!config.demoMode) {
   startUsageAggregationProjectorScheduler();
   startAdminSnapshotWarmScheduler();
   startNotificationOutboxWorker();
+  await startAlertEscalationWorker();
   await startBrowserRecoveryTaskSweeper();
   await startBridgeContinuationRecoveryScheduler();
   await startGlobalBridgeContinuationScheduler();
@@ -395,6 +400,7 @@ app.addHook('onClose', async () => {
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopNotificationOutboxWorker();
+  stopAlertEscalationWorker();
   stopBrowserRecoveryTaskSweeper();
   await stopBridgeContinuationRecoveryScheduler();
   await stopGlobalBridgeContinuationScheduler();

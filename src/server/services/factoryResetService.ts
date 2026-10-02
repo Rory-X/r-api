@@ -64,6 +64,9 @@ async function clearAllBusinessData() {
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.sites).run();
     await tx.delete(schema.downstreamApiKeys).run();
+    await tx.delete(schema.alertOccurrences).run();
+    await tx.delete(schema.alertIncidents).run();
+    await tx.delete(schema.alertPolicies).run();
     await tx.delete(schema.events).run();
     await tx.delete(schema.notificationOutbox).run();
     await tx.delete(schema.notificationThrottleStates).run();

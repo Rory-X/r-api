@@ -20,6 +20,9 @@ export async function cleanupExpiredProxyLogs(nowMs = Date.now()): Promise<{
   retentionDays: number;
   cutoffUtc: string | null;
   deleted: number;
+  candidateMaxId: number;
+  projectedThroughId: number;
+  blockedByProjection: boolean;
 }> {
   const retentionDays = Math.max(0, Math.trunc(config.proxyLogRetentionDays));
   const cutoffUtc = getProxyLogRetentionCutoffUtc(nowMs);
@@ -29,16 +32,22 @@ export async function cleanupExpiredProxyLogs(nowMs = Date.now()): Promise<{
       retentionDays,
       cutoffUtc: null,
       deleted: 0,
+      candidateMaxId: 0,
+      projectedThroughId: 0,
+      blockedByProjection: false,
     };
   }
 
-  const { deleted } = await cleanupUsageLogs(retentionDays, nowMs);
+  const cleanup = await cleanupUsageLogs(retentionDays, nowMs);
 
   return {
     enabled: true,
     retentionDays,
     cutoffUtc,
-    deleted,
+    deleted: cleanup.deleted,
+    candidateMaxId: cleanup.candidateMaxId,
+    projectedThroughId: cleanup.projectedThroughId,
+    blockedByProjection: cleanup.blockedByProjection,
   };
 }
 
@@ -52,6 +61,11 @@ export function startProxyLogRetentionService(): void {
     try {
       await runObservedWorkerPass(WORKER_NAME, async () => {
       const result = await cleanupExpiredProxyLogs();
+      if (result.blockedByProjection) {
+        console.warn(
+          `[proxy-log-retention] cleanup stopped at projected log ${result.projectedThroughId}; candidate max is ${result.candidateMaxId}`,
+        );
+      }
       if (!result.enabled || result.deleted <= 0) return;
         console.info(`[proxy-log-retention] deleted ${result.deleted} logs before ${result.cutoffUtc}`);
       });

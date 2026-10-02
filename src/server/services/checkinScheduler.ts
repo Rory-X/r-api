@@ -295,7 +295,7 @@ function createLogCleanupTask(cronExpr: string) {
           return;
         }
       console.log(
-        `[Scheduler] Log cleanup complete: usage=${result.usageLogsDeleted}, program=${result.programLogsDeleted}, cutoff=${result.cutoffUtc}`,
+        `[Scheduler] Log cleanup complete: usage=${result.usageLogsDeleted}, program=${result.programLogsDeleted}, cutoff=${result.cutoffUtc}, projectedThrough=${result.usageLogsProjectedThroughId}, projectionBlocked=${result.usageLogsBlockedByProjection}`,
       );
       });
     } catch (err) {

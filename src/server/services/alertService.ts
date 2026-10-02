@@ -1,6 +1,6 @@
 import { db, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
-import { sendNotification } from './notifyService.js';
+import { recordAlertOccurrence } from './alertIncidentService.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { appendSessionTokenRebindHint } from './alertRules.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
@@ -38,11 +38,16 @@ export async function reportTokenExpired(params: {
     source: 'auth',
   });
 
-  await sendNotification(
-    'Token 已失效',
-    `${accountLabel} @ ${siteLabel} 的 Token 无效或已过期${detail}`,
-    'error',
-  );
+  await recordAlertOccurrence({
+    ruleKey: 'token_expired',
+    fingerprint: `account:${params.accountId}`,
+    severity: 'error',
+    title: 'Token 已失效',
+    message: `${accountLabel} @ ${siteLabel} 的 Token 无效或已过期${detail}`,
+    entityType: 'account',
+    entityId: params.accountId,
+    value: { accountId: params.accountId, siteName: siteLabel },
+  });
 }
 
 export async function reportProxyAllFailed(params: { model: string; reason: string }) {
@@ -56,9 +61,14 @@ export async function reportProxyAllFailed(params: { model: string; reason: stri
     createdAt,
   }).run();
 
-  await sendNotification(
-    '代理全部失败',
-    `模型=${params.model}, 原因=${params.reason}`,
-    'error',
-  );
+  await recordAlertOccurrence({
+    ruleKey: 'proxy_all_failed',
+    fingerprint: `model:${params.model}`,
+    severity: 'error',
+    title: '代理全部失败',
+    message: `模型=${params.model}, 原因=${params.reason}`,
+    entityType: 'model',
+    entityId: params.model,
+    value: { model: params.model, reason: params.reason },
+  });
 }

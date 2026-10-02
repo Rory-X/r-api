@@ -39,6 +39,11 @@ describe('logCleanupService', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.downstreamKeyDayUsage).run();
+    await db.delete(schema.modelDayUsage).run();
+    await db.delete(schema.siteHourUsage).run();
+    await db.delete(schema.siteDayUsage).run();
     await db.delete(schema.events).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.accounts).run();
@@ -124,6 +129,40 @@ describe('logCleanupService', () => {
     expect(remainingProxyLogs[0]?.createdAt).toBe('2026-03-10 08:00:00');
     expect(remainingEvents).toHaveLength(1);
     expect(remainingEvents[0]?.title).toBe('new event');
+    expect(result.usageLogsBlockedByProjection).toBe(false);
+  });
+
+  it('keeps usage logs when the required projection watermarks cannot advance', async () => {
+    const account = await seedAccount();
+    const inserted = await db.insert(schema.proxyLogs).values({
+      accountId: account.id,
+      modelRequested: 'gpt-4.1-mini',
+      status: 'success',
+      totalTokens: 100,
+      estimatedCost: 0.1,
+      createdAt: '2026-02-01 08:00:00',
+    }).returning().get();
+    await db.insert(schema.analyticsProjectionCheckpoints).values({
+      projectorKey: 'usage-aggregates-v1',
+      timeZone: 'UTC',
+      lastProxyLogId: 0,
+      leaseOwner: 'other-process',
+      leaseToken: 'other-token',
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }).run();
+
+    const result = await cleanupConfiguredLogs({
+      usageLogsEnabled: true,
+      programLogsEnabled: false,
+      retentionDays: 7,
+      nowMs: Date.parse('2026-03-12T00:00:00Z'),
+    });
+
+    expect(result.usageLogsDeleted).toBe(0);
+    expect(result.usageLogsCandidateMaxId).toBe(inserted.id);
+    expect(result.usageLogsProjectedThroughId).toBe(0);
+    expect(result.usageLogsBlockedByProjection).toBe(true);
+    expect(await db.select().from(schema.proxyLogs).all()).toHaveLength(1);
   });
 
   it('skips cleanup when no target is enabled', async () => {
