@@ -55,7 +55,7 @@ async function main() {
 
   if (isWatchMode) {
     const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const child = spawn(process.execPath, [tsxCli, 'watch', 'src/server/index.ts'], {
+    const child = spawn(process.execPath, [tsxCli, 'watch', 'src/server/entrypoint.ts'], {
       cwd: process.cwd(),
       stdio: 'inherit',
       env: process.env,
@@ -66,7 +66,7 @@ async function main() {
     return;
   }
 
-  const child = spawn(process.execPath, ['dist/server/index.js'], {
+  const child = spawn(process.execPath, ['dist/server/entrypoint.js'], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: process.env,

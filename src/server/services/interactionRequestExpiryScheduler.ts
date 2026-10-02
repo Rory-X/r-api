@@ -1,6 +1,12 @@
 import { expireInteractionRequests } from './interactionRequestService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const DEFAULT_SWEEP_INTERVAL_MS = 15_000;
+const WORKER_NAME = 'interaction-request-expiry';
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let sweepPassPromise: Promise<void> | null = null;
@@ -14,10 +20,12 @@ function normalizeInterval(value: unknown): number {
 
 async function runSweepPass(): Promise<void> {
   try {
-    const expired = await expireInteractionRequests();
-    if (expired > 0) {
-      console.warn(`[interaction] expired ${expired} pending request(s)`);
-    }
+    await runObservedWorkerPass(WORKER_NAME, async () => {
+      const expired = await expireInteractionRequests();
+      if (expired > 0) {
+        console.warn(`[interaction] expired ${expired} pending request(s)`);
+      }
+    });
   } catch (error) {
     console.warn(`[interaction] expiry sweep failed: ${(error as Error)?.message || 'unknown error'}`);
   }
@@ -35,6 +43,7 @@ export async function startInteractionRequestExpiryScheduler(
 ): Promise<void> {
   if (sweepStarted) return;
   sweepStarted = true;
+  startObservedWorker({ name: WORKER_NAME, intervalMs: normalizeInterval(options.intervalMs) });
   scheduleSweepPass();
   await sweepPassPromise;
   if (!sweepStarted) return;
@@ -49,6 +58,7 @@ export async function stopInteractionRequestExpiryScheduler(): Promise<void> {
     sweepTimer = null;
   }
   await sweepPassPromise;
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetInteractionRequestExpirySchedulerForTests(): Promise<void> {

@@ -1,6 +1,12 @@
 import { reconcileGlobalBridgeContinuationTasks } from './globalBridgeContinuationService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const DEFAULT_RECONCILIATION_INTERVAL_MS = 5_000;
+const WORKER_NAME = 'global-bridge-continuation';
 
 let reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 let reconciliationPassPromise: Promise<void> | null = null;
@@ -14,10 +20,12 @@ function normalizeInterval(value: unknown): number {
 
 async function runReconciliationPass(): Promise<void> {
   try {
-    const coverage = await reconcileGlobalBridgeContinuationTasks();
-    if (coverage.created > 0) {
-      console.info(`[bridge-continuation] global mode covered ${coverage.created} new session(s)`);
-    }
+    await runObservedWorkerPass(WORKER_NAME, async () => {
+      const coverage = await reconcileGlobalBridgeContinuationTasks();
+      if (coverage.created > 0) {
+        console.info(`[bridge-continuation] global mode covered ${coverage.created} new session(s)`);
+      }
+    });
   } catch (error) {
     console.warn(
       `[bridge-continuation] global reconciliation failed: ${(error as Error)?.message || 'unknown error'}`,
@@ -37,6 +45,7 @@ export async function startGlobalBridgeContinuationScheduler(
 ): Promise<void> {
   if (reconciliationStarted) return;
   reconciliationStarted = true;
+  startObservedWorker({ name: WORKER_NAME, intervalMs: normalizeInterval(options.intervalMs) });
   scheduleReconciliationPass();
   await reconciliationPassPromise;
   if (!reconciliationStarted) return;
@@ -51,6 +60,7 @@ export async function stopGlobalBridgeContinuationScheduler(): Promise<void> {
     reconciliationTimer = null;
   }
   await reconciliationPassPromise;
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetGlobalBridgeContinuationSchedulerForTests(): Promise<void> {

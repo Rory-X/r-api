@@ -15,6 +15,11 @@ import {
   resolveCheckinDayKey,
   type CheckinSchedulePolicy,
 } from './checkinSchedulePolicy.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 export type CheckinScheduleMode = 'cron' | 'interval';
 
@@ -30,6 +35,11 @@ let checkinPassInFlight = false;
 const DAILY_SUMMARY_DEFAULT_CRON = '58 23 * * *';
 const LOG_CLEANUP_DEFAULT_CRON = '0 6 * * *';
 const CHECKIN_INTERVAL_POLL_MS = 60_000;
+const CRON_WORKER_FRESHNESS_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const CHECKIN_WORKER = 'scheduled-checkin';
+const BALANCE_WORKER = 'scheduled-balance-refresh';
+const DAILY_SUMMARY_WORKER = 'scheduled-daily-summary';
+const LOG_CLEANUP_WORKER = 'scheduled-log-cleanup';
 
 async function resolveJsonSetting<T>(
   settingKey: string,
@@ -144,34 +154,36 @@ async function runCheckinPass(input: {
   checkinPassInFlight = true;
   const now = input.now || new Date();
   try {
-    const candidates = await loadEligibleCheckinCandidates();
-    const dueAccountIds = selectDueCheckinAccountIds(candidates, {
-      mode: input.mode,
-      intervalHours: config.checkinIntervalHours,
-      policy: config.checkinSchedulePolicy,
-      now,
-      attemptState: input.mode === 'interval' ? intervalAttemptByAccount : undefined,
-      attemptDayState: input.mode === 'cron' ? cronAttemptDayByAccount : undefined,
-      catchUpPass: input.catchUpPass,
-    });
-    if (dueAccountIds.length === 0) return;
+    await runObservedWorkerPass(CHECKIN_WORKER, async () => {
+      const candidates = await loadEligibleCheckinCandidates();
+      const dueAccountIds = selectDueCheckinAccountIds(candidates, {
+        mode: input.mode,
+        intervalHours: config.checkinIntervalHours,
+        policy: config.checkinSchedulePolicy,
+        now,
+        attemptState: input.mode === 'interval' ? intervalAttemptByAccount : undefined,
+        attemptDayState: input.mode === 'cron' ? cronAttemptDayByAccount : undefined,
+        catchUpPass: input.catchUpPass,
+      });
+      if (dueAccountIds.length === 0) return;
 
-    if (input.mode === 'interval') {
-      const nowMs = now.getTime();
-      for (const accountId of dueAccountIds) intervalAttemptByAccount.set(accountId, nowMs);
-    } else {
-      const dayKey = resolveCheckinDayKey(now, config.checkinSchedulePolicy);
-      for (const accountId of dueAccountIds) cronAttemptDayByAccount.set(accountId, dayKey);
-    }
+      if (input.mode === 'interval') {
+        const nowMs = now.getTime();
+        for (const accountId of dueAccountIds) intervalAttemptByAccount.set(accountId, nowMs);
+      } else {
+        const dayKey = resolveCheckinDayKey(now, config.checkinSchedulePolicy);
+        for (const accountId of dueAccountIds) cronAttemptDayByAccount.set(accountId, dayKey);
+      }
 
-    const results = await checkinAll({
-      accountIds: dueAccountIds,
-      scheduleMode: input.mode,
-      automatic: true,
+      const results = await checkinAll({
+        accountIds: dueAccountIds,
+        scheduleMode: input.mode,
+        automatic: true,
+      });
+      const success = results.filter((r) => r.result.success).length;
+      const failed = results.length - success;
+      console.log(`[Scheduler] ${input.mode} check-in complete: ${success} success, ${failed} failed`);
     });
-    const success = results.filter((r) => r.result.success).length;
-    const failed = results.length - success;
-    console.log(`[Scheduler] ${input.mode} check-in complete: ${success} success, ${failed} failed`);
   } catch (err) {
     console.error(`[Scheduler] ${input.mode} check-in error:`, err);
   } finally {
@@ -205,10 +217,17 @@ function stopCheckinSchedule() {
     clearInterval(checkinIntervalTimer);
     checkinIntervalTimer = null;
   }
+  stopObservedWorker(CHECKIN_WORKER);
 }
 
 function startCheckinSchedule() {
   stopCheckinSchedule();
+  startObservedWorker({
+    name: CHECKIN_WORKER,
+    intervalMs: config.checkinScheduleMode === 'interval'
+      ? CHECKIN_INTERVAL_POLL_MS
+      : CRON_WORKER_FRESHNESS_INTERVAL_MS,
+  });
   if (config.checkinScheduleMode === 'interval') {
     checkinIntervalTimer = setInterval(() => {
       void runIntervalCheckinPass();
@@ -224,12 +243,15 @@ function startCheckinSchedule() {
 }
 
 function createBalanceTask(cronExpr: string) {
+  startObservedWorker({ name: BALANCE_WORKER, intervalMs: CRON_WORKER_FRESHNESS_INTERVAL_MS });
   return cron.schedule(cronExpr, async () => {
     console.log(`[Scheduler] Refreshing balances at ${new Date().toISOString()}`);
     try {
-      await refreshAllBalances();
-      await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-      console.log('[Scheduler] Balance refresh complete');
+      await runObservedWorkerPass(BALANCE_WORKER, async () => {
+        await refreshAllBalances();
+        await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
+        console.log('[Scheduler] Balance refresh complete');
+      });
     } catch (err) {
       console.error('[Scheduler] Balance refresh error:', err);
     }
@@ -237,17 +259,20 @@ function createBalanceTask(cronExpr: string) {
 }
 
 function createDailySummaryTask(cronExpr: string) {
+  startObservedWorker({ name: DAILY_SUMMARY_WORKER, intervalMs: CRON_WORKER_FRESHNESS_INTERVAL_MS });
   return cron.schedule(cronExpr, async () => {
     console.log(`[Scheduler] Sending daily summary at ${new Date().toISOString()}`);
     try {
-      const metrics = await collectDailySummaryMetrics();
-      const { title, message } = buildDailySummaryNotification(metrics);
-      await sendNotification(title, message, 'info', {
-        bypassThrottle: true,
-        requireChannel: true,
-        throwOnFailure: true,
+      await runObservedWorkerPass(DAILY_SUMMARY_WORKER, async () => {
+        const metrics = await collectDailySummaryMetrics();
+        const { title, message } = buildDailySummaryNotification(metrics);
+        await sendNotification(title, message, 'info', {
+          bypassThrottle: true,
+          requireChannel: true,
+          throwOnFailure: true,
+        });
+        console.log(`[Scheduler] Daily summary sent: ${title}`);
       });
-      console.log(`[Scheduler] Daily summary sent: ${title}`);
     } catch (err) {
       console.error('[Scheduler] Daily summary error:', err);
     }
@@ -255,21 +280,24 @@ function createDailySummaryTask(cronExpr: string) {
 }
 
 function createLogCleanupTask(cronExpr: string) {
+  startObservedWorker({ name: LOG_CLEANUP_WORKER, intervalMs: CRON_WORKER_FRESHNESS_INTERVAL_MS });
   return cron.schedule(cronExpr, async () => {
-    if (!config.logCleanupConfigured) {
-      console.log('[Scheduler] Log cleanup skipped: legacy fallback mode is active');
-      return;
-    }
-    console.log(`[Scheduler] Running log cleanup at ${new Date().toISOString()}`);
     try {
-      const result = await cleanupConfiguredLogs();
-      if (!result.enabled) {
-        console.log('[Scheduler] Log cleanup skipped: no log target enabled');
-        return;
-      }
+      await runObservedWorkerPass(LOG_CLEANUP_WORKER, async () => {
+        if (!config.logCleanupConfigured) {
+          console.log('[Scheduler] Log cleanup skipped: legacy fallback mode is active');
+          return;
+        }
+        console.log(`[Scheduler] Running log cleanup at ${new Date().toISOString()}`);
+        const result = await cleanupConfiguredLogs();
+        if (!result.enabled) {
+          console.log('[Scheduler] Log cleanup skipped: no log target enabled');
+          return;
+        }
       console.log(
         `[Scheduler] Log cleanup complete: usage=${result.usageLogsDeleted}, program=${result.programLogsDeleted}, cutoff=${result.cutoffUtc}`,
       );
+      });
     } catch (err) {
       console.error('[Scheduler] Log cleanup error:', err);
     }
@@ -339,6 +367,19 @@ export async function startScheduler() {
   );
 }
 
+export function stopScheduler() {
+  stopCheckinSchedule();
+  balanceTask?.stop();
+  dailySummaryTask?.stop();
+  logCleanupTask?.stop();
+  balanceTask = null;
+  dailySummaryTask = null;
+  logCleanupTask = null;
+  stopObservedWorker(BALANCE_WORKER);
+  stopObservedWorker(DAILY_SUMMARY_WORKER);
+  stopObservedWorker(LOG_CLEANUP_WORKER);
+}
+
 export function updateCheckinCron(cronExpr: string) {
   updateCheckinSchedule({
     mode: 'cron',
@@ -404,13 +445,7 @@ export function updateLogCleanupSettings(input: {
 }
 
 export function __resetCheckinSchedulerForTests() {
-  stopCheckinSchedule();
-  balanceTask?.stop();
-  dailySummaryTask?.stop();
-  logCleanupTask?.stop();
-  balanceTask = null;
-  dailySummaryTask = null;
-  logCleanupTask = null;
+  stopScheduler();
   intervalAttemptByAccount.clear();
   cronAttemptDayByAccount.clear();
   checkinPassInFlight = false;

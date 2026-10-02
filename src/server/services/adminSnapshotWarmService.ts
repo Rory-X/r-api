@@ -6,8 +6,14 @@ import {
 } from "./dashboardSnapshotService.js";
 import { getSiteStatsSnapshot } from "./siteStatsSnapshotService.js";
 import { runUsageAggregationProjectionPass } from "./usageAggregationService.js";
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from "../observability/workerHealth.js";
 
 const ADMIN_SNAPSHOT_WARM_INTERVAL_MS = 20_000;
+const WORKER_NAME = "admin-snapshot-warm";
 const ADMIN_SNAPSHOT_PRUNE_EVERY_PASSES = 6;
 
 type SnapshotWarmTarget = {
@@ -70,7 +76,7 @@ export async function warmAdminSnapshotsOnce(): Promise<void> {
     return adminSnapshotWarmInFlight;
   }
 
-  adminSnapshotWarmInFlight = runAdminSnapshotWarmPass().finally(() => {
+  adminSnapshotWarmInFlight = runObservedWorkerPass(WORKER_NAME, runAdminSnapshotWarmPass).finally(() => {
     adminSnapshotWarmInFlight = null;
   });
   return adminSnapshotWarmInFlight;
@@ -78,6 +84,7 @@ export async function warmAdminSnapshotsOnce(): Promise<void> {
 
 export function startAdminSnapshotWarmScheduler() {
   if (adminSnapshotWarmTimer) return;
+  startObservedWorker({ name: WORKER_NAME, intervalMs: ADMIN_SNAPSHOT_WARM_INTERVAL_MS });
   void warmAdminSnapshotsOnce();
   adminSnapshotWarmTimer = setInterval(() => {
     void warmAdminSnapshotsOnce();
@@ -92,6 +99,7 @@ export async function stopAdminSnapshotWarmScheduler() {
   if (adminSnapshotWarmInFlight) {
     await adminSnapshotWarmInFlight;
   }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetAdminSnapshotWarmSchedulerForTests() {

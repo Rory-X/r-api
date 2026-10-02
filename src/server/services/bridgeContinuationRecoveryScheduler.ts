@@ -1,6 +1,12 @@
 import { recoverExpiredBridgeContinuationLeases } from './bridgeContinuationService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const DEFAULT_RECOVERY_INTERVAL_MS = 5_000;
+const WORKER_NAME = 'bridge-continuation-recovery';
 
 let recoveryTimer: ReturnType<typeof setInterval> | null = null;
 let recoveryPassPromise: Promise<void> | null = null;
@@ -14,10 +20,12 @@ function normalizeInterval(value: unknown): number {
 
 async function runRecoveryPass(): Promise<void> {
   try {
-    const recovered = await recoverExpiredBridgeContinuationLeases();
-    if (recovered > 0) {
-      console.warn(`[bridge-continuation] recovered ${recovered} expired lease(s)`);
-    }
+    await runObservedWorkerPass(WORKER_NAME, async () => {
+      const recovered = await recoverExpiredBridgeContinuationLeases();
+      if (recovered > 0) {
+        console.warn(`[bridge-continuation] recovered ${recovered} expired lease(s)`);
+      }
+    });
   } catch (error) {
     console.warn(
       `[bridge-continuation] lease recovery failed: ${(error as Error)?.message || 'unknown error'}`,
@@ -37,6 +45,7 @@ export async function startBridgeContinuationRecoveryScheduler(
 ): Promise<void> {
   if (recoveryStarted) return;
   recoveryStarted = true;
+  startObservedWorker({ name: WORKER_NAME, intervalMs: normalizeInterval(options.intervalMs) });
   scheduleRecoveryPass();
   await recoveryPassPromise;
   if (!recoveryStarted) return;
@@ -51,6 +60,7 @@ export async function stopBridgeContinuationRecoveryScheduler(): Promise<void> {
     recoveryTimer = null;
   }
   await recoveryPassPromise;
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetBridgeContinuationRecoverySchedulerForTests(): Promise<void> {

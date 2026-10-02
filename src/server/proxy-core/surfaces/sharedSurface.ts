@@ -18,6 +18,7 @@ import {
   type ReplaySafety,
   type RetryOwner,
 } from '../../services/proxyRetryContract.js';
+import { observeProxyFirstByte } from '../../observability/metrics.js';
 import {
   resolveApiChannelRetryPolicy,
   upstreamClaimsRetryForFailure,
@@ -235,6 +236,9 @@ export async function writeSurfaceProxyLog(input: {
   requestId?: string | null;
   attemptId?: string | null;
 }): Promise<void> {
+  if (input.status === 'success') {
+    observeProxyFirstByte(input.downstreamPath, input.firstByteLatencyMs);
+  }
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
     const normalizedErrorMessage = composeProxyLogMessage({

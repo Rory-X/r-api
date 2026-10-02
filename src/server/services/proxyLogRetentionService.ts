@@ -1,7 +1,13 @@
 import { config } from '../config.js';
 import { cleanupUsageLogs, getLogCleanupCutoffUtc } from './logCleanupService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 let retentionTimer: ReturnType<typeof setInterval> | null = null;
+const WORKER_NAME = 'proxy-log-retention';
 
 export function getProxyLogRetentionCutoffUtc(nowMs = Date.now()): string | null {
   const days = Math.max(0, Math.trunc(config.proxyLogRetentionDays));
@@ -41,11 +47,14 @@ export function startProxyLogRetentionService(): void {
 
   const intervalMinutes = Math.max(1, Math.trunc(config.proxyLogRetentionPruneIntervalMinutes));
   const intervalMs = intervalMinutes * 60 * 1000;
+  startObservedWorker({ name: WORKER_NAME, intervalMs });
   const runCleanup = async () => {
     try {
+      await runObservedWorkerPass(WORKER_NAME, async () => {
       const result = await cleanupExpiredProxyLogs();
       if (!result.enabled || result.deleted <= 0) return;
-      console.info(`[proxy-log-retention] deleted ${result.deleted} logs before ${result.cutoffUtc}`);
+        console.info(`[proxy-log-retention] deleted ${result.deleted} logs before ${result.cutoffUtc}`);
+      });
     } catch (error) {
       console.warn('[proxy-log-retention] cleanup failed', error);
     }
@@ -57,9 +66,11 @@ export function startProxyLogRetentionService(): void {
 }
 
 export function stopProxyLogRetentionService(): void {
-  if (!retentionTimer) return;
-  clearInterval(retentionTimer);
-  retentionTimer = null;
+  if (retentionTimer) {
+    clearInterval(retentionTimer);
+    retentionTimer = null;
+  }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export function setLegacyProxyLogRetentionFallbackEnabled(enabled: boolean): void {
@@ -68,4 +79,9 @@ export function setLegacyProxyLogRetentionFallbackEnabled(enabled: boolean): voi
     return;
   }
   stopProxyLogRetentionService();
+  startObservedWorker({
+    name: WORKER_NAME,
+    intervalMs: Math.max(1, Math.trunc(config.proxyLogRetentionPruneIntervalMinutes)) * 60 * 1000,
+    enabled: false,
+  });
 }

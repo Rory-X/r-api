@@ -1,5 +1,10 @@
 import { and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
 import { config } from '../config.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 import { db, schema } from '../db/index.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
@@ -33,6 +38,7 @@ const CHANNEL_RECOVERY_PROBE_CONCURRENCY = 1;
 const CHANNEL_RECOVERY_MAX_BATCH = 4;
 const CHANNEL_RECOVERY_COOLDOWN_RECHECK_MS = 30_000;
 const CHANNEL_RECOVERY_ACTIVE_RECHECK_MS = 5 * 60_000;
+const WORKER_NAME = 'channel-recovery-probe';
 
 let recoveryProbeSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 let recoveryProbeSweepInFlight: Promise<void> | null = null;
@@ -310,7 +316,7 @@ async function runRecoveryProbeCandidate(candidate: RecoveryProbeCandidate, nowM
     console.warn(`[channel-recovery-probe] channel ${candidate.channelId} probe failed`, error);
   } finally {
     if (claimedRuntimeRecovery) {
-      releaseSiteRuntimeRecoveryProbe({
+      await releaseSiteRuntimeRecoveryProbe({
         siteId: candidate.site.id,
         modelName: candidate.modelName,
         channelId: candidate.channelId,
@@ -364,6 +370,7 @@ export async function runChannelRecoveryProbeSweep(nowMs = Date.now()): Promise<
 export function startChannelRecoveryProbeScheduler(intervalMs = CHANNEL_RECOVERY_SWEEP_INTERVAL_MS) {
   stopChannelRecoveryProbeScheduler();
   if (!config.channelRecoveryProbeEnabled) {
+    startObservedWorker({ name: WORKER_NAME, intervalMs: CHANNEL_RECOVERY_SWEEP_INTERVAL_MS, enabled: false });
     return {
       enabled: false,
       intervalMs: 0,
@@ -371,13 +378,14 @@ export function startChannelRecoveryProbeScheduler(intervalMs = CHANNEL_RECOVERY
   }
 
   const safeIntervalMs = Math.max(10_000, Math.trunc(intervalMs || 0));
+  startObservedWorker({ name: WORKER_NAME, intervalMs: safeIntervalMs });
   recoveryProbeSchedulerTimer = setInterval(() => {
-    void runChannelRecoveryProbeSweep().catch((error) => {
+    void runObservedWorkerPass(WORKER_NAME, runChannelRecoveryProbeSweep).catch((error) => {
       console.warn('[channel-recovery-probe] background sweep failed', error);
     });
   }, safeIntervalMs);
   shouldUnrefTimer(recoveryProbeSchedulerTimer);
-  void runChannelRecoveryProbeSweep().catch((error) => {
+  void runObservedWorkerPass(WORKER_NAME, runChannelRecoveryProbeSweep).catch((error) => {
     console.warn('[channel-recovery-probe] initial sweep failed', error);
   });
   return {
@@ -391,6 +399,7 @@ export function stopChannelRecoveryProbeScheduler() {
     clearInterval(recoveryProbeSchedulerTimer);
     recoveryProbeSchedulerTimer = null;
   }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export function resetChannelRecoveryProbeState() {

@@ -33,7 +33,7 @@ npm run build
 ### 4. 启动测试服务器
 
 ```bash
-DATA_DIR="./tmp/test-db" node dist/server/index.js
+DATA_DIR="./tmp/test-db" node dist/server/entrypoint.js
 ```
 
 服务器将在 http://localhost:4000 启动

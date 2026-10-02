@@ -38,8 +38,9 @@ import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { updateCenterRoutes } from './routes/api/updateCenter.js';
+import { operationsRoutes } from './routes/operations.js';
 import { proxyRoutes } from './routes/proxy/router.js';
-import { startScheduler } from './services/checkinScheduler.js';
+import { startScheduler, stopScheduler } from './services/checkinScheduler.js';
 import * as routeRefreshWorkflow from './services/routeRefreshWorkflow.js';
 import { startProxyFileRetentionService, stopProxyFileRetentionService } from './services/proxyFileRetentionService.js';
 import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
@@ -72,7 +73,7 @@ import {
   startUsageAggregationProjectorScheduler,
   stopUsageAggregationProjectorScheduler,
 } from './services/usageAggregationService.js';
-import { reloadBackupWebdavScheduler } from './services/backupService.js';
+import { reloadBackupWebdavScheduler, stopBackupWebdavScheduler } from './services/backupService.js';
 import {
   startNotificationOutboxWorker,
   stopNotificationOutboxWorker,
@@ -106,6 +107,9 @@ import { ensureAdminAuthReady, pruneAdminSessions } from './services/adminAuthSe
 import { pruneAdminAuthChallenges } from './services/adminTotpService.js';
 import { configureUpstreamHttpTransport } from './services/upstreamHttpTransport.js';
 import { cleanupLegacyGlobalProxyTokenState } from './services/legacyGlobalProxyTokenCleanupService.js';
+import { setApplicationReadiness } from './observability/healthService.js';
+import { registerHttpObservabilityHooks } from './observability/httpInstrumentation.js';
+import { shutdownOpenTelemetry } from './observability/telemetry.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -269,6 +273,7 @@ const app = Fastify(buildFastifyOptions(config));
 
 await app.register(cookie);
 await app.register(cors);
+registerHttpObservabilityHooks(app);
 
 app.addHook('onRequest', async (request, reply) => {
   if (config.demoMode && isDemoModeRequestBlocked(request.method, request.url)) {
@@ -284,6 +289,7 @@ app.addHook('onRequest', async (request, reply) => {
 });
 
 // Register API routes
+await app.register(operationsRoutes);
 await app.register(registerDesktopRoutes);
 await app.register(sitesRoutes);
 await app.register(accountsRoutes);
@@ -375,6 +381,9 @@ if (!config.demoMode) {
 setLegacyProxyLogRetentionFallbackEnabled(!config.demoMode && !config.logCleanupConfigured);
 if (!config.demoMode) startProxyFileRetentionService();
 app.addHook('onClose', async () => {
+  setApplicationReadiness(false);
+  stopScheduler();
+  stopBackupWebdavScheduler();
   stopSiteAnnouncementPolling();
   stopUpdateCenterPolling();
   stopProxyFileRetentionService();
@@ -392,11 +401,13 @@ app.addHook('onClose', async () => {
   await stopLocalConnectorHealthScheduler();
   await stopSub2ApiManagedRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
+  await shutdownOpenTelemetry();
 });
 
 // Start server
 try {
   await app.listen({ port: config.port, host: config.listenHost });
+  setApplicationReadiness(true);
   const summaryLines = buildStartupSummaryLines({
     port: config.port,
     host: config.listenHost,

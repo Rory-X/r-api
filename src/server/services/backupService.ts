@@ -6,6 +6,11 @@ import { upsertSetting } from '../db/upsertSetting.js';
 import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const BACKUP_VERSION = '2.1';
 
@@ -262,6 +267,8 @@ const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
 const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
 const BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON = '0 */6 * * *';
 const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
+const BACKUP_WEBDAV_WORKER = 'backup-webdav';
+const BACKUP_WEBDAV_FRESHNESS_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 let backupWebdavTask: cron.ScheduledTask | null = null;
 
 const DIRECT_API_PLATFORMS = new Set([
@@ -1287,9 +1294,10 @@ async function fetchBackupWebdav(url: string, init: RequestInit): Promise<Respon
   }
 }
 
-function stopBackupWebdavScheduler() {
+export function stopBackupWebdavScheduler() {
   backupWebdavTask?.stop();
   backupWebdavTask = null;
+  stopObservedWorker(BACKUP_WEBDAV_WORKER);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -2113,17 +2121,33 @@ export async function importBackupFromWebdav() {
 export async function reloadBackupWebdavScheduler() {
   stopBackupWebdavScheduler();
   const config = await loadBackupWebdavConfig();
-  if (!config.enabled || !config.autoSyncEnabled) return;
+  if (!config.enabled || !config.autoSyncEnabled) {
+    startObservedWorker({
+      name: BACKUP_WEBDAV_WORKER,
+      intervalMs: BACKUP_WEBDAV_FRESHNESS_INTERVAL_MS,
+      enabled: false,
+    });
+    return;
+  }
+
+  startObservedWorker({
+    name: BACKUP_WEBDAV_WORKER,
+    intervalMs: BACKUP_WEBDAV_FRESHNESS_INTERVAL_MS,
+  });
 
   try {
     validateBackupWebdavConfig(config);
   } catch (error: any) {
+    await runObservedWorkerPass(BACKUP_WEBDAV_WORKER, async () => { throw error; }).catch(() => undefined);
     console.warn(`[backup/webdav] invalid config: ${error?.message || 'unknown error'}`);
     return;
   }
 
   backupWebdavTask = cron.schedule(config.autoSyncCron, () => {
-    void exportBackupToWebdav(config.exportType).catch((error) => {
+    void runObservedWorkerPass(
+      BACKUP_WEBDAV_WORKER,
+      () => exportBackupToWebdav(config.exportType),
+    ).catch((error) => {
       console.warn(`[backup/webdav] auto sync failed: ${(error as Error)?.message || 'unknown error'}`);
     });
   });

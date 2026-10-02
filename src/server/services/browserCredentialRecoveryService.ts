@@ -2,6 +2,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, inArray, lte, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
+import {
   getSiteAdapterContract,
   type BrowserCaptureField,
   type BrowserCaptureSource,
@@ -105,6 +110,7 @@ type BrowserContractSnapshot = {
 const MAX_FIELD_VALUE_BYTES = 512 * 1024;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
 const TASK_SWEEP_INTERVAL_MS = 60_000;
+const WORKER_NAME = 'browser-recovery-task-sweeper';
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 function hashToken(token: string): string {
@@ -591,17 +597,20 @@ export async function expireBrowserRecoveryTasks(nowIso = new Date().toISOString
 
 export async function startBrowserRecoveryTaskSweeper(): Promise<void> {
   if (sweepTimer) return;
-  await expireDueTasks();
+  startObservedWorker({ name: WORKER_NAME, intervalMs: TASK_SWEEP_INTERVAL_MS });
+  await runObservedWorkerPass(WORKER_NAME, expireDueTasks);
   sweepTimer = setInterval(() => {
-    void expireDueTasks().catch(() => undefined);
+    void runObservedWorkerPass(WORKER_NAME, expireDueTasks).catch(() => undefined);
   }, TASK_SWEEP_INTERVAL_MS);
   sweepTimer.unref?.();
 }
 
 export function stopBrowserRecoveryTaskSweeper(): void {
-  if (!sweepTimer) return;
-  clearInterval(sweepTimer);
-  sweepTimer = null;
+  if (sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export const browserCredentialRecoveryInternals = {

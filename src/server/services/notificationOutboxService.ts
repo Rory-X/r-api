@@ -12,6 +12,11 @@ import {
 } from 'drizzle-orm';
 import { config, normalizeNotificationDeliveryPolicy } from '../config.js';
 import { db, runtimeDbDialect, schema } from '../db/index.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 import { createNotificationSignature } from './notificationThrottle.js';
 import {
   dispatchNotificationChannel,
@@ -56,6 +61,7 @@ type DispatchNotificationChannel = typeof dispatchNotificationChannel;
 const MAX_THROTTLE_CAS_ATTEMPTS = 12;
 const DEFAULT_WORKER_BATCH_SIZE = 16;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
+const WORKER_NAME = 'notification-outbox';
 
 let workerTimer: ReturnType<typeof setInterval> | null = null;
 let workerPassPromise: Promise<void> | null = null;
@@ -633,12 +639,14 @@ export async function cleanupNotificationOutbox(now = new Date()): Promise<{
 
 async function runWorkerPass(): Promise<void> {
   try {
-    await runNotificationOutboxPass();
-    const nowMs = Date.now();
-    if (nowMs - lastCleanupAtMs >= CLEANUP_INTERVAL_MS) {
-      lastCleanupAtMs = nowMs;
-      await cleanupNotificationOutbox(new Date(nowMs));
-    }
+    await runObservedWorkerPass(WORKER_NAME, async () => {
+      await runNotificationOutboxPass();
+      const nowMs = Date.now();
+      if (nowMs - lastCleanupAtMs >= CLEANUP_INTERVAL_MS) {
+        lastCleanupAtMs = nowMs;
+        await cleanupNotificationOutbox(new Date(nowMs));
+      }
+    });
   } catch (error) {
     console.warn(`[notification-outbox] worker pass failed: ${normalizeErrorMessage(error)}`);
   }
@@ -654,8 +662,9 @@ function scheduleWorkerPass(): void {
 export function startNotificationOutboxWorker(): void {
   if (workerTimer) clearInterval(workerTimer);
   workerStopped = false;
-  scheduleWorkerPass();
   const pollIntervalMs = normalizePositiveMs(config.notifyOutboxPollIntervalMs, 1_000);
+  startObservedWorker({ name: WORKER_NAME, intervalMs: pollIntervalMs });
+  scheduleWorkerPass();
   workerTimer = setInterval(scheduleWorkerPass, pollIntervalMs);
   workerTimer.unref?.();
 }
@@ -667,6 +676,7 @@ export async function stopNotificationOutboxWorker(): Promise<void> {
     workerTimer = null;
   }
   await workerPassPromise;
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetNotificationOutboxWorkerForTests(): Promise<void> {

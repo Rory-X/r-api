@@ -6,10 +6,16 @@ import {
   isSub2ApiPlatform,
 } from './sub2apiManagedAuth.js';
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const ACTIVE_STATUS = 'active';
 const SUB2API_PLATFORM = 'sub2api';
 const SUB2API_REFRESH_SCHEDULER_INTERVAL_MS = 60_000;
+const WORKER_NAME = 'sub2api-managed-refresh';
 export const SUB2API_REFRESH_SCHEDULER_CONCURRENCY = 4;
 
 let sub2ApiRefreshSchedulerTimer: ReturnType<typeof setInterval> | null = null;
@@ -115,7 +121,7 @@ async function runScheduledSub2ApiRefreshPass(): Promise<void> {
     return sub2ApiRefreshPassInFlight;
   }
 
-  sub2ApiRefreshPassInFlight = executeSub2ApiManagedRefreshPass()
+  sub2ApiRefreshPassInFlight = runObservedWorkerPass(WORKER_NAME, executeSub2ApiManagedRefreshPass)
     .then(() => undefined)
     .catch((error) => {
       console.warn(`[sub2api-refresh] scheduled pass failed: ${(error as Error)?.message || 'unknown error'}`);
@@ -131,6 +137,7 @@ export function startSub2ApiManagedRefreshScheduler(intervalMs = SUB2API_REFRESH
   clearSub2ApiRefreshSchedulerTimer();
 
   const safeIntervalMs = Math.max(SUB2API_REFRESH_SCHEDULER_INTERVAL_MS, Math.trunc(intervalMs || 0));
+  startObservedWorker({ name: WORKER_NAME, intervalMs: safeIntervalMs });
   void runScheduledSub2ApiRefreshPass();
   sub2ApiRefreshSchedulerTimer = setInterval(() => {
     void runScheduledSub2ApiRefreshPass();
@@ -148,6 +155,7 @@ export async function stopSub2ApiManagedRefreshScheduler() {
   if (sub2ApiRefreshPassInFlight) {
     await sub2ApiRefreshPassInFlight;
   }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetSub2ApiManagedRefreshSchedulerForTests() {

@@ -5,6 +5,11 @@ import { startBackgroundTask } from './backgroundTaskService.js';
 import { isUsableAccountToken, ACCOUNT_TOKEN_VALUE_STATUS_READY } from './accountTokenService.js';
 import { probeRuntimeModel } from './runtimeModelProbe.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 type ProbeStatus = 'supported' | 'unsupported' | 'inconclusive' | 'skipped';
 
@@ -65,6 +70,7 @@ export type ModelAvailabilityProbeExecutionResult = {
 };
 
 let probeSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+const WORKER_NAME = 'model-availability-probe';
 const probeAccountLeases = new Set<number>();
 
 async function mapWithConcurrency<T, R>(
@@ -416,6 +422,7 @@ export function queueModelAvailabilityProbeTask(input: {
 export function startModelAvailabilityProbeScheduler(intervalMs = config.modelAvailabilityProbeIntervalMs) {
   stopModelAvailabilityProbeScheduler();
   if (!config.modelAvailabilityProbeEnabled) {
+    startObservedWorker({ name: WORKER_NAME, intervalMs: 60_000, enabled: false });
     return {
       enabled: false,
       intervalMs: 0,
@@ -423,9 +430,14 @@ export function startModelAvailabilityProbeScheduler(intervalMs = config.modelAv
   }
 
   const safeIntervalMs = Math.max(60_000, Math.trunc(intervalMs || 0));
+  startObservedWorker({ name: WORKER_NAME, intervalMs: safeIntervalMs });
   probeSchedulerTimer = setInterval(() => {
-    void queueModelAvailabilityProbeTask({
-      title: '后台模型可用性探测',
+    void runObservedWorkerPass(WORKER_NAME, async () => {
+      await queueModelAvailabilityProbeTask({
+        title: '后台模型可用性探测',
+      });
+    }).catch((error) => {
+      console.warn('[model-availability-probe] failed to queue background task', error);
     });
   }, safeIntervalMs);
   probeSchedulerTimer.unref?.();
@@ -440,6 +452,7 @@ export function stopModelAvailabilityProbeScheduler() {
     clearInterval(probeSchedulerTimer);
     probeSchedulerTimer = null;
   }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export function __resetModelAvailabilityProbeExecutionStateForTests(): void {

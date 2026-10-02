@@ -62,4 +62,4 @@ EXPOSE 4000
 ENV NODE_ENV=production
 ENV DATA_DIR=/app/data
 
-CMD ["sh", "-c", "node dist/server/db/migrate.js && node dist/server/index.js"]
+CMD ["sh", "-c", "node dist/server/db/migrate.js && node dist/server/entrypoint.js"]

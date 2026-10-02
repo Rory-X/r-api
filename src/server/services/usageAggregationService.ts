@@ -12,12 +12,18 @@ import {
   type StoredUtcDateTimeInput,
 } from './localTimeService.js';
 import { clearSnapshotCache } from './snapshotCacheService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const USAGE_PROJECTOR_KEY = 'usage-aggregates-v1';
 const PROJECTION_BATCH_SIZE = 1_000;
 const PROJECTION_MAX_BATCHES_PER_PASS = 120;
 const PROJECTION_INTERVAL_MS = 5_000;
 const PROJECTION_LEASE_MS = 10 * 60_000;
+const WORKER_NAME = 'usage-aggregation-projector';
 
 type ProjectionCheckpointRow = typeof schema.analyticsProjectionCheckpoints.$inferSelect;
 type ProjectionLease = {
@@ -848,7 +854,10 @@ export async function runUsageAggregationProjectionPass(
     return projectionInFlight;
   }
 
-  projectionInFlight = runUsageAggregationProjectionPassImpl(options).finally(() => {
+  projectionInFlight = runObservedWorkerPass(
+    WORKER_NAME,
+    () => runUsageAggregationProjectionPassImpl(options),
+  ).finally(() => {
     projectionInFlight = null;
   });
   return projectionInFlight;
@@ -874,6 +883,7 @@ export async function requestUsageAggregatesRecompute(fromLogId = 1): Promise<vo
 
 export function startUsageAggregationProjectorScheduler() {
   if (projectionTimer) return;
+  startObservedWorker({ name: WORKER_NAME, intervalMs: PROJECTION_INTERVAL_MS });
   void runUsageAggregationProjectionPass();
   projectionTimer = setInterval(() => {
     void runUsageAggregationProjectionPass();
@@ -888,6 +898,7 @@ export async function stopUsageAggregationProjectorScheduler() {
   if (projectionInFlight) {
     await projectionInFlight;
   }
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetUsageAggregationProjectorForTests() {

@@ -1,6 +1,12 @@
 import { syncSiteAnnouncements } from './siteAnnouncementService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const DEFAULT_SITE_ANNOUNCEMENT_INTERVAL_MS = 15 * 60 * 1000;
+const WORKER_NAME = 'site-announcement-polling';
 
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 let syncRunning = false;
@@ -9,7 +15,7 @@ async function runSyncOnce() {
   if (syncRunning) return;
   syncRunning = true;
   try {
-    await syncSiteAnnouncements();
+    await runObservedWorkerPass(WORKER_NAME, syncSiteAnnouncements);
   } catch (error) {
     console.error('[SiteAnnouncementPolling] Sync failed:', error);
   } finally {
@@ -19,12 +25,14 @@ async function runSyncOnce() {
 
 export function startSiteAnnouncementPolling(intervalMs = DEFAULT_SITE_ANNOUNCEMENT_INTERVAL_MS) {
   stopSiteAnnouncementPolling();
+  const safeIntervalMs = Math.max(10_000, intervalMs);
+  startObservedWorker({ name: WORKER_NAME, intervalMs: safeIntervalMs });
   pollingTimer = setInterval(() => {
     void runSyncOnce();
-  }, Math.max(10_000, intervalMs));
+  }, safeIntervalMs);
   pollingTimer.unref?.();
   void runSyncOnce();
-  return { intervalMs: Math.max(10_000, intervalMs) };
+  return { intervalMs: safeIntervalMs };
 }
 
 export function stopSiteAnnouncementPolling() {
@@ -32,4 +40,5 @@ export function stopSiteAnnouncementPolling() {
     clearInterval(pollingTimer);
     pollingTimer = null;
   }
+  stopObservedWorker(WORKER_NAME);
 }

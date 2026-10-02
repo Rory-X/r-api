@@ -4,8 +4,14 @@ import { sendNotification } from './notifyService.js';
 import { refreshUpdateCenterStatusCache } from './updateCenterStatusService.js';
 import { loadUpdateCenterRuntimeState, saveUpdateCenterRuntimeState } from './updateCenterRuntimeStateService.js';
 import type { UpdateReminderCandidate } from './updateCenterReminderService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const DEFAULT_UPDATE_CENTER_INTERVAL_MS = 15 * 60 * 1000;
+const WORKER_NAME = 'update-center-polling';
 
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 let syncRunning = false;
@@ -32,43 +38,49 @@ function buildReminderEvent(candidate: UpdateReminderCandidate | null) {
 async function runSyncOnce() {
   if (syncRunning) return;
   syncRunning = true;
-  const checkedAt = formatUtcSqlDateTime(new Date());
-
   try {
-    const {
-      candidate,
-      previousRuntime,
-      runtime,
-    } = await refreshUpdateCenterStatusCache(checkedAt);
+    await runObservedWorkerPass(WORKER_NAME, async () => {
+      const checkedAt = formatUtcSqlDateTime(new Date());
+      try {
+        const {
+          candidate,
+          previousRuntime,
+          runtime,
+        } = await refreshUpdateCenterStatusCache(checkedAt);
 
-    if (candidate && candidate.candidateKey !== previousRuntime.lastNotifiedCandidateKey) {
-      const reminderEvent = buildReminderEvent(candidate);
-      if (reminderEvent) {
-        await db.insert(schema.events).values({
-          type: 'status',
-          title: reminderEvent.title,
-          message: reminderEvent.message,
-          level: 'info',
-          relatedType: 'update_center',
-          createdAt: checkedAt,
-        }).run();
+        if (candidate && candidate.candidateKey !== previousRuntime.lastNotifiedCandidateKey) {
+          const reminderEvent = buildReminderEvent(candidate);
+          if (reminderEvent) {
+            await db.insert(schema.events).values({
+              type: 'status',
+              title: reminderEvent.title,
+              message: reminderEvent.message,
+              level: 'info',
+              relatedType: 'update_center',
+              createdAt: checkedAt,
+            }).run();
+            await saveUpdateCenterRuntimeState({
+              ...runtime,
+              lastNotifiedCandidateKey: candidate.candidateKey,
+              lastNotifiedAt: checkedAt,
+            });
+            await sendNotification(reminderEvent.title, reminderEvent.message, 'info', {
+              bypassThrottle: true,
+            });
+          }
+        }
+      } catch (error) {
+        const previousRuntime = await loadUpdateCenterRuntimeState();
         await saveUpdateCenterRuntimeState({
-          ...runtime,
-          lastNotifiedCandidateKey: candidate.candidateKey,
-          lastNotifiedAt: checkedAt,
+          ...previousRuntime,
+          lastCheckedAt: checkedAt,
+          lastCheckError: summarizeError(error),
         });
-        await sendNotification(reminderEvent.title, reminderEvent.message, 'info', {
-          bypassThrottle: true,
-        });
+        throw error;
       }
-    }
-  } catch (error) {
-    const previousRuntime = await loadUpdateCenterRuntimeState();
-    await saveUpdateCenterRuntimeState({
-      ...previousRuntime,
-      lastCheckedAt: checkedAt,
-      lastCheckError: summarizeError(error),
     });
+  } catch {
+    // Failure details are persisted and exposed through worker health.
   } finally {
     syncRunning = false;
   }
@@ -76,12 +88,14 @@ async function runSyncOnce() {
 
 export function startUpdateCenterPolling(intervalMs = DEFAULT_UPDATE_CENTER_INTERVAL_MS) {
   stopUpdateCenterPolling();
+  const safeIntervalMs = Math.max(10_000, intervalMs);
+  startObservedWorker({ name: WORKER_NAME, intervalMs: safeIntervalMs });
   pollingTimer = setInterval(() => {
     void runSyncOnce();
-  }, Math.max(10_000, intervalMs));
+  }, safeIntervalMs);
   pollingTimer.unref?.();
   void runSyncOnce();
-  return { intervalMs: Math.max(10_000, intervalMs) };
+  return { intervalMs: safeIntervalMs };
 }
 
 export function stopUpdateCenterPolling() {
@@ -89,4 +103,5 @@ export function stopUpdateCenterPolling() {
     clearInterval(pollingTimer);
     pollingTimer = null;
   }
+  stopObservedWorker(WORKER_NAME);
 }

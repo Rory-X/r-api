@@ -105,6 +105,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     demoMode: parseBoolean(env.DEMO_MODE, false),
     authToken: env.AUTH_TOKEN || 'change-me-admin-token',
     authTokenHash: parseOptionalSecret(env.AUTH_TOKEN_HASH),
+    metricsAuthToken: parseOptionalSecret(env.METRICS_AUTH_TOKEN),
     adminCredentialBootstrapConfigured: !!(
       parseOptionalSecret(env.AUTH_TOKEN)
       || parseOptionalSecret(env.AUTH_TOKEN_HASH)

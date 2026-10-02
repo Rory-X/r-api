@@ -1,7 +1,13 @@
 import { ensureLocalConnectorNotifyRepairAction } from './localConnectorService.js';
 import { runLocalConnectorHealthMonitorPass } from './localConnectorHealthService.js';
+import {
+  runObservedWorkerPass,
+  startObservedWorker,
+  stopObservedWorker,
+} from '../observability/workerHealth.js';
 
 const DEFAULT_MONITOR_INTERVAL_MS = 30_000;
+const WORKER_NAME = 'local-connector-health';
 
 let monitorTimer: ReturnType<typeof setInterval> | null = null;
 let monitorPassPromise: Promise<void> | null = null;
@@ -15,8 +21,10 @@ function normalizeInterval(value: unknown): number {
 
 async function runMonitorPass(): Promise<void> {
   try {
-    await runLocalConnectorHealthMonitorPass({
-      requestRepair: ensureLocalConnectorNotifyRepairAction,
+    await runObservedWorkerPass(WORKER_NAME, async () => {
+      await runLocalConnectorHealthMonitorPass({
+        requestRepair: ensureLocalConnectorNotifyRepairAction,
+      });
     });
   } catch (error) {
     console.warn(`[local-connector-health] monitor pass failed: ${(error as Error)?.message || 'unknown error'}`);
@@ -35,6 +43,7 @@ export async function startLocalConnectorHealthScheduler(
 ): Promise<void> {
   if (monitorStarted) return;
   monitorStarted = true;
+  startObservedWorker({ name: WORKER_NAME, intervalMs: normalizeInterval(options.intervalMs) });
   scheduleMonitorPass();
   await monitorPassPromise;
   if (!monitorStarted) return;
@@ -49,6 +58,7 @@ export async function stopLocalConnectorHealthScheduler(): Promise<void> {
     monitorTimer = null;
   }
   await monitorPassPromise;
+  stopObservedWorker(WORKER_NAME);
 }
 
 export async function __resetLocalConnectorHealthSchedulerForTests(): Promise<void> {
