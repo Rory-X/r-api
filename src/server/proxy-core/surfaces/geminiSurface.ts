@@ -78,6 +78,7 @@ import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
   getTesterForcedChannelId,
+  selectProxyChannelForAttempt,
 } from '../channelSelection.js';
 const GEMINI_MODEL_PROBES = [
   'gemini-2.5-flash',
@@ -643,13 +644,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
 
     while (retryCount <= maxRetries) {
       if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
-      const selected = forcedChannelId !== null
-        ? (retryCount === 0
-          ? await tokenRouter.selectPreferredChannel(requestedModel, forcedChannelId, policy, excludeChannelIds)
-          : null)
-        : (retryCount === 0
-          ? await tokenRouter.selectChannel(requestedModel, policy)
-          : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, policy));
+      const selected = await selectProxyChannelForAttempt({
+        requestedModel,
+        downstreamPolicy: policy,
+        excludeChannelIds,
+        retryCount,
+        forcedChannelId,
+        onRoutingDecision: attemptLedger?.recordRoutingDecision,
+      });
       if (!selected) {
         if (forcedChannelId !== null) {
           lastStatus = 503;

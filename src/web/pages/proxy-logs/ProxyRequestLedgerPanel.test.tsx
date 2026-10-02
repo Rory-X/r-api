@@ -124,6 +124,76 @@ describe('ProxyRequestLedgerPanel', () => {
         finishedAt: '2026-08-04 01:00:02',
         updatedAt: '2026-08-04 01:00:02',
       }],
+      routingExplanation: {
+        version: 1,
+        requestedModel: 'gpt-5.4',
+        route: { id: 3, name: 'GPT 高质量', modelPattern: 'gpt-5.4' },
+        candidateCount: 2,
+        candidates: [{
+          channelId: 11,
+          accountId: 3,
+          username: 'filtered-user',
+          siteName: 'Filtered Site',
+          tokenName: 'default',
+          priority: 0,
+          sortOrder: 0,
+          weight: 10,
+          eligible: false,
+          recentlyFailed: false,
+          avoidedByRecentFailure: false,
+          probability: 0,
+          reason: '余额不足',
+        }, {
+          channelId: 12,
+          accountId: 4,
+          username: 'upstream-user',
+          siteName: 'Upstream A',
+          tokenName: 'Credential A',
+          priority: 0,
+          sortOrder: 1,
+          weight: 10,
+          eligible: true,
+          recentlyFailed: false,
+          avoidedByRecentFailure: false,
+          probability: 62,
+          reason: '当前权重命中概率 62%',
+        }],
+        decisions: [{
+          selectionIndex: 0,
+          retryCount: 0,
+          selectionMode: 'initial',
+          recordedAt: '2026-08-04T01:00:00.000Z',
+          requestedModel: 'gpt-5.4',
+          actualModel: 'gpt-5.4',
+          matched: true,
+          routeId: 3,
+          routeName: 'GPT 高质量',
+          modelPattern: 'gpt-5.4',
+          selectedChannelId: 12,
+          selectedAccountId: 4,
+          selectedLabel: 'upstream-user @ Upstream A / Credential A',
+          summary: ['命中路由：gpt-5.4'],
+          candidates: [],
+        }],
+        attempts: [{
+          attemptId: 'attempt-risk-webui',
+          attemptIndex: 0,
+          channelId: 12,
+          channelLabel: 'Upstream A / upstream-user / Credential A',
+          status: 'unknown',
+          commitState: 'sent_unknown',
+          statusCode: null,
+          errorScope: 'transport',
+          failureCode: 'transport_failure',
+          errorSummary: 'connection ended after send',
+        }],
+        failovers: [],
+        final: {
+          status: 'unknown',
+          channelId: 12,
+          channelLabel: 'Upstream A / upstream-user / Credential A',
+        },
+      },
     });
   });
 
@@ -177,6 +247,10 @@ describe('ProxyRequestLedgerPanel', () => {
     expect(apiMock.getProxyRequestLedgerDetail).toHaveBeenCalledWith('req-risk-webui');
     const text = collectText(root.root);
     expect(text).toContain('策略快照与共享预算');
+    expect(text).toContain('路由解释');
+    expect(text).toContain('GPT 高质量');
+    expect(text).toContain('余额不足');
+    expect(text).toContain('概率 62%');
     expect(text).toContain('仅安全重放');
     expect(text).toContain('Credential A');
     expect(text).toContain('connection ended after send');

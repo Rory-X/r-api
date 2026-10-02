@@ -57,6 +57,16 @@ import { recordSiteApiEndpointFailure } from './siteApiEndpointService.js';
 import { subscribeTokenRouterCacheInvalidation } from './tokenRouterCacheInvalidation.js';
 import { evaluateBalanceRoutingPolicy, type BalanceRoutingDecision } from './balanceRoutingPolicy.js';
 import { resolveFirstByteRoutingMultiplier } from '../../shared/firstByteRoutingPolicy.js';
+import {
+  claimSiteRuntimeRecoveryProbeLease,
+  deleteSiteRuntimeHealthRecords,
+  listActiveSiteRuntimeRecoveryProbeLeases,
+  listOwnedSiteRuntimeRecoveryProbeScopes,
+  loadSiteRuntimeHealthRecords,
+  releaseSiteRuntimeRecoveryProbeLease,
+  upsertSiteRuntimeHealthRecords,
+  type SiteRuntimeHealthPersistenceRecord,
+} from './siteRuntimeHealthStore.js';
 
 interface RouteMatch {
   route: RouteRow;
@@ -343,8 +353,10 @@ const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHeal
 type SiteRuntimeRecoveryProbeLease = {
   channelId: number;
   expiresAtMs: number;
+  token: string | null;
 };
 const siteRuntimeRecoveryProbeLeases = new Map<string, SiteRuntimeRecoveryProbeLease>();
+const pendingDeletedRuntimeHealthScopeKeys = new Set<string>();
 const stableFirstLastSelectedSiteByKey = new Map<string, number>();
 const MAX_STABLE_FIRST_ROTATION_KEYS = 1024;
 const stableFirstObservationProgressByKey = new Map<string, StableFirstObservationProgressState>();
@@ -834,6 +846,7 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
 }
 
 function getOrCreateSiteRuntimeHealthState(siteId: number, nowMs = Date.now()): SiteRuntimeHealthState {
+  pendingDeletedRuntimeHealthScopeKeys.delete(buildSiteRuntimeRecoveryScopeKey(siteId));
   return getOrCreateRuntimeHealthState(siteRuntimeHealthStates, siteId, nowMs);
 }
 
@@ -850,6 +863,7 @@ function getOrCreateSiteModelRuntimeHealthState(
 ): SiteRuntimeHealthState | null {
   const modelKey = normalizeModelAlias(modelName || '');
   if (!modelKey) return null;
+  pendingDeletedRuntimeHealthScopeKeys.delete(buildSiteRuntimeRecoveryScopeKey(siteId, modelKey));
   let modelStates = siteModelRuntimeHealthStates.get(siteId);
   if (!modelStates) {
     modelStates = new Map<string, SiteRuntimeHealthState>();
@@ -874,6 +888,20 @@ function getActiveSiteRuntimeRecoveryLease(
     return null;
   }
   return lease;
+}
+
+async function listActiveSiteRuntimeRecoveryLeaseScopeKeys(nowMs = Date.now()): Promise<Set<string>> {
+  const scopeKeys = new Set<string>();
+  for (const scopeKey of siteRuntimeRecoveryProbeLeases.keys()) {
+    if (getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs)) scopeKeys.add(scopeKey);
+  }
+  try {
+    const persisted = await listActiveSiteRuntimeRecoveryProbeLeases(nowMs);
+    for (const lease of persisted) scopeKeys.add(lease.scopeKey);
+  } catch (error) {
+    console.warn('Failed to query active Site runtime recovery leases', error);
+  }
+  return scopeKeys;
 }
 
 function isRuntimeHealthOpen(state: SiteRuntimeHealthState | null | undefined): boolean {
@@ -923,13 +951,14 @@ export async function listDueSiteRuntimeRecoveryTargets(
 ): Promise<SiteRuntimeRecoveryTarget[]> {
   await ensureSiteRuntimeHealthStateLoaded();
   const targets: SiteRuntimeRecoveryTarget[] = [];
+  const activeLeaseScopeKeys = await listActiveSiteRuntimeRecoveryLeaseScopeKeys(nowMs);
 
   for (const [siteId, state] of siteRuntimeHealthStates.entries()) {
     const scopeKey = buildSiteRuntimeRecoveryScopeKey(siteId);
     if (
       state.recoveryState !== 'healthy'
       && isRuntimeRecoveryProbeDue(state, nowMs)
-      && !getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs)
+      && !activeLeaseScopeKeys.has(scopeKey)
     ) {
       targets.push({
         siteId,
@@ -950,7 +979,7 @@ export async function listDueSiteRuntimeRecoveryTargets(
       if (
         state.recoveryState !== 'healthy'
         && isRuntimeRecoveryProbeDue(state, nowMs)
-        && !getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs)
+        && !activeLeaseScopeKeys.has(scopeKey)
       ) {
         targets.push({
           siteId,
@@ -974,6 +1003,7 @@ export async function listSiteRuntimeHealthSnapshots(
 ): Promise<SiteRuntimeHealthSnapshot[]> {
   await ensureSiteRuntimeHealthStateLoaded();
   const snapshots: SiteRuntimeHealthSnapshot[] = [];
+  const activeLeaseScopeKeys = await listActiveSiteRuntimeRecoveryLeaseScopeKeys(nowMs);
   const appendSnapshot = (
     siteId: number,
     scope: 'site' | 'model',
@@ -989,7 +1019,7 @@ export async function listSiteRuntimeHealthSnapshots(
       breakerLevel: state.breakerLevel,
       breakerUntilMs: state.breakerUntilMs,
       remainingMs: state.breakerUntilMs == null ? 0 : Math.max(0, state.breakerUntilMs - nowMs),
-      probeInFlight: !!getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs),
+      probeInFlight: activeLeaseScopeKeys.has(scopeKey),
       recoverySuccessCount: state.recoverySuccessCount,
       recoverySuccessThreshold: SITE_RUNTIME_RECOVERY_SUCCESS_THRESHOLD,
       recoveryTrafficRatio: SITE_RUNTIME_RECOVERY_TRAFFIC_RATIO,
@@ -1031,34 +1061,62 @@ export async function claimSiteRuntimeRecoveryProbe(input: {
   const entries = getSiteRuntimeRecoveryEntries(input.siteId, input.modelName);
   if (entries.length <= 0) return false;
   if (entries.some(({ state }) => !isRuntimeRecoveryProbeDue(state, nowMs))) return false;
-  if (entries.some(({ scopeKey }) => getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs))) return false;
+  const activeLeaseScopeKeys = await listActiveSiteRuntimeRecoveryLeaseScopeKeys(nowMs);
+  if (entries.some(({ scopeKey }) => activeLeaseScopeKeys.has(scopeKey))) return false;
+
+  await persistSiteRuntimeHealthState();
+  let leaseToken: string | null = null;
+  let expiresAtMs = nowMs + SITE_RUNTIME_RECOVERY_PROBE_LEASE_MS;
+  try {
+    const lease = await claimSiteRuntimeRecoveryProbeLease({
+      scopeKeys: entries.map(({ scopeKey }) => scopeKey),
+      channelId: input.channelId,
+      nowMs,
+      leaseMs: SITE_RUNTIME_RECOVERY_PROBE_LEASE_MS,
+    });
+    if (!lease) return false;
+    leaseToken = lease.token;
+    expiresAtMs = lease.expiresAtMs;
+  } catch (error) {
+    console.warn('Failed to claim durable Site runtime recovery lease; using process-local fallback', error);
+  }
 
   const lease: SiteRuntimeRecoveryProbeLease = {
     channelId: input.channelId,
-    expiresAtMs: nowMs + SITE_RUNTIME_RECOVERY_PROBE_LEASE_MS,
+    expiresAtMs,
+    token: leaseToken,
   };
   for (const { scopeKey, state } of entries) {
     siteRuntimeRecoveryProbeLeases.set(scopeKey, lease);
     state.lastProbeAtMs = nowMs;
     state.lastUpdatedAtMs = nowMs;
   }
-  scheduleSiteRuntimeHealthPersistence();
+  await persistSiteRuntimeHealthState();
   return true;
 }
 
-export function releaseSiteRuntimeRecoveryProbe(input: {
+export async function releaseSiteRuntimeRecoveryProbe(input: {
   siteId: number;
   modelName?: string | null;
   channelId: number;
-}): void {
+}): Promise<void> {
   const scopeKeys = [
     buildSiteRuntimeRecoveryScopeKey(input.siteId),
     buildSiteRuntimeRecoveryScopeKey(input.siteId, input.modelName),
   ];
+  const tokens = new Set<string>();
   for (const scopeKey of scopeKeys) {
     const lease = siteRuntimeRecoveryProbeLeases.get(scopeKey);
     if (lease?.channelId === input.channelId) {
+      if (lease.token) tokens.add(lease.token);
       siteRuntimeRecoveryProbeLeases.delete(scopeKey);
+    }
+  }
+  for (const token of tokens) {
+    try {
+      await releaseSiteRuntimeRecoveryProbeLease(token);
+    } catch (error) {
+      console.warn('Failed to release durable Site runtime recovery lease', error);
     }
   }
 }
@@ -1335,6 +1393,57 @@ function buildSiteRuntimeHealthPersistencePayload(nowMs = Date.now()): SiteRunti
   };
 }
 
+function buildSiteRuntimeHealthPersistenceRecords(
+  nowMs = Date.now(),
+): SiteRuntimeHealthPersistenceRecord[] {
+  const records: SiteRuntimeHealthPersistenceRecord[] = [];
+  const append = (
+    siteId: number,
+    scope: 'site' | 'model',
+    modelName: string | null,
+    state: SiteRuntimeHealthState,
+  ) => {
+    if (!shouldPersistSiteRuntimeHealthState(state, nowMs)) return;
+    records.push({
+      scopeKey: buildSiteRuntimeRecoveryScopeKey(siteId, modelName),
+      siteId,
+      scope,
+      modelName,
+      recoveryState: state.recoveryState,
+      penaltyScore: state.penaltyScore,
+      latencyEmaMs: state.latencyEmaMs,
+      firstByteLatencyEmaMs: state.firstByteLatencyEmaMs,
+      firstByteSampleCount: state.firstByteSampleCount,
+      transientFailureStreak: state.transientFailureStreak,
+      lastTransientFailureAtMs: state.lastTransientFailureAtMs,
+      recentSuccessCount: state.recentSuccessCount,
+      recentFailureCount: state.recentFailureCount,
+      recentWindowUpdatedAtMs: state.recentWindowUpdatedAtMs,
+      breakerLevel: state.breakerLevel,
+      breakerUntilMs: state.breakerUntilMs,
+      recoverySuccessCount: state.recoverySuccessCount,
+      lastProbeAtMs: state.lastProbeAtMs,
+      lastProbeSuccessAtMs: state.lastProbeSuccessAtMs,
+      lastUpdatedAtMs: state.lastUpdatedAtMs,
+      lastFailureAtMs: state.lastFailureAtMs,
+      lastSuccessAtMs: state.lastSuccessAtMs,
+      lastFailureReason: state.lastFailureReason,
+      lastFailureDomain: state.lastFailureDomain,
+      lastFailureEndpointId: state.lastFailureEndpointId,
+    });
+  };
+
+  for (const [siteId, state] of siteRuntimeHealthStates.entries()) {
+    append(siteId, 'site', null, state);
+  }
+  for (const [siteId, modelStates] of siteModelRuntimeHealthStates.entries()) {
+    for (const [modelName, state] of modelStates.entries()) {
+      append(siteId, 'model', modelName, state);
+    }
+  }
+  return records;
+}
+
 async function persistSiteRuntimeHealthState(): Promise<void> {
   if (siteRuntimeHealthPersistInFlight) {
     await siteRuntimeHealthPersistInFlight;
@@ -1343,12 +1452,23 @@ async function persistSiteRuntimeHealthState(): Promise<void> {
   const persistTask = (async () => {
     const payload = buildSiteRuntimeHealthPersistencePayload();
     await upsertSetting(SITE_RUNTIME_HEALTH_SETTING_KEY, payload);
+    const deletedScopeKeys = Array.from(pendingDeletedRuntimeHealthScopeKeys);
+    try {
+      await deleteSiteRuntimeHealthRecords(deletedScopeKeys);
+      await upsertSiteRuntimeHealthRecords(buildSiteRuntimeHealthPersistenceRecords());
+      for (const scopeKey of deletedScopeKeys) {
+        pendingDeletedRuntimeHealthScopeKeys.delete(scopeKey);
+      }
+    } catch (error) {
+      console.warn('Failed to persist queryable Site runtime health state', error);
+    }
   })();
-  siteRuntimeHealthPersistInFlight = persistTask.finally(() => {
-    if (siteRuntimeHealthPersistInFlight === persistTask) {
+  const trackedPersistTask = persistTask.finally(() => {
+    if (siteRuntimeHealthPersistInFlight === trackedPersistTask) {
       siteRuntimeHealthPersistInFlight = null;
     }
   });
+  siteRuntimeHealthPersistInFlight = trackedPersistTask;
   await siteRuntimeHealthPersistInFlight;
 }
 
@@ -1360,6 +1480,54 @@ function scheduleSiteRuntimeHealthPersistence(): void {
       console.error('Failed to persist site runtime health state', error);
     });
   }, SITE_RUNTIME_HEALTH_PERSIST_DEBOUNCE_MS);
+}
+
+function runtimeHealthStateFromPersistenceRecord(
+  record: SiteRuntimeHealthPersistenceRecord,
+): SiteRuntimeHealthState {
+  return {
+    penaltyScore: record.penaltyScore,
+    latencyEmaMs: record.latencyEmaMs,
+    firstByteLatencyEmaMs: record.firstByteLatencyEmaMs,
+    firstByteSampleCount: record.firstByteSampleCount,
+    transientFailureStreak: record.transientFailureStreak,
+    lastTransientFailureAtMs: record.lastTransientFailureAtMs,
+    recentSuccessCount: record.recentSuccessCount,
+    recentFailureCount: record.recentFailureCount,
+    recentWindowUpdatedAtMs: record.recentWindowUpdatedAtMs,
+    breakerLevel: record.breakerLevel,
+    breakerUntilMs: record.breakerUntilMs,
+    recoveryState: record.recoveryState,
+    recoverySuccessCount: record.recoverySuccessCount,
+    lastProbeAtMs: record.lastProbeAtMs,
+    lastProbeSuccessAtMs: record.lastProbeSuccessAtMs,
+    lastUpdatedAtMs: record.lastUpdatedAtMs,
+    lastFailureAtMs: record.lastFailureAtMs,
+    lastSuccessAtMs: record.lastSuccessAtMs,
+    lastFailureReason: record.lastFailureReason,
+    lastFailureDomain: record.lastFailureDomain,
+    lastFailureEndpointId: record.lastFailureEndpointId,
+  };
+}
+
+async function loadSiteRuntimeHealthStateFromStore(): Promise<boolean> {
+  const records = await loadSiteRuntimeHealthRecords();
+  if (records.length === 0) return false;
+  siteRuntimeHealthStates.clear();
+  siteModelRuntimeHealthStates.clear();
+  for (const record of records) {
+    const state = runtimeHealthStateFromPersistenceRecord(record);
+    if (record.scope === 'site') {
+      siteRuntimeHealthStates.set(record.siteId, state);
+      continue;
+    }
+    const modelKey = normalizeModelAlias(record.modelName || '');
+    if (!modelKey) continue;
+    const modelStates = siteModelRuntimeHealthStates.get(record.siteId) ?? new Map();
+    modelStates.set(modelKey, state);
+    siteModelRuntimeHealthStates.set(record.siteId, modelStates);
+  }
+  return true;
 }
 
 async function loadSiteRuntimeHealthStateFromSettings(): Promise<void> {
@@ -1412,7 +1580,18 @@ async function ensureSiteRuntimeHealthStateLoaded(): Promise<void> {
   if (!siteRuntimeHealthLoadPromise) {
     siteRuntimeHealthLoadPromise = (async () => {
       try {
-        await loadSiteRuntimeHealthStateFromSettings();
+        let loadedFromStore = false;
+        try {
+          loadedFromStore = await loadSiteRuntimeHealthStateFromStore();
+        } catch (error) {
+          console.warn('Failed to restore queryable Site runtime health state', error);
+        }
+        if (!loadedFromStore) {
+          await loadSiteRuntimeHealthStateFromSettings();
+          if (siteRuntimeHealthStates.size > 0 || siteModelRuntimeHealthStates.size > 0) {
+            await persistSiteRuntimeHealthState();
+          }
+        }
         siteRuntimeHealthLoaded = true;
       } catch (error) {
         console.warn('Failed to restore site runtime health state from settings', error);
@@ -1424,7 +1603,11 @@ async function ensureSiteRuntimeHealthStateLoaded(): Promise<void> {
   await siteRuntimeHealthLoadPromise;
 }
 
-function recordSiteRuntimeFailure(siteId: number, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
+async function recordSiteRuntimeFailure(
+  siteId: number,
+  context: SiteRuntimeFailureContext = {},
+  nowMs = Date.now(),
+): Promise<void> {
   const globalState = getOrCreateSiteRuntimeHealthState(siteId, nowMs);
   applyRuntimeHealthFailure(globalState, context, nowMs);
   const modelState = getOrCreateSiteModelRuntimeHealthState(siteId, context.modelName, nowMs);
@@ -1439,7 +1622,7 @@ function recordSiteRuntimeFailure(siteId: number, context: SiteRuntimeFailureCon
     if (modelState) tripRuntimeHealthBreakerImmediately(modelState, nowMs);
   }
   if (context.channelId) {
-    releaseSiteRuntimeRecoveryProbe({
+    await releaseSiteRuntimeRecoveryProbe({
       siteId,
       modelName: context.modelName,
       channelId: context.channelId,
@@ -1448,7 +1631,7 @@ function recordSiteRuntimeFailure(siteId: number, context: SiteRuntimeFailureCon
   scheduleSiteRuntimeHealthPersistence();
 }
 
-function recordSiteRuntimeSuccess(
+async function recordSiteRuntimeSuccess(
   siteId: number,
   latencyMs: number,
   modelName?: string | null,
@@ -1458,7 +1641,7 @@ function recordSiteRuntimeSuccess(
     channelId?: number;
     firstByteLatencyMs?: number | null;
   } = {},
-): void {
+): Promise<void> {
   const nowMs = options.nowMs ?? Date.now();
   applyRuntimeHealthSuccess(
     getOrCreateSiteRuntimeHealthState(siteId, nowMs),
@@ -1478,7 +1661,7 @@ function recordSiteRuntimeSuccess(
     );
   }
   if (options.channelId) {
-    releaseSiteRuntimeRecoveryProbe({
+    await releaseSiteRuntimeRecoveryProbe({
       siteId,
       modelName,
       channelId: options.channelId,
@@ -1507,13 +1690,34 @@ export async function recordSiteRuntimeRecoveryProbeFailure(input: {
     }),
   };
   let recorded = false;
-  for (const { scopeKey, state } of getSiteRuntimeRecoveryEntries(input.siteId, input.modelName)) {
+  const entries = getSiteRuntimeRecoveryEntries(input.siteId, input.modelName);
+  const leaseTokens = Array.from(new Set(entries.flatMap(({ scopeKey }) => {
+    const lease = getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs);
+    return lease?.channelId === input.channelId && lease.token ? [lease.token] : [];
+  })));
+  let ownedScopeKeys: Set<string> | null = null;
+  if (leaseTokens.length > 0) {
+    try {
+      const owned = await Promise.all(leaseTokens.map((token) => (
+        listOwnedSiteRuntimeRecoveryProbeScopes({
+          scopeKeys: entries.map(({ scopeKey }) => scopeKey),
+          token,
+          nowMs,
+        })
+      )));
+      ownedScopeKeys = new Set(owned.flatMap((scopeKeys) => Array.from(scopeKeys)));
+    } catch (error) {
+      console.warn('Failed to verify durable Site runtime recovery lease ownership', error);
+    }
+  }
+  for (const { scopeKey, state } of entries) {
     const lease = getActiveSiteRuntimeRecoveryLease(scopeKey, nowMs);
     if (lease?.channelId !== input.channelId) continue;
+    if (lease.token && ownedScopeKeys && !ownedScopeKeys.has(scopeKey)) continue;
     applyRuntimeHealthProbeFailure(state, context, nowMs);
     recorded = true;
   }
-  releaseSiteRuntimeRecoveryProbe(input);
+  await releaseSiteRuntimeRecoveryProbe(input);
   if (recorded) scheduleSiteRuntimeHealthPersistence();
   return recorded;
 }
@@ -1522,6 +1726,7 @@ export function resetSiteRuntimeHealthState(): void {
   siteRuntimeHealthStates.clear();
   siteModelRuntimeHealthStates.clear();
   siteRuntimeRecoveryProbeLeases.clear();
+  pendingDeletedRuntimeHealthScopeKeys.clear();
   stableFirstObservationProgressByKey.clear();
   stableFirstObservationSiteCooldownByKey.clear();
   siteRuntimeHealthLoaded = false;
@@ -1555,6 +1760,7 @@ function clearRuntimeHealthStatesForChannels(rows: Array<{
 
   for (const row of rows) {
     if (siteRuntimeHealthStates.delete(row.siteId)) {
+      pendingDeletedRuntimeHealthScopeKeys.add(buildSiteRuntimeRecoveryScopeKey(row.siteId));
       changed = true;
     }
 
@@ -1573,6 +1779,7 @@ function clearRuntimeHealthStatesForChannels(rows: Array<{
     if (!modelStates) continue;
     for (const modelKey of modelKeys) {
       if (modelStates.delete(modelKey)) {
+        pendingDeletedRuntimeHealthScopeKeys.add(buildSiteRuntimeRecoveryScopeKey(siteId, modelKey));
         changed = true;
       }
     }
@@ -1920,6 +2127,7 @@ export function filterRecentlyFailedCandidates<T extends { channel: FailureAware
 
 export type RouteDecisionExplanation = RouteDecision & {
   routeId?: number;
+  routeName?: string;
   modelPattern?: string;
   selectedAccountId?: number;
 };
@@ -1931,6 +2139,7 @@ type ExplainSelectionOptions = {
   bypassSourceModelCheck?: boolean;
   useChannelSourceModelForCost?: boolean;
   downstreamPolicy?: DownstreamRoutingPolicy;
+  selectionConstraints?: TokenRouterSelectionConstraints;
 };
 
 type PricingReferenceRefreshOptions = {
@@ -2661,11 +2870,19 @@ export class TokenRouter {
     requestedModel: string,
     excludeChannelIds: number[] = [],
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraints: TokenRouterSelectionConstraints = {},
   ): Promise<RouteDecisionExplanation> {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (match) await this.hydrateModelCapabilityCache(match, requestedModel);
-    return this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy });
+    return this.withRouteExplanationMetadata(
+      this.explainSelectionFromMatch(match, requestedModel, {
+        excludeChannelIds,
+        downstreamPolicy,
+        selectionConstraints: normalizeSelectionConstraints(selectionConstraints),
+      }),
+      match,
+    );
   }
 
   async explainSelectionForRoute(
@@ -2677,7 +2894,10 @@ export class TokenRouter {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRouteById(routeId, downstreamPolicy);
     if (match) await this.hydrateModelCapabilityCache(match, requestedModel);
-    return this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy });
+    return this.withRouteExplanationMetadata(
+      this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy }),
+      match,
+    );
   }
 
   async explainSelectionRouteWide(routeId: number, downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY): Promise<RouteDecisionExplanation> {
@@ -2685,11 +2905,26 @@ export class TokenRouter {
     const match = await this.findRouteById(routeId, downstreamPolicy);
     const fallbackRequestedModel = match?.route.modelPattern || `route:${routeId}`;
     if (match) await this.hydrateModelCapabilityCache(match, fallbackRequestedModel);
-    return this.explainSelectionFromMatch(match, fallbackRequestedModel, {
-      bypassSourceModelCheck: true,
-      useChannelSourceModelForCost: true,
-      downstreamPolicy,
-    });
+    return this.withRouteExplanationMetadata(
+      this.explainSelectionFromMatch(match, fallbackRequestedModel, {
+        bypassSourceModelCheck: true,
+        useChannelSourceModelForCost: true,
+        downstreamPolicy,
+      }),
+      match,
+    );
+  }
+
+  private withRouteExplanationMetadata(
+    decision: RouteDecisionExplanation,
+    match: RouteMatch | null,
+  ): RouteDecisionExplanation {
+    if (!match) return decision;
+    const routeName = normalizeRouteDisplayName(match.route.displayName) || match.route.modelPattern;
+    return {
+      ...decision,
+      routeName,
+    };
   }
 
   async refreshPricingReferenceCosts(
@@ -2731,6 +2966,7 @@ export class TokenRouter {
   ): RouteDecisionExplanation {
     const excludeChannelIds = options.excludeChannelIds ?? [];
     const downstreamPolicy = options.downstreamPolicy ?? DEFAULT_DOWNSTREAM_POLICY;
+    const selectionConstraints = options.selectionConstraints ?? {};
 
     if (!match) {
       return {
@@ -2780,6 +3016,7 @@ export class TokenRouter {
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraints,
       });
 
       const recentlyFailed = routeStrategy !== 'round_robin'
@@ -3356,7 +3593,7 @@ export class TokenRouter {
           cooldownLevel: 0,
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
-        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName, {
+        await recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName, {
           channelId,
           firstByteLatencyMs,
         });
@@ -3368,7 +3605,7 @@ export class TokenRouter {
           });
         }
       } else {
-        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+        await recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
           channelId,
           firstByteLatencyMs,
         });
@@ -3382,7 +3619,7 @@ export class TokenRouter {
       }
       invalidateRouteScopedCache(ch.routeId);
     } else {
-      recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+      await recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
         channelId,
         firstByteLatencyMs,
       });
@@ -3461,7 +3698,7 @@ export class TokenRouter {
           cooldownLevel: 0,
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
-        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName, {
+        await recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName, {
           channelId,
           isProbe: true,
         });
@@ -3473,7 +3710,7 @@ export class TokenRouter {
           });
         }
       } else {
-        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+        await recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
           channelId,
           isProbe: true,
         });
@@ -3572,7 +3809,7 @@ export class TokenRouter {
       }
     }
 
-    recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
+    await recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName, {
       channelId,
       isProbe: true,
     });
@@ -3686,7 +3923,7 @@ export class TokenRouter {
           message: normalizedContext.errorText,
         }, nowIso);
       } else if (domain === 'endpoint') {
-        recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
+        await recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
       }
       return;
     }
@@ -3760,7 +3997,7 @@ export class TokenRouter {
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
         if (shouldRecordSiteRuntimeHealth(domain)) {
-          recordSiteRuntimeFailure(memberRow.account.siteId, normalizedContext, nowMs);
+          await recordSiteRuntimeFailure(memberRow.account.siteId, normalizedContext, nowMs);
         }
         invalidateRouteScopedCache(route.id);
         return;
@@ -3831,7 +4068,7 @@ export class TokenRouter {
     }
 
     if (shouldRecordSiteRuntimeHealth(domain)) {
-      recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
+      await recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
     }
   }
 

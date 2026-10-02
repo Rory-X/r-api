@@ -121,6 +121,51 @@ function formatRetryOwner(owner: ProxyRequestLedgerListItem['retryOwner']): stri
   }[owner];
 }
 
+function formatSelectionMode(
+  mode: NonNullable<ProxyRequestLedgerDetail['routingExplanation']>['decisions'][number]['selectionMode'],
+): string {
+  return {
+    initial: '首次选择',
+    failover: '故障切换',
+    sticky: '会话粘性',
+    forced: '固定通道',
+    bridge: 'Bridge 路由',
+  }[mode];
+}
+
+function formatFailureCode(code?: string | null): string {
+  if (!code) return '-';
+  return {
+    upstream_timeout: 'upstream_timeout',
+    rate_limited: 'rate_limited',
+    credential_unavailable: 'credential_unavailable',
+    model_unavailable: 'model_unavailable',
+    transport_failure: 'transport_failure',
+    upstream_gateway_failure: 'upstream_gateway_failure',
+    stream_failure: 'stream_failure',
+    upstream_error: 'upstream_error',
+    unknown_failure: 'unknown_failure',
+  }[code] || code;
+}
+
+function formatOperationalClassification(attempt: {
+  failureCode?: string | null;
+  healthDomain?: string | null;
+  alertCategory?: string | null;
+  retryable?: boolean | null;
+}): string {
+  if (!attempt.failureCode) return '-';
+  const health = attempt.healthDomain || 'unknown';
+  const alert = attempt.alertCategory || 'unknown';
+  return `${formatFailureCode(attempt.failureCode)} · health:${health} · alert:${alert}${attempt.retryable === true ? ' · 可重试' : ''}`;
+}
+
+function candidateLabel(
+  candidate: NonNullable<ProxyRequestLedgerDetail['routingExplanation']>['candidates'][number],
+): string {
+  return `${candidate.siteName} / ${candidate.username} / ${candidate.tokenName}`;
+}
+
 function statusTone(status: ProxyRequestLedgerStatus | ProxyRequestLedgerDetail['attempts'][number]['status']) {
   if (status === 'succeeded') {
     return { color: 'var(--color-success)', background: 'var(--color-success-soft)' };
@@ -313,6 +358,7 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
     }
 
     const budget = detail.retryBudget;
+    const routing = detail.routingExplanation;
     return (
       <div style={{ display: 'grid', gap: 16 }} data-proxy-ledger-detail>
         {detail.hasSentUnknown ? (
@@ -358,6 +404,93 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
             ))}
           </div>
         </section>
+
+        {routing ? (
+          <section style={{ display: 'grid', gap: 10 }} data-proxy-routing-explanation>
+            <div style={{ fontSize: 13, fontWeight: 650 }}>路由解释</div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                gap: 10,
+              }}
+            >
+              {[
+                ['请求模型', routing.requestedModel],
+                ['命中 Route', routing.route?.name || routing.route?.modelPattern || '未命中'],
+                ['候选数量', routing.candidateCount],
+                ['切换次数', routing.failovers.length],
+                ['最终状态', formatRequestStatus(routing.final.status)],
+                ['最终 Channel', routing.final.channelLabel || (routing.final.channelId ? `#${routing.final.channelId}` : '-')],
+              ].map(([label, value]) => (
+                <div key={label} style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{label}</div>
+                  <div style={{ marginTop: 3, fontSize: 12, fontWeight: 600, overflowWrap: 'anywhere' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gap: 0, borderTop: '1px solid var(--color-border-light)' }}>
+              {routing.candidates.map((candidate) => {
+                const initiallySelected = routing.decisions[0]?.selectedChannelId === candidate.channelId;
+                const finallySelected = routing.final.channelId === candidate.channelId;
+                const unavailable = !candidate.eligible;
+                const avoided = candidate.avoidedByRecentFailure;
+                return (
+                  <div
+                    key={candidate.channelId}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: isMobile ? '1fr' : 'minmax(180px, 1.1fr) minmax(90px, .35fr) minmax(220px, 1.7fr)',
+                      gap: isMobile ? 4 : 12,
+                      padding: '10px 0',
+                      borderBottom: '1px solid var(--color-border-light)',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 650, overflowWrap: 'anywhere' }}>
+                        Channel #{candidate.channelId} · {candidateLabel(candidate)}
+                      </div>
+                      <div style={{ marginTop: 2, fontSize: 10, color: 'var(--color-text-muted)' }}>
+                        P{candidate.priority} · 权重 {candidate.weight}
+                        {initiallySelected ? ' · 首次选中' : ''}
+                        {finallySelected ? ' · 最终选中' : ''}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+                      {unavailable ? '已过滤' : avoided ? '已避让' : `概率 ${candidate.probability}%`}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' }}>
+                      {candidate.reason}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'grid', gap: 6 }}>
+              {routing.decisions.map((decision, index) => {
+                const relatedAttempts = routing.attempts.filter((attempt) => attempt.channelId === decision.selectedChannelId);
+                const failedAttempt = [...relatedAttempts].reverse().find((attempt) => attempt.status !== 'succeeded');
+                const succeeded = relatedAttempts.some((attempt) => attempt.status === 'succeeded');
+                return (
+                  <div key={`${decision.selectionIndex}:${decision.selectedChannelId ?? 'none'}`} style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
+                    <b>{index + 1}. {formatSelectionMode(decision.selectionMode)}</b>
+                    {' · '}{decision.selectedLabel || (decision.selectedChannelId ? `Channel #${decision.selectedChannelId}` : '未选出通道')}
+                    {failedAttempt ? ` · 失败 ${formatFailureCode(failedAttempt.failureCode)}` : ''}
+                    {succeeded ? ' · 成功' : ''}
+                  </div>
+                );
+              })}
+              {routing.failovers.map((failover) => (
+                <div key={failover.failoverIndex} style={{ fontSize: 11, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' }}>
+                  Failover {failover.failoverIndex}: {failover.fromLabel || `Channel #${failover.fromChannelId}`} → {failover.toLabel || `Channel #${failover.toChannelId}`}
+                  {failover.trigger ? ` · ${formatFailureCode(failover.trigger)}` : ''}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section style={{ display: 'grid', gap: 10 }}>
           <div style={{ fontSize: 13, fontWeight: 650 }}>策略快照与共享预算</div>
@@ -408,6 +541,7 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
                   <MobileField label="Credential" value={attempt.credentialName || (attempt.credentialId ? `#${attempt.credentialId}` : '-')} />
                   <MobileField label="HTTP" value={attempt.statusCode ?? '-'} />
                   <MobileField label="目标" value={attempt.targetUrl || attempt.requestPath || '-'} />
+                  <MobileField label="分类" value={formatOperationalClassification(attempt)} stacked />
                   <MobileField label="错误" value={attempt.errorSummary || '-'} />
                 </MobileCard>
               ))}
@@ -453,7 +587,8 @@ export default function ProxyRequestLedgerPanel({ autoRefresh = false }: ProxyRe
                       <td><CommitStateBadge state={attempt.commitState} /></td>
                       <td style={{ fontSize: 12 }}>{attempt.statusCode ?? '-'}</td>
                       <td style={{ maxWidth: 260, fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                        <div style={{ overflowWrap: 'anywhere' }}>{attempt.errorSummary || '-'}</div>
+                        <div style={{ overflowWrap: 'anywhere' }}>{formatOperationalClassification(attempt)}</div>
+                        <div style={{ marginTop: 4, overflowWrap: 'anywhere' }}>{attempt.errorSummary || '-'}</div>
                         {attempt.targetUrl ? (
                           <div title={attempt.targetUrl} style={{ marginTop: 4, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>
                             {attempt.targetUrl}

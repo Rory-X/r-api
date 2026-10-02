@@ -1,7 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const tokenRouterMocks = vi.hoisted(() => ({
+  selectChannel: vi.fn(),
+  selectNextChannel: vi.fn(),
+  selectPreferredChannel: vi.fn(),
+  explainSelection: vi.fn(),
+}));
+const coordinatorMocks = vi.hoisted(() => ({
+  getStickyChannelId: vi.fn(),
+  clearStickyChannel: vi.fn(),
+}));
 vi.mock('../services/tokenRouter.js', () => ({
-  tokenRouter: {},
+  tokenRouter: tokenRouterMocks,
+}));
+
+vi.mock('../services/proxyChannelCoordinator.js', () => ({
+  proxyChannelCoordinator: coordinatorMocks,
 }));
 
 vi.mock('../services/routeRefreshWorkflow.js', () => ({
@@ -13,9 +27,15 @@ import {
   canRetryChannelSelectionForFailure,
   getTesterForcedChannelId,
   normalizeForcedChannelId,
+  selectProxyChannelForAttempt,
   TESTER_FORCED_CHANNEL_HEADER,
   TESTER_REQUEST_HEADER,
 } from './channelSelection.js';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  coordinatorMocks.getStickyChannelId.mockReturnValue(null);
+});
 
 const bridgePlan = {
   taskId: 'task-1',
@@ -141,5 +161,118 @@ describe('canRetryChannelSelectionForFailure', () => {
       selected,
       errorScope: 'transport',
     })).toBe(false);
+  });
+});
+
+describe('selectProxyChannelForAttempt', () => {
+  it('records the actual selected channel in the request routing explanation', async () => {
+    tokenRouterMocks.explainSelection.mockResolvedValue({
+      requestedModel: 'claude-opus',
+      actualModel: 'claude-opus',
+      matched: true,
+      routeId: 7,
+      routeName: 'Claude 高质量',
+      modelPattern: 'claude-opus',
+      selectedChannelId: 99,
+      selectedAccountId: 199,
+      selectedLabel: 'preview selection',
+      summary: [],
+      candidates: [{
+        channelId: 13,
+        accountId: 23,
+        username: 'channel-c',
+        siteName: 'Site C',
+        tokenName: 'default',
+        priority: 0,
+        sortOrder: 0,
+        weight: 10,
+        eligible: true,
+        recentlyFailed: false,
+        avoidedByRecentFailure: false,
+        probability: 62,
+        reason: '当前概率 62%',
+      }],
+    });
+    tokenRouterMocks.selectChannel.mockResolvedValue({
+      channel: { id: 13, routeId: 7 },
+      account: { id: 23, username: 'channel-c' },
+      site: { id: 3, name: 'Site C' },
+      token: null,
+      tokenName: 'default',
+      tokenValue: 'secret',
+      actualModel: 'claude-opus-4-1',
+    });
+    const onRoutingDecision = vi.fn();
+
+    const selected = await selectProxyChannelForAttempt({
+      requestedModel: 'claude-opus',
+      downstreamPolicy: {
+        allowedRouteIds: [],
+        allowedSiteIds: [],
+        blockedSiteIds: [],
+        supportedModels: [],
+      },
+      excludeChannelIds: [],
+      retryCount: 0,
+      onRoutingDecision,
+    });
+
+    expect(selected?.channel.id).toBe(13);
+    expect(tokenRouterMocks.explainSelection).toHaveBeenCalledTimes(1);
+    expect(onRoutingDecision).toHaveBeenCalledWith(expect.objectContaining({
+      selectionMode: 'initial',
+      decision: expect.objectContaining({
+        selectedChannelId: 13,
+        selectedAccountId: 23,
+        actualModel: 'claude-opus-4-1',
+        selectedLabel: 'channel-c @ Site C / default',
+      }),
+    }));
+  });
+
+  it('records ordinary selection when a sticky preference cannot be reused', async () => {
+    coordinatorMocks.getStickyChannelId.mockReturnValue(77);
+    tokenRouterMocks.selectPreferredChannel.mockResolvedValue(null);
+    tokenRouterMocks.selectChannel.mockResolvedValue({
+      channel: { id: 13, routeId: 7 },
+      account: { id: 23, username: 'channel-c' },
+      site: { id: 3, name: 'Site C' },
+      token: null,
+      tokenName: 'default',
+      tokenValue: 'secret',
+      actualModel: 'claude-opus-4-1',
+    });
+    tokenRouterMocks.explainSelection.mockResolvedValue({
+      requestedModel: 'claude-opus',
+      actualModel: 'claude-opus-4-1',
+      matched: true,
+      routeId: 7,
+      routeName: 'Claude 高质量',
+      modelPattern: 'claude-opus',
+      selectedChannelId: 13,
+      selectedAccountId: 23,
+      selectedLabel: 'channel-c @ Site C / default',
+      summary: [],
+      candidates: [],
+    });
+    const onRoutingDecision = vi.fn();
+
+    await selectProxyChannelForAttempt({
+      requestedModel: 'claude-opus',
+      downstreamPolicy: {
+        allowedRouteIds: [],
+        allowedSiteIds: [],
+        blockedSiteIds: [],
+        supportedModels: [],
+      },
+      excludeChannelIds: [],
+      retryCount: 0,
+      stickySessionKey: 'session-1',
+      onRoutingDecision,
+    });
+
+    expect(onRoutingDecision).toHaveBeenCalledWith(expect.objectContaining({
+      selectionMode: 'initial',
+    }));
   });
 });

@@ -19,13 +19,21 @@ import {
   finishProxyRequestAttempt,
   insertProxyRequestAttempt,
   insertProxyRequestLedger,
-  updateProxyRequestRetryOwner,
+  updateProxyRequestPolicySnapshot,
   updateProxyRequestAttemptCommit,
 } from './proxyAttemptLedgerStore.js';
 import type {
   ProxyAttemptPolicySnapshot,
   ProxyRequestStatus,
 } from './proxyAttemptLedger.js';
+import {
+  appendProxyRoutingDecision,
+  createProxyRoutingExplanationSnapshot,
+  type ProxyRoutingExplanationSnapshot,
+  type ProxyRoutingSelectionMode,
+} from './proxyRoutingExplanation.js';
+import type { RouteDecisionExplanation } from './tokenRouter.js';
+import { observeProxyRequest } from '../observability/metrics.js';
 
 type AttemptRecordState = {
   attemptIndex: number;
@@ -93,6 +101,11 @@ export type ProxyAttemptLedgerRuntimeSession = {
   requestRowId: number;
   setRetryOwner: (retryOwner: ProxyAttemptPolicySnapshot['retryOwner']) => Promise<void>;
   setSelection: (selection: ProxyAttemptSelectionContext) => void;
+  recordRoutingDecision: (input: {
+    retryCount: number;
+    selectionMode: ProxyRoutingSelectionMode;
+    decision: RouteDecisionExplanation;
+  }) => Promise<void>;
   getLatestAttemptId: () => string | null;
   beginAttempt: (input: ProxyManualAttemptStartInput) => Promise<EndpointAttemptIdentity>;
   markAttemptCommit: (input: ProxyManualAttemptCommitInput) => Promise<void>;
@@ -129,6 +142,7 @@ export async function startProxyAttemptLedgerSession(
   input: StartProxyAttemptLedgerSessionInput,
 ): Promise<ProxyAttemptLedgerRuntimeSession | null> {
   const requestId = normalizeRequestId(input.requestId);
+  const sessionStartedAtMs = Date.now();
   try {
     const created = await insertProxyRequestLedger({
       requestId,
@@ -149,6 +163,9 @@ export async function startProxyAttemptLedgerSession(
     let latestAttemptId: string | null = null;
     let requestFinished = false;
     let retryOwner = input.policy.retryOwner;
+    let routingExplanation: ProxyRoutingExplanationSnapshot = createProxyRoutingExplanationSnapshot(
+      input.requestedModel,
+    );
     const attempts = new Map<string, AttemptRecordState>();
     let selection: ProxyAttemptSelectionContext = {
       channelId: input.channelId ?? null,
@@ -248,21 +265,26 @@ export async function startProxyAttemptLedgerSession(
       }
     };
 
+    const persistPolicySnapshot = async (): Promise<void> => {
+      try {
+        await updateProxyRequestPolicySnapshot({
+          requestRowId: created.requestRowId,
+          retryOwner,
+          replaySafety: input.policy.replaySafety,
+          routingExplanation: routingExplanation.decisions.length > 0 ? routingExplanation : null,
+        });
+      } catch (error) {
+        warnLedgerOnce('policy-snapshot', '[proxy-ledger] failed to update policy snapshot', error);
+      }
+    };
+
     return {
       requestId,
       requestRowId: created.requestRowId,
       async setRetryOwner(nextRetryOwner) {
         if (requestFinished || attempts.size > 0 || retryOwner === nextRetryOwner) return;
         retryOwner = nextRetryOwner;
-        try {
-          await updateProxyRequestRetryOwner({
-            requestRowId: created.requestRowId,
-            retryOwner,
-            replaySafety: input.policy.replaySafety,
-          });
-        } catch (error) {
-          warnLedgerOnce('retry-owner', '[proxy-ledger] failed to update retry owner', error);
-        }
+        await persistPolicySnapshot();
       },
       setSelection(nextSelection) {
         selection = {
@@ -270,6 +292,11 @@ export async function startProxyAttemptLedgerSession(
           accountId: nextSelection.accountId ?? null,
           tokenId: nextSelection.tokenId ?? null,
         };
+      },
+      async recordRoutingDecision(decisionInput) {
+        if (requestFinished) return;
+        routingExplanation = appendProxyRoutingDecision(routingExplanation, decisionInput);
+        await persistPolicySnapshot();
       },
       getLatestAttemptId() {
         return latestAttemptId;
@@ -351,6 +378,7 @@ export async function startProxyAttemptLedgerSession(
       async finishRequest(status) {
         if (requestFinished) return;
         requestFinished = true;
+        let observedStatus = status;
         try {
           for (const [attemptId, state] of attempts.entries()) {
             if (state.finished) continue;
@@ -385,12 +413,20 @@ export async function startProxyAttemptLedgerSession(
             && [...attempts.values()].some((state) => state.status === 'unknown')
             ? 'unknown'
             : status;
+          observedStatus = effectiveStatus;
           await finishProxyRequest({
             requestRowId: created.requestRowId,
             status: effectiveStatus,
           });
         } catch (error) {
           warnLedgerOnce('finish-request', '[proxy-ledger] failed to finish request', error);
+        } finally {
+          observeProxyRequest({
+            downstreamPath: input.downstreamPath,
+            outcome: observedStatus,
+            durationMs: Date.now() - sessionStartedAtMs,
+            attemptCount: attempts.size,
+          });
         }
       },
     };

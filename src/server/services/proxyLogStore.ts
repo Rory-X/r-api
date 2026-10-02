@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+
 import {
   db,
   schema,
@@ -6,6 +8,10 @@ import {
   hasProxyLogDownstreamApiKeyIdColumn,
   hasProxyLogStreamTimingColumns,
 } from '../db/index.js';
+import {
+  getProxyRequestLedgerDetail,
+  type ProxyRequestLedgerAttemptDetail,
+} from './proxyAttemptLedgerStore.js';
 
 export type ProxyLogInsertInput = {
   routeId?: number | null;
@@ -33,6 +39,29 @@ export type ProxyLogInsertInput = {
   errorMessage?: string | null;
   retryCount?: number | null;
   createdAt?: string | null;
+};
+
+export type ProxyLogRetryAttemptDetail = ProxyRequestLedgerAttemptDetail & {
+  proxyLogId: number | null;
+  retryCount: number;
+  logStatus: string | null;
+  logHttpStatus: number | null;
+  latencyMs: number | null;
+  firstByteLatencyMs: number | null;
+  modelActual: string | null;
+  logErrorMessage: string | null;
+};
+
+type ProxyLogRetryLookupRow = {
+  id: number;
+  attemptId: string | null;
+  retryCount: number | null;
+  status: string | null;
+  httpStatus: number | null;
+  latencyMs: number | null;
+  firstByteLatencyMs: number | null;
+  modelActual: string | null;
+  errorMessage: string | null;
 };
 
 function buildProxyLogCoreSelectFields() {
@@ -90,6 +119,58 @@ function buildProxyLogSelectFields(options?: {
 
 export function getProxyLogBaseSelectFields() {
   return buildProxyLogCoreSelectFields();
+}
+
+export async function getProxyLogRetryAttemptDetails(
+  requestIdInput: unknown,
+): Promise<ProxyLogRetryAttemptDetail[]> {
+  const requestId = typeof requestIdInput === 'string' ? requestIdInput.trim() : '';
+  if (!requestId) return [];
+
+  const ledger = await getProxyRequestLedgerDetail(requestId);
+  if (!ledger) return [];
+
+  const selectedRows = await withProxyLogSelectFields<ProxyLogRetryLookupRow[]>(({ fields }) => (
+    db.select(fields).from(schema.proxyLogs)
+      .where(eq(schema.proxyLogs.requestId, requestId))
+      .orderBy(schema.proxyLogs.id)
+      .all()
+  ) as Promise<ProxyLogRetryLookupRow[]>);
+  const logRows: ProxyLogRetryLookupRow[] = selectedRows.map((row) => {
+    const streamRow = row as typeof row & { firstByteLatencyMs?: number | null };
+    return {
+      id: row.id,
+      attemptId: row.attemptId,
+      retryCount: row.retryCount,
+      status: row.status,
+      httpStatus: row.httpStatus,
+      latencyMs: row.latencyMs,
+      firstByteLatencyMs: streamRow.firstByteLatencyMs ?? null,
+      modelActual: row.modelActual,
+      errorMessage: row.errorMessage,
+    };
+  });
+
+  const logByAttemptId = new Map<string, ProxyLogRetryLookupRow>(
+    logRows
+      .filter((row) => typeof row.attemptId === 'string' && row.attemptId.trim())
+      .map((row) => [row.attemptId as string, row] as const),
+  );
+
+  return ledger.attempts.map((attempt) => {
+    const log = logByAttemptId.get(attempt.attemptId);
+    return {
+      ...attempt,
+      proxyLogId: log?.id ?? null,
+      retryCount: log?.retryCount ?? attempt.attemptIndex,
+      logStatus: log?.status ?? null,
+      logHttpStatus: log?.httpStatus ?? null,
+      latencyMs: log?.latencyMs ?? null,
+      firstByteLatencyMs: log?.firstByteLatencyMs ?? null,
+      modelActual: log?.modelActual ?? null,
+      logErrorMessage: log?.errorMessage ?? null,
+    };
+  });
 }
 
 export type ProxyLogSelectFields = ReturnType<typeof buildProxyLogSelectFields>;

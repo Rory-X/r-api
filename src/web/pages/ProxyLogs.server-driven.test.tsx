@@ -106,6 +106,107 @@ function buildListResponse(overrides?: Partial<{
   };
 }
 
+function buildRetryAttempts() {
+  return [
+    {
+      id: 501,
+      attemptId: 'proxy-retry-ui:attempt:0',
+      attemptIndex: 0,
+      channelId: 225,
+      routeId: 7,
+      accountId: 24,
+      accountUsername: 'codex-first@example.com',
+      siteId: 11,
+      siteName: 'Codex OAuth A',
+      credentialId: null,
+      credentialName: null,
+      endpoint: 'responses',
+      requestPath: '/responses',
+      targetUrl: 'https://chatgpt.com/backend-api/codex/responses',
+      status: 'failed',
+      commitState: 'request_sent',
+      errorScope: 'upstream',
+      statusCode: 400,
+      errorSummary: 'first upstream rejected the requested model',
+      startedAt: '2026-08-18 11:23:25',
+      finishedAt: '2026-08-18 11:23:27',
+      updatedAt: '2026-08-18 11:23:27',
+      proxyLogId: 4317,
+      retryCount: 0,
+      logStatus: 'failed',
+      logHttpStatus: 400,
+      latencyMs: 2_000,
+      firstByteLatencyMs: null,
+      modelActual: 'gpt-5.6-luna',
+      logErrorMessage: 'first upstream rejected the requested model',
+    },
+    {
+      id: 502,
+      attemptId: 'proxy-retry-ui:attempt:1',
+      attemptIndex: 1,
+      channelId: 200,
+      routeId: 7,
+      accountId: 18,
+      accountUsername: 'codex-second@example.com',
+      siteId: 12,
+      siteName: 'Codex OAuth B',
+      credentialId: null,
+      credentialName: null,
+      endpoint: 'responses',
+      requestPath: '/v1/responses',
+      targetUrl: 'https://second.example.com/v1/responses',
+      status: 'failed',
+      commitState: 'response_started',
+      errorScope: 'transport',
+      statusCode: 502,
+      errorSummary: 'second upstream stream ended',
+      startedAt: '2026-08-18 11:23:27',
+      finishedAt: '2026-08-18 11:23:28',
+      updatedAt: '2026-08-18 11:23:28',
+      proxyLogId: 4319,
+      retryCount: 1,
+      logStatus: 'failed',
+      logHttpStatus: 502,
+      latencyMs: 900,
+      firstByteLatencyMs: 120,
+      modelActual: 'gpt-5.6-luna',
+      logErrorMessage: 'second upstream stream ended',
+    },
+    {
+      id: 503,
+      attemptId: 'proxy-retry-ui:attempt:2',
+      attemptIndex: 2,
+      channelId: 240,
+      routeId: 7,
+      accountId: 22,
+      accountUsername: 'codex-final@example.com',
+      siteId: 13,
+      siteName: 'Codex OAuth C',
+      credentialId: null,
+      credentialName: null,
+      endpoint: 'responses',
+      requestPath: '/responses',
+      targetUrl: 'https://chatgpt.com/backend-api/codex/responses',
+      status: 'failed',
+      commitState: 'request_sent',
+      errorScope: 'upstream',
+      statusCode: 400,
+      errorSummary: 'final upstream rejected the requested model',
+      startedAt: '2026-08-18 11:23:29',
+      finishedAt: '2026-08-18 11:23:29',
+      updatedAt: '2026-08-18 11:23:29',
+      proxyLogId: 4321,
+      retryCount: 2,
+      logStatus: 'failed',
+      logHttpStatus: 400,
+      latencyMs: 783,
+      firstByteLatencyMs: null,
+      modelActual: 'gpt-5.6-luna',
+      logErrorMessage: 'final upstream rejected the requested model',
+    },
+  ];
+}
+
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -325,11 +426,15 @@ describe('ProxyLogs server-driven page', () => {
     isMobileMock.mockReturnValue(true);
     const baseLog = buildListResponse().items[0];
     apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
-      items: [{ ...baseLog, modelActual: 'gpt-4o-2026-08-01' }],
+      items: [{ ...baseLog, modelActual: 'gpt-4o-2026-08-01', retryCount: 2 }],
     }));
     apiMock.getProxyLogDetail.mockResolvedValue({
       ...baseLog,
       modelActual: 'gpt-4o-2026-08-01',
+      retryCount: 2,
+      requestId: 'proxy-retry-ui',
+      attemptId: 'proxy-retry-ui:attempt:2',
+      retryAttempts: buildRetryAttempts(),
       routeId: 45,
       channelId: 67,
       billingDetails: {
@@ -401,6 +506,15 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('/api/chat');
       expect(text).toContain('计费过程');
       expect(text).toContain('客户端详情');
+      expect(collectText(root.root.findByProps({
+        'data-testid': 'proxy-log-retry-detail-mobile-101',
+      }))).toBe('2 次（共尝试 3 次）');
+      expect(text).toContain('重试轨迹');
+      expect(text).toContain('首次尝试');
+      expect(text).toContain('第 2 次重试');
+      expect(text).toContain('Codex OAuth C #13');
+      expect(text).toContain('Channel #240');
+      expect(text).toContain('final upstream rejected the requested model');
     } finally {
       root?.unmount();
     }
@@ -1241,6 +1355,63 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(101);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows every retry destination and outcome in the expanded desktop detail', async () => {
+    const retryLog = {
+      ...buildListResponse().items[0],
+      retryCount: 2,
+    };
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({ items: [retryLog] }));
+    apiMock.getProxyLogDetail.mockResolvedValue({
+      ...retryLog,
+      requestId: 'proxy-retry-ui',
+      attemptId: 'proxy-retry-ui:attempt:2',
+      retryAttempts: buildRetryAttempts(),
+      billingDetails: null,
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101'
+      ));
+      await act(async () => row.props.onClick());
+      await flushMicrotasks();
+
+      expect(collectText(root.root.findByProps({
+        'data-testid': 'proxy-log-retry-detail-101',
+      }))).toBe('2 次（共尝试 3 次）');
+      const history = root.root.findByProps({
+        'data-testid': 'proxy-log-retry-history',
+      });
+      const historyText = collectText(history);
+      expect(historyText).toContain('首次尝试');
+      expect(historyText).toContain('第 1 次重试');
+      expect(historyText).toContain('第 2 次重试');
+      expect(historyText).toContain('当前日志');
+      expect(historyText).toContain('Codex OAuth A #11');
+      expect(historyText).toContain('codex-second@example.com #18');
+      expect(historyText).toContain('Channel #240');
+      expect(historyText).toContain('HTTP 502');
+      expect(historyText).toContain('/v1/responses');
+      expect(historyText).toContain('900ms · 首字 120ms');
+      expect(historyText).toContain('final upstream rejected the requested model');
     } finally {
       root?.unmount();
     }

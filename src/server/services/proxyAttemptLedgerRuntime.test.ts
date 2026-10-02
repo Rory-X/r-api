@@ -5,7 +5,7 @@ import { createRetryBudget } from './proxyRetryContract.js';
 const storeMocks = vi.hoisted(() => ({
   insertProxyRequestLedger: vi.fn(),
   insertProxyRequestAttempt: vi.fn(),
-  updateProxyRequestRetryOwner: vi.fn(),
+  updateProxyRequestPolicySnapshot: vi.fn(),
   updateProxyRequestAttemptCommit: vi.fn(),
   finishProxyRequestAttempt: vi.fn(),
   finishProxyRequest: vi.fn(),
@@ -38,7 +38,7 @@ describe('proxyAttemptLedgerRuntime', () => {
       requestId: 'req-runtime',
     });
     storeMocks.insertProxyRequestAttempt.mockResolvedValue(10);
-    storeMocks.updateProxyRequestRetryOwner.mockResolvedValue(undefined);
+    storeMocks.updateProxyRequestPolicySnapshot.mockResolvedValue(undefined);
     storeMocks.updateProxyRequestAttemptCommit.mockResolvedValue(undefined);
     storeMocks.finishProxyRequestAttempt.mockResolvedValue(undefined);
     storeMocks.finishProxyRequest.mockResolvedValue(undefined);
@@ -124,10 +124,11 @@ describe('proxyAttemptLedgerRuntime', () => {
     });
 
     await session!.setRetryOwner('local_proxy');
-    expect(storeMocks.updateProxyRequestRetryOwner).toHaveBeenCalledWith({
+    expect(storeMocks.updateProxyRequestPolicySnapshot).toHaveBeenCalledWith({
       requestRowId: 9,
       retryOwner: 'local_proxy',
       replaySafety: 'safe_only',
+      routingExplanation: null,
     });
 
     await session!.beginAttempt({
@@ -137,7 +138,77 @@ describe('proxyAttemptLedgerRuntime', () => {
     });
     await session!.setRetryOwner('upstream_gateway');
 
-    expect(storeMocks.updateProxyRequestRetryOwner).toHaveBeenCalledTimes(1);
+    expect(storeMocks.updateProxyRequestPolicySnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('appends routing decisions to one request-level explanation snapshot', async () => {
+    const session = await startProxyAttemptLedgerSession({
+      requestId: 'req-runtime-routing',
+      requestedModel: 'claude-opus',
+      downstreamPath: '/v1/messages',
+      policy: policy(),
+    });
+
+    await session!.recordRoutingDecision({
+      retryCount: 0,
+      selectionMode: 'initial',
+      decision: {
+        requestedModel: 'claude-opus',
+        actualModel: 'claude-opus-4-1',
+        matched: true,
+        routeId: 7,
+        routeName: 'Claude 高质量',
+        modelPattern: 'claude-opus',
+        selectedChannelId: 11,
+        selectedAccountId: 21,
+        selectedLabel: 'A @ Site A / default',
+        summary: ['命中路由：claude-opus'],
+        candidates: [{
+          channelId: 11,
+          accountId: 21,
+          username: 'A',
+          siteName: 'Site A',
+          tokenName: 'default',
+          priority: 0,
+          sortOrder: 0,
+          weight: 10,
+          eligible: true,
+          recentlyFailed: false,
+          avoidedByRecentFailure: false,
+          probability: 62,
+          reason: '当前权重命中概率 62%',
+        }],
+      },
+    });
+    await session!.recordRoutingDecision({
+      retryCount: 1,
+      selectionMode: 'failover',
+      decision: {
+        requestedModel: 'claude-opus',
+        actualModel: 'claude-opus-4-1',
+        matched: true,
+        routeId: 7,
+        routeName: 'Claude 高质量',
+        modelPattern: 'claude-opus',
+        selectedChannelId: 12,
+        selectedAccountId: 22,
+        selectedLabel: 'B @ Site B / default',
+        summary: ['排除已失败通道 11'],
+        candidates: [],
+      },
+    });
+
+    expect(storeMocks.updateProxyRequestPolicySnapshot).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestRowId: 9,
+      routingExplanation: expect.objectContaining({
+        version: 1,
+        requestedModel: 'claude-opus',
+        decisions: [
+          expect.objectContaining({ selectionMode: 'initial', selectedChannelId: 11 }),
+          expect.objectContaining({ selectionMode: 'failover', selectedChannelId: 12 }),
+        ],
+      }),
+    }));
   });
 
   it('finishes an ambiguous transport attempt as unknown exactly once', async () => {

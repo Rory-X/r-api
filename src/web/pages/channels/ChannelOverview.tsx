@@ -1,67 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../../api.js';
+import { api, type ChannelOverviewChannel, type ChannelsOverviewResponse } from '../../api.js';
 import { MobileCard, MobileField } from '../../components/MobileCard.js';
 import { useToast } from '../../components/Toast.js';
 import { useIsMobile } from '../../components/useIsMobile.js';
 import { tr } from '../../i18n.js';
 import { resolveChannelPath } from './navigation.js';
 
-type SiteRow = {
-  id: number;
-  name: string;
-  url: string;
-  platform?: string | null;
-  status?: string | null;
-  apiEndpoints?: Array<{
-    id?: number;
-    enabled?: boolean;
-    url?: string;
-    cooldownUntil?: string | null;
-    lastFailedAt?: string | null;
-    lastFailureReason?: string | null;
-  }>;
-  runtimeHealth?: RuntimeHealthRow[];
-};
-
-type RuntimeHealthRow = {
-  scope: 'site' | 'model';
-  modelName?: string | null;
-  state: 'healthy' | 'open' | 'recovering';
-  breakerLevel: number;
-  remainingMs: number;
-  probeInFlight: boolean;
-  recoverySuccessCount: number;
-  recoverySuccessThreshold: number;
-  recoveryTrafficRatio: number;
-  firstByteLatencyEmaMs?: number | null;
-  firstByteSampleCount?: number;
-  firstByteMultiplier?: number;
-  lastFailureReason?: string | null;
-  lastFailureDomain?: string | null;
-  lastFailureEndpointId?: number | null;
-};
-
-type ConnectionRow = {
-  id: number;
-  siteId?: number | null;
-  status?: string | null;
-  credentialMode?: string | null;
-  oauthProvider?: string | null;
-  username?: string | null;
-};
-
-type VaultRow = {
-  id: number;
-  siteId?: number | null;
-  status: string;
-};
-
-type ChannelSummary = SiteRow & {
-  connectionCount: number;
-  activeConnectionCount: number;
-  vaultCount: number;
-};
+type RuntimeHealthRow = ChannelOverviewChannel['runtimeHealth'][number];
 
 function normalizeStatus(value?: string | null): string {
   return String(value || 'active').trim().toLowerCase() || 'active';
@@ -79,7 +25,7 @@ function formatRemainingMs(remainingMs: number): string {
   return `${Math.ceil(safeMs / 1000)} ${tr('秒')}`;
 }
 
-function resolveCoolingApiEndpoint(site: SiteRow) {
+function resolveCoolingApiEndpoint(site: ChannelOverviewChannel) {
   const nowMs = Date.now();
   return (site.apiEndpoints || []).find((endpoint) => (
     endpoint.enabled !== false
@@ -125,22 +71,13 @@ export default function ChannelOverview() {
   const navigate = useNavigate();
   const toast = useToast();
   const isMobile = useIsMobile();
-  const [sites, setSites] = useState<SiteRow[]>([]);
-  const [connections, setConnections] = useState<ConnectionRow[]>([]);
-  const [vaultItems, setVaultItems] = useState<VaultRow[]>([]);
+  const [overview, setOverview] = useState<ChannelsOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [siteRows, accountRows, vaultResponse] = await Promise.all([
-        api.getSites(),
-        api.getAccounts(),
-        api.getCredentialVaultItems(),
-      ]);
-      setSites(Array.isArray(siteRows) ? siteRows : []);
-      setConnections(Array.isArray(accountRows) ? accountRows : []);
-      setVaultItems(Array.isArray(vaultResponse?.items) ? vaultResponse.items : []);
+      setOverview(await api.getChannelsOverview());
     } catch (error: any) {
       toast.error(error?.message || tr('加载渠道概览失败'));
     } finally {
@@ -152,35 +89,13 @@ export default function ChannelOverview() {
     void load();
   }, []);
 
-  const ordinaryConnections = useMemo(
-    () => connections.filter((item) => !String(item.oauthProvider || '').trim()),
-    [connections],
-  );
-
-  const officialConnections = useMemo(
-    () => connections.filter((item) => !!String(item.oauthProvider || '').trim()),
-    [connections],
-  );
-
-  const summaries = useMemo<ChannelSummary[]>(() => sites.map((site) => {
-    const siteConnections = ordinaryConnections.filter((item) => Number(item.siteId) === site.id);
-    const siteVault = vaultItems.filter((item) => Number(item.siteId) === site.id);
-    return {
-      ...site,
-      connectionCount: siteConnections.length,
-      activeConnectionCount: siteConnections.filter((item) => normalizeStatus(item.status) === 'active').length,
-      vaultCount: siteVault.length,
-    };
-  }), [ordinaryConnections, sites, vaultItems]);
-
-  const totals = useMemo(() => ({
-    sites: sites.length,
-    official: officialConnections.length,
-    connections: ordinaryConnections.length,
-    credentials: vaultItems.filter((item) => (
-      item.siteId != null && normalizeStatus(item.status) === 'active'
-    )).length,
-  }), [officialConnections.length, ordinaryConnections.length, sites.length, vaultItems]);
+  const summaries = overview?.channels || [];
+  const totals = overview?.totals || {
+    sites: 0,
+    officialConnections: 0,
+    ordinaryConnections: 0,
+    activeCredentials: 0,
+  };
 
   if (loading) {
     return (
@@ -208,9 +123,9 @@ export default function ChannelOverview() {
 
       <div className="channel-summary-strip">
         <div className="channel-summary-metric"><strong>{totals.sites}</strong><span>{tr('个上游站点')}</span></div>
-        <div className="channel-summary-metric"><strong>{totals.official}</strong><span>{tr('个官方渠道')}</span></div>
-        <div className="channel-summary-metric"><strong>{totals.connections}</strong><span>{tr('个普通连接')}</span></div>
-        <div className="channel-summary-metric"><strong>{totals.credentials}</strong><span>{tr('个渠道凭证')}</span></div>
+        <div className="channel-summary-metric"><strong>{totals.officialConnections}</strong><span>{tr('个官方渠道')}</span></div>
+        <div className="channel-summary-metric"><strong>{totals.ordinaryConnections}</strong><span>{tr('个普通连接')}</span></div>
+        <div className="channel-summary-metric"><strong>{totals.activeCredentials}</strong><span>{tr('个渠道凭证')}</span></div>
       </div>
 
       {summaries.length === 0 ? (
@@ -262,7 +177,7 @@ export default function ChannelOverview() {
               >
                 <MobileField label={tr('平台')} value={<span className="badge badge-muted">{platformLabel(channel.platform)}</span>} />
                 <MobileField label={tr('连接')} value={`${channel.activeConnectionCount}/${channel.connectionCount} ${tr('活跃')}`} />
-                <MobileField label={tr('凭证')} value={channel.vaultCount} />
+                <MobileField label={tr('凭证')} value={channel.credentialCount} />
                 <MobileField label={tr('API 端点')} value={endpointCount} />
                 {runtimeHealth && !disabled ? (
                   <MobileField
@@ -326,7 +241,7 @@ export default function ChannelOverview() {
                     </td>
                     <td><span className="badge badge-muted">{platformLabel(channel.platform)}</span></td>
                     <td>{channel.activeConnectionCount}/{channel.connectionCount}<span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}> {tr('活跃')}</span></td>
-                    <td>{channel.vaultCount}</td>
+                    <td>{channel.credentialCount}</td>
                     <td>
                       <span className={`badge ${disabled ? 'badge-warning' : runtimeHealth?.state === 'open' || coolingEndpoint ? 'badge-error' : runtimeHealth?.state === 'recovering' ? 'badge-warning' : 'badge-success'}`}>
                         {disabled

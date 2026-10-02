@@ -16,6 +16,7 @@ import {
   type ProxyLogClientOption,
   type ProxyLogDetail,
   type ProxyLogListItem,
+  type ProxyLogRetryAttemptDetail,
   type ProxyLogsSummary,
   type ProxyLogStatusFilter,
   type ProxyLogUsageSource,
@@ -37,6 +38,8 @@ import ProxyRequestLedgerPanel from "./proxy-logs/ProxyRequestLedgerPanel.js";
 
 type ProxyLogRenderItem = ProxyLogListItem & {
   billingDetails?: ProxyLogBillingDetails;
+  attemptId?: string | null;
+  retryAttempts?: ProxyLogRetryAttemptDetail[];
   routeId?: number | null;
   channelId?: number | null;
   username?: string | null;
@@ -287,6 +290,16 @@ function formatLatency(ms: number) {
   return `${ms}ms`;
 }
 
+function formatRetryDetail(retryCount: number | null | undefined): string {
+  const normalized =
+    typeof retryCount === "number" && Number.isFinite(retryCount)
+      ? Math.max(0, Math.trunc(retryCount))
+      : 0;
+  return normalized > 0
+    ? `${normalized} 次（共尝试 ${normalized + 1} 次）`
+    : "0 次（仅首次请求）";
+}
+
 function latencyColor(ms: number) {
   if (ms >= 3000) return "var(--color-danger)";
   if (ms >= 2000)
@@ -358,6 +371,252 @@ function formatProxyLogUsageSource(
 
 function formatProxyLogTokenValue(value: number | null | undefined): string {
   return typeof value === "number" ? value.toLocaleString() : "--";
+}
+
+function formatRetryAttemptLabel(attemptIndex: number): string {
+  return attemptIndex <= 0 ? "首次尝试" : `第 ${attemptIndex} 次重试`;
+}
+
+function formatRetryAttemptStatus(status: string | null | undefined): string {
+  return {
+    success: "成功",
+    succeeded: "成功",
+    failed: "失败",
+    retried: "已重试",
+    in_flight: "进行中",
+    cancelled: "已取消",
+    unknown: "结果未知",
+  }[String(status || "")] || String(status || "未知");
+}
+
+function formatRetryCommitState(state: string | null | undefined): string {
+  return {
+    not_started: "未发送",
+    request_sent: "请求已发送",
+    response_started: "响应已开始",
+    completed: "业务已完成",
+    sent_unknown: "送达结果未知",
+  }[String(state || "")] || String(state || "未知");
+}
+
+function retryAttemptBadgeClass(status: string | null | undefined): string {
+  if (status === "success" || status === "succeeded") return "badge-success";
+  if (status === "failed") return "badge-error";
+  if (status === "in_flight") return "badge-info";
+  return "badge-muted";
+}
+
+function ProxyLogRetryHistory({
+  retryCount,
+  attempts,
+  currentAttemptId,
+  isMobile,
+}: {
+  retryCount: number;
+  attempts: ProxyLogRetryAttemptDetail[];
+  currentAttemptId?: string | null;
+  isMobile: boolean;
+}) {
+  return (
+    <section
+      data-testid="proxy-log-retry-history"
+      style={{ display: "grid", gap: 8 }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 650, color: "var(--color-warning)" }}>
+          重试轨迹
+        </div>
+        <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+          {formatRetryDetail(retryCount)}
+        </div>
+      </div>
+
+      {attempts.length === 0 ? (
+        <div
+          style={{
+            padding: "9px 10px",
+            border: "1px dashed var(--color-border)",
+            borderRadius: "var(--radius-sm)",
+            color: "var(--color-text-muted)",
+            fontSize: 11,
+          }}
+        >
+          该日志只记录了重试汇总，未关联到逐次 Attempt 数据。
+        </div>
+      ) : (
+        <div
+          style={{
+            border: "1px solid var(--color-border-light)",
+            borderRadius: "var(--radius-sm)",
+            overflow: "hidden",
+          }}
+        >
+          {attempts.map((attempt, index) => {
+            const status = attempt.logStatus || attempt.status;
+            const httpStatus = attempt.logHttpStatus ?? attempt.statusCode;
+            const current = currentAttemptId
+              ? attempt.attemptId === currentAttemptId
+              : attempt.attemptIndex === retryCount;
+            const parsedLog = parseProxyLogPathMeta(
+              attempt.logErrorMessage || attempt.errorSummary || undefined,
+            );
+            const errorMessage =
+              parsedLog.errorMessage.trim() ||
+              String(attempt.errorSummary || "").trim();
+            const requestPath = attempt.requestPath || parsedLog.upstreamPath;
+            const destinationParts = [
+              attempt.siteName
+                ? `${attempt.siteName}${attempt.siteId ? ` #${attempt.siteId}` : ""}`
+                : attempt.siteId
+                  ? `站点 #${attempt.siteId}`
+                  : null,
+              attempt.accountUsername
+                ? `${attempt.accountUsername}${attempt.accountId ? ` #${attempt.accountId}` : ""}`
+                : attempt.accountId
+                  ? `账号 #${attempt.accountId}`
+                  : null,
+            ].filter(Boolean);
+            const routingParts = [
+              attempt.routeId ? `Route #${attempt.routeId}` : null,
+              attempt.channelId ? `Channel #${attempt.channelId}` : null,
+              attempt.credentialName
+                ? `${attempt.credentialName}${attempt.credentialId ? ` #${attempt.credentialId}` : ""}`
+                : attempt.credentialId
+                  ? `Credential #${attempt.credentialId}`
+                  : null,
+            ].filter(Boolean);
+
+            return (
+              <div
+                key={attempt.attemptId}
+                data-testid={`proxy-log-retry-attempt-${attempt.attemptIndex}`}
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  padding: isMobile ? 10 : "10px 12px",
+                  borderTop:
+                    index > 0 ? "1px solid var(--color-border-light)" : undefined,
+                  background: current
+                    ? "color-mix(in srgb, var(--color-warning) 7%, var(--color-bg))"
+                    : "var(--color-bg)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <strong style={{ color: "var(--color-text-primary)" }}>
+                      {formatRetryAttemptLabel(attempt.attemptIndex)}
+                    </strong>
+                    {current ? (
+                      <span className="badge badge-warning" style={{ fontSize: 10 }}>
+                        当前日志
+                      </span>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span className={`badge ${retryAttemptBadgeClass(status)}`} style={{ fontSize: 10 }}>
+                      {formatRetryAttemptStatus(status)}
+                    </span>
+                    {httpStatus != null ? (
+                      <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                        HTTP {httpStatus}
+                      </span>
+                    ) : null}
+                    <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                      {formatRetryCommitState(attempt.commitState)}
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: isMobile
+                      ? "1fr"
+                      : "repeat(2, minmax(0, 1fr))",
+                    gap: "6px 16px",
+                    color: "var(--color-text-secondary)",
+                    fontSize: 11,
+                  }}
+                >
+                  <div>
+                    <span style={{ color: "var(--color-text-muted)" }}>去向：</span>
+                    {destinationParts.join(" / ") || "未记录"}
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-text-muted)" }}>路由：</span>
+                    {routingParts.join(" / ") || "未记录"}
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-text-muted)" }}>请求：</span>
+                    {[attempt.endpoint, requestPath].filter(Boolean).join(" · ") || "未记录"}
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-text-muted)" }}>耗时：</span>
+                    {attempt.latencyMs != null ? formatLatency(attempt.latencyMs) : "--"}
+                    {attempt.firstByteLatencyMs != null
+                      ? ` · 首字 ${formatLatency(attempt.firstByteLatencyMs)}`
+                      : ""}
+                    {attempt.modelActual ? ` · ${attempt.modelActual}` : ""}
+                  </div>
+                  <div style={{ gridColumn: isMobile ? undefined : "1 / -1" }}>
+                    <span style={{ color: "var(--color-text-muted)" }}>时间：</span>
+                    {formatDateTimeLocal(attempt.startedAt)}
+                    {attempt.errorScope ? ` · 错误域 ${attempt.errorScope}` : ""}
+                  </div>
+                </div>
+
+                {attempt.targetUrl ? (
+                  <code
+                    style={{
+                      display: "block",
+                      padding: "4px 7px",
+                      borderRadius: 4,
+                      background: "var(--color-bg-card)",
+                      color: "var(--color-text-muted)",
+                      fontSize: 10,
+                      overflowWrap: "anywhere",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {attempt.targetUrl}
+                  </code>
+                ) : null}
+
+                {errorMessage ? (
+                  <div
+                    style={{
+                      color: "var(--color-danger)",
+                      fontSize: 11,
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {errorMessage}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function renderDownstreamKeyIdentity(
@@ -3098,9 +3357,26 @@ export default function ProxyLogs() {
                         />
                         <MobileField
                           label="重试"
-                          value={detailLog.retryCount > 0 ? detailLog.retryCount : 0}
+                          value={
+                            <span
+                              data-testid={`proxy-log-retry-detail-mobile-${log.id}`}
+                            >
+                              {formatRetryDetail(detailLog.retryCount)}
+                            </span>
+                          }
                         />
                       </section>
+
+                      {detail &&
+                      (detailLog.retryCount > 0 ||
+                        (detailLog.retryAttempts?.length || 0) > 1) ? (
+                        <ProxyLogRetryHistory
+                          retryCount={detailLog.retryCount}
+                          attempts={detailLog.retryAttempts || []}
+                          currentAttemptId={detailLog.attemptId}
+                          isMobile
+                        />
+                      ) : null}
 
                       <section className="proxy-log-mobile-detail-section">
                         <div className="proxy-log-mobile-detail-title">
@@ -3634,6 +3910,20 @@ export default function ProxyLogs() {
                                       >
                                         {formatLatency(detailLog.latencyMs)}
                                       </strong>
+                                      ，重试: {" "}
+                                      <strong
+                                        data-testid={`proxy-log-retry-detail-${log.id}`}
+                                        style={{
+                                          color:
+                                            detailLog.retryCount > 0
+                                              ? "var(--color-warning)"
+                                              : "var(--color-text-primary)",
+                                        }}
+                                      >
+                                        {formatRetryDetail(
+                                          detailLog.retryCount,
+                                        )}
+                                      </strong>
                                     </div>
                                     {detailState?.loading && (
                                       <div
@@ -3718,6 +4008,17 @@ export default function ProxyLogs() {
                                     })}
                                   </div>
                                 </div>
+
+                                {detail &&
+                                (detailLog.retryCount > 0 ||
+                                  (detailLog.retryAttempts?.length || 0) > 1) ? (
+                                  <ProxyLogRetryHistory
+                                    retryCount={detailLog.retryCount}
+                                    attempts={detailLog.retryAttempts || []}
+                                    currentAttemptId={detailLog.attemptId}
+                                    isMobile={false}
+                                  />
+                                ) : null}
 
                                 {detailLog.billingDetails &&
                                   detailLog.billingDetails.usage

@@ -7,9 +7,11 @@ import { classifyRetryErrorScope, type RetryErrorScope } from '../services/proxy
 import { localProxyOwnsRetryForFailure } from '../services/proxyRetryOwnership.js';
 import type { BridgeProxyRoutePlan } from '../services/bridgeContinuationRouting.js';
 import type {
+  RouteDecisionExplanation,
   TokenRouterCredentialIdentity,
   TokenRouterSelectionConstraints,
 } from '../services/tokenRouter.js';
+import type { ProxyRoutingSelectionMode } from '../services/proxyRoutingExplanation.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 
@@ -140,7 +142,13 @@ export function buildBridgeTokenRouterSelectionConstraints(input: {
   });
 }
 
-export async function selectProxyChannelForAttempt(input: {
+export type ProxyChannelRoutingDecisionEvent = {
+  retryCount: number;
+  selectionMode: ProxyRoutingSelectionMode;
+  decision: RouteDecisionExplanation;
+};
+
+type SelectProxyChannelForAttemptInput = {
   requestedModel: string;
   downstreamPolicy: DownstreamRoutingPolicy;
   excludeChannelIds: number[];
@@ -149,16 +157,30 @@ export async function selectProxyChannelForAttempt(input: {
   forcedChannelId?: number | null;
   bridgeRoutePlan?: BridgeProxyRoutePlan | null;
   excludeCredentials?: readonly TokenRouterCredentialIdentity[];
-}): Promise<SelectedChannel> {
+  onRoutingDecision?: (event: ProxyChannelRoutingDecisionEvent) => Promise<void> | void;
+};
+
+type ProxyChannelSelectionResult = {
+  selected: SelectedChannel;
+  selectionMode: ProxyRoutingSelectionMode;
+};
+
+async function selectProxyChannelCandidateForAttempt(
+  input: SelectProxyChannelForAttemptInput,
+): Promise<ProxyChannelSelectionResult> {
   const normalizedForcedChannelId = normalizeForcedChannelId(input.forcedChannelId);
   if (normalizedForcedChannelId !== null) {
-    if (input.retryCount > 0) return null;
-    return await tokenRouter.selectPreferredChannel(
-      input.requestedModel,
-      normalizedForcedChannelId,
-      input.downstreamPolicy,
-      input.excludeChannelIds,
-    );
+    return {
+      selected: input.retryCount > 0
+        ? null
+        : await tokenRouter.selectPreferredChannel(
+          input.requestedModel,
+          normalizedForcedChannelId,
+          input.downstreamPolicy,
+          input.excludeChannelIds,
+        ),
+      selectionMode: 'forced',
+    };
   }
 
   let selected: SelectedChannel = null;
@@ -211,7 +233,7 @@ export async function selectProxyChannelForAttempt(input: {
       await refreshRoutesForFirstAttempt();
       selected = await selectWithBridgePlan();
     }
-    return selected;
+    return { selected, selectionMode: 'bridge' };
   }
 
   if (input.retryCount === 0 && input.stickySessionKey) {
@@ -235,6 +257,7 @@ export async function selectProxyChannelForAttempt(input: {
           proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
         }
       }
+      if (selected) return { selected, selectionMode: 'sticky' };
     }
   }
 
@@ -251,6 +274,72 @@ export async function selectProxyChannelForAttempt(input: {
   if (!selected && input.retryCount === 0 && !refreshedRoutes) {
     await refreshRoutesForFirstAttempt();
     selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
+  }
+
+  return {
+    selected,
+    selectionMode: input.retryCount > 0 ? 'failover' : 'initial',
+  };
+}
+
+async function explainProxyChannelSelection(
+  input: SelectProxyChannelForAttemptInput,
+): Promise<RouteDecisionExplanation | null> {
+  if (typeof tokenRouter.explainSelection !== 'function') return null;
+  const selectionConstraints = input.bridgeRoutePlan
+    ? buildBridgeTokenRouterSelectionConstraints({
+      plan: input.bridgeRoutePlan,
+      excludedCredentials: input.excludeCredentials,
+    })
+    : {};
+  return await tokenRouter.explainSelection(
+    input.requestedModel,
+    input.excludeChannelIds,
+    input.downstreamPolicy,
+    selectionConstraints,
+  );
+}
+
+function alignDecisionWithSelectedChannel(
+  decision: RouteDecisionExplanation,
+  selected: NonNullable<SelectedChannel> | null,
+): RouteDecisionExplanation {
+  if (!selected) {
+    return {
+      ...decision,
+      selectedChannelId: undefined,
+      selectedAccountId: undefined,
+      selectedLabel: undefined,
+    };
+  }
+  const candidate = decision.candidates.find((item) => item.channelId === selected.channel.id);
+  return {
+    ...decision,
+    actualModel: selected.actualModel || decision.actualModel,
+    selectedChannelId: selected.channel.id,
+    selectedAccountId: selected.account.id,
+    selectedLabel: candidate
+      ? `${candidate.username} @ ${candidate.siteName} / ${candidate.tokenName}`
+      : `${selected.account.username || `account-${selected.account.id}`} @ ${selected.site.name || 'unknown'} / ${selected.tokenName || 'default'}`,
+  };
+}
+
+export async function selectProxyChannelForAttempt(
+  input: SelectProxyChannelForAttemptInput,
+): Promise<SelectedChannel> {
+  const { selected, selectionMode } = await selectProxyChannelCandidateForAttempt(input);
+  if (!input.onRoutingDecision) return selected;
+
+  try {
+    const decision = await explainProxyChannelSelection(input);
+    if (!decision) return selected;
+    await input.onRoutingDecision({
+      retryCount: input.retryCount,
+      selectionMode,
+      decision: alignDecisionWithSelectedChannel(decision, selected),
+    });
+  } catch (error) {
+    console.warn('[proxy/channel-selection] failed to record routing explanation', error);
   }
 
   return selected;

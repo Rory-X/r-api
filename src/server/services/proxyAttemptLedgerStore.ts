@@ -28,6 +28,19 @@ import type {
   RetryErrorScope,
   RetryOwner,
 } from './proxyRetryContract.js';
+import {
+  classifyOperationalFailure,
+  type OperationalAlertCategory,
+  type OperationalAlertSeverity,
+  type OperationalFailureCode,
+  type OperationalHealthDomain,
+} from './operationalFailureContract.js';
+import {
+  buildProxyRoutingExplanation,
+  parseProxyRoutingExplanationSnapshot,
+  type ProxyRoutingExplanation,
+  type ProxyRoutingExplanationSnapshot,
+} from './proxyRoutingExplanation.js';
 
 const PROXY_REQUEST_STATUSES = new Set<ProxyRequestStatus>([
   'active',
@@ -77,6 +90,12 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 
 function parseRetryBudget(value: string | null | undefined): RetryBudgetState {
   return parseJson(value, DEFAULT_RETRY_BUDGET);
+}
+
+function parsePublicPolicySnapshot(value: string | null | undefined): Record<string, unknown> {
+  const snapshot = parseJson<Record<string, unknown>>(value, {});
+  const { routingExplanation: _routingExplanation, ...policySnapshot } = snapshot;
+  return policySnapshot;
 }
 
 function redactSensitiveUrl(raw: string | null | undefined): string | null {
@@ -200,6 +219,11 @@ export type ProxyRequestLedgerAttemptDetail = {
   commitState: AttemptCommitState;
   errorScope: RetryErrorScope | null;
   statusCode: number | null;
+  failureCode: OperationalFailureCode | null;
+  healthDomain: OperationalHealthDomain | null;
+  alertCategory: OperationalAlertCategory | null;
+  alertSeverity: OperationalAlertSeverity | null;
+  retryable: boolean | null;
   errorSummary: string | null;
   startedAt: string | null;
   finishedAt: string | null;
@@ -208,6 +232,7 @@ export type ProxyRequestLedgerAttemptDetail = {
 
 export type ProxyRequestLedgerDetail = ProxyRequestLedgerListItem & {
   attempts: ProxyRequestLedgerAttemptDetail[];
+  routingExplanation: ProxyRoutingExplanation | null;
 };
 
 export type ProxyRequestLedgerSummary = {
@@ -297,7 +322,7 @@ function mapProxyRequestLedgerListItem(input: {
     status: input.request.status as ProxyRequestStatus,
     retryOwner: input.request.retryOwner as RetryOwner,
     replaySafety: input.request.replaySafety as ProxyAttemptPolicySnapshot['replaySafety'],
-    policySnapshot: parseJson(input.request.policySnapshotJson, {}),
+    policySnapshot: parsePublicPolicySnapshot(input.request.policySnapshotJson),
     retryBudget: parseRetryBudget(input.request.retryBudgetJson),
     attemptCount: input.attempts.length,
     latestCommitState: (latestAttempt?.commitState as AttemptCommitState | undefined) ?? null,
@@ -389,10 +414,11 @@ export async function insertProxyRequestLedger(input: CreateProxyRequestLedgerIn
   };
 }
 
-export async function updateProxyRequestRetryOwner(input: {
+export async function updateProxyRequestPolicySnapshot(input: {
   requestRowId: number;
   retryOwner: RetryOwner;
   replaySafety: ProxyAttemptPolicySnapshot['replaySafety'];
+  routingExplanation?: ProxyRoutingExplanationSnapshot | null;
   now?: Date;
 }): Promise<void> {
   await db.update(schema.proxyRequests).set({
@@ -400,9 +426,19 @@ export async function updateProxyRequestRetryOwner(input: {
     policySnapshotJson: serializeJson({
       retryOwner: input.retryOwner,
       replaySafety: input.replaySafety,
+      ...(input.routingExplanation ? { routingExplanation: input.routingExplanation } : {}),
     }),
     updatedAt: formatUtcSqlDateTime(input.now ?? new Date()),
   }).where(eq(schema.proxyRequests.id, input.requestRowId)).run();
+}
+
+export async function updateProxyRequestRetryOwner(input: {
+  requestRowId: number;
+  retryOwner: RetryOwner;
+  replaySafety: ProxyAttemptPolicySnapshot['replaySafety'];
+  now?: Date;
+}): Promise<void> {
+  await updateProxyRequestPolicySnapshot(input);
 }
 
 export type InsertProxyRequestAttemptInput = {
@@ -718,9 +754,18 @@ export async function getProxyRequestLedgerDetail(
     downstreamApiKeyName: row.downstreamApiKeyName,
     attempts: attemptRows.map(({ attempt }) => attempt),
   });
-  return {
-    ...base,
-    attempts: attemptRows.map((attemptRow) => ({
+  const attempts = attemptRows.map((attemptRow) => {
+    const errorScope = (attemptRow.attempt.errorScope as RetryErrorScope | null) ?? null;
+    const statusCode = attemptRow.attempt.statusCode ?? null;
+    const errorSummary = attemptRow.attempt.errorSummary ?? null;
+    const classification = attemptRow.attempt.status === 'succeeded'
+      ? null
+      : classifyOperationalFailure({
+        status: statusCode ?? undefined,
+        rawErrorText: errorSummary,
+        errorScope,
+      });
+    return {
       id: attemptRow.attempt.id,
       attemptId: attemptRow.attempt.attemptId,
       attemptIndex: attemptRow.attempt.attemptIndex,
@@ -738,13 +783,31 @@ export async function getProxyRequestLedgerDetail(
       targetUrl: redactSensitiveUrl(attemptRow.attempt.targetUrl),
       status: attemptRow.attempt.status as ProxyAttemptStatus,
       commitState: attemptRow.attempt.commitState as AttemptCommitState,
-      errorScope: (attemptRow.attempt.errorScope as RetryErrorScope | null) ?? null,
-      statusCode: attemptRow.attempt.statusCode ?? null,
-      errorSummary: attemptRow.attempt.errorSummary ?? null,
+      errorScope,
+      statusCode,
+      failureCode: classification?.code ?? null,
+      healthDomain: classification?.healthDomain ?? null,
+      alertCategory: classification?.alertCategory ?? null,
+      alertSeverity: classification?.alertSeverity ?? null,
+      retryable: classification?.retryable ?? null,
+      errorSummary,
       startedAt: attemptRow.attempt.startedAt ?? null,
       finishedAt: attemptRow.attempt.finishedAt ?? null,
       updatedAt: attemptRow.attempt.updatedAt ?? null,
-    })),
+    };
+  });
+  const routingSnapshot = parseProxyRoutingExplanationSnapshot(
+    parseJson<Record<string, unknown>>(row.request.policySnapshotJson, {}).routingExplanation,
+  );
+  return {
+    ...base,
+    attempts,
+    routingExplanation: buildProxyRoutingExplanation({
+      snapshot: routingSnapshot,
+      requestedModel: base.requestedModel,
+      status: base.status,
+      attempts,
+    }),
   };
 }
 

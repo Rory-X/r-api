@@ -4,6 +4,7 @@ import {
   notifyAuthSessionExpired,
   persistAuthSession,
 } from "./authSession.js";
+import type { RouteDecisionCandidate } from "../shared/tokenRouteContract.js";
 
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
@@ -678,10 +679,24 @@ export type ProxyLogListItem = {
 };
 
 export type ProxyLogDetail = ProxyLogListItem & {
+  requestId?: string | null;
+  attemptId?: string | null;
   routeId?: number | null;
   channelId?: number | null;
   httpStatus?: number | null;
   billingDetails?: ProxyLogBillingDetails;
+  retryAttempts?: ProxyLogRetryAttemptDetail[];
+};
+
+export type ProxyLogRetryAttemptDetail = ProxyRequestLedgerAttemptDetail & {
+  proxyLogId?: number | null;
+  retryCount: number;
+  logStatus?: string | null;
+  logHttpStatus?: number | null;
+  latencyMs?: number | null;
+  firstByteLatencyMs?: number | null;
+  modelActual?: string | null;
+  logErrorMessage?: string | null;
 };
 
 export type ProxyLogsSummary = {
@@ -796,14 +811,81 @@ export type ProxyRequestLedgerAttemptDetail = {
   commitState: ProxyAttemptCommitState;
   errorScope?: string | null;
   statusCode?: number | null;
+  failureCode?: string | null;
+  healthDomain?: string | null;
+  alertCategory?: string | null;
+  alertSeverity?: string | null;
+  retryable?: boolean | null;
   errorSummary?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
   updatedAt?: string | null;
 };
 
+export type ProxyRoutingDecisionSnapshot = {
+  selectionIndex: number;
+  retryCount: number;
+  selectionMode: "initial" | "failover" | "sticky" | "forced" | "bridge";
+  recordedAt: string;
+  requestedModel: string;
+  actualModel: string;
+  matched: boolean;
+  routeId: number | null;
+  routeName: string | null;
+  modelPattern: string | null;
+  selectedChannelId: number | null;
+  selectedAccountId: number | null;
+  selectedLabel: string | null;
+  summary: string[];
+  candidates: RouteDecisionCandidate[];
+};
+
+export type ProxyRoutingExplanation = {
+  version: 1;
+  requestedModel: string;
+  route: {
+    id: number | null;
+    name: string | null;
+    modelPattern: string | null;
+  } | null;
+  candidateCount: number;
+  candidates: RouteDecisionCandidate[];
+  decisions: ProxyRoutingDecisionSnapshot[];
+  attempts: Array<{
+    attemptId: string;
+    attemptIndex: number;
+    channelId: number | null;
+    channelLabel: string | null;
+    status: ProxyAttemptLedgerStatus;
+    commitState: ProxyAttemptCommitState;
+    statusCode: number | null;
+    errorScope: string | null;
+    failureCode: string | null;
+    healthDomain?: string | null;
+    alertCategory?: string | null;
+    alertSeverity?: string | null;
+    retryable?: boolean | null;
+    errorSummary: string | null;
+  }>;
+  failovers: Array<{
+    failoverIndex: number;
+    fromChannelId: number | null;
+    fromLabel: string | null;
+    toChannelId: number | null;
+    toLabel: string | null;
+    trigger: string | null;
+    triggerDetail: string | null;
+  }>;
+  final: {
+    status: ProxyRequestLedgerStatus;
+    channelId: number | null;
+    channelLabel: string | null;
+  };
+};
+
 export type ProxyRequestLedgerDetail = ProxyRequestLedgerListItem & {
   attempts: ProxyRequestLedgerAttemptDetail[];
+  routingExplanation: ProxyRoutingExplanation | null;
 };
 
 export type ProxyRequestLedgerSummary = {
@@ -1622,6 +1704,85 @@ export type CredentialVaultItem = {
   updatedAt?: string | null;
 };
 
+export type ChannelOverviewRuntimeHealth = {
+  scope: "site" | "model";
+  modelName?: string | null;
+  state: "healthy" | "open" | "recovering";
+  breakerLevel: number;
+  remainingMs: number;
+  probeInFlight: boolean;
+  recoverySuccessCount: number;
+  recoverySuccessThreshold: number;
+  recoveryTrafficRatio: number;
+  firstByteLatencyEmaMs?: number | null;
+  firstByteSampleCount?: number;
+  firstByteMultiplier?: number;
+  lastFailureReason?: string | null;
+  lastFailureDomain?: string | null;
+  lastFailureEndpointId?: number | null;
+};
+
+export type ChannelOverviewChannel = {
+  id: number;
+  name: string;
+  url: string;
+  homepageUrl?: string | null;
+  platform?: string | null;
+  status?: string | null;
+  isPinned?: boolean | null;
+  sortOrder?: number | null;
+  globalWeight?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  apiEndpoints: Array<{
+    id: number;
+    siteId: number;
+    enabled?: boolean | null;
+    url: string;
+    cooldownUntil?: string | null;
+    lastFailedAt?: string | null;
+    lastFailureReason?: string | null;
+  }>;
+  runtimeHealth: ChannelOverviewRuntimeHealth[];
+  connectionCount: number;
+  activeConnectionCount: number;
+  credentialCount: number;
+  activeCredentialCount: number;
+};
+
+export type ChannelsOverviewResponse = {
+  generatedAt: string;
+  channels: ChannelOverviewChannel[];
+  connections: Array<{
+    id: number;
+    siteId: number;
+    username?: string | null;
+    status?: string | null;
+    credentialMode: "auto" | "session" | "apikey";
+  }>;
+  oauthConnections: Array<{
+    accountId: number;
+    siteId: number;
+    provider: string;
+    username?: string | null;
+    email?: string | null;
+    status?: string | null;
+  }>;
+  credentials: CredentialVaultItem[];
+  totals: {
+    sites: number;
+    ordinaryConnections: number;
+    officialConnections: number;
+    activeCredentials: number;
+  };
+};
+
+export type ChannelHealthResponse = {
+  generatedAt: string;
+  total: number;
+  items: Array<ChannelOverviewRuntimeHealth & { siteId: number }>;
+};
+
 export type CredentialLifecycleStatus =
   | "active"
   | "expiring"
@@ -1926,6 +2087,15 @@ export const api = {
 
   // Sites
   getSites: () => request("/api/sites"),
+  getChannelsOverview: () =>
+    request<ChannelsOverviewResponse>("/api/channels/overview"),
+  getChannelHealth: (params?: {
+    siteId?: number;
+    scope?: ChannelOverviewRuntimeHealth["scope"];
+    state?: ChannelOverviewRuntimeHealth["state"];
+  }) => request<ChannelHealthResponse>(
+    `/api/channels/health${buildQueryString(params || {})}`,
+  ),
   openSiteProbeStream: (
     siteId: number,
     params: URLSearchParams,

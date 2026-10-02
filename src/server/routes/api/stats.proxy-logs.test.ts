@@ -28,6 +28,8 @@ describe("stats proxy logs routes", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.proxyRequestAttempts).run();
+    await db.delete(schema.proxyRequests).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.accounts).run();
@@ -300,6 +302,184 @@ describe("stats proxy logs routes", () => {
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },
+    });
+  });
+
+  it("returns the destination and outcome of every retry attempt in log detail", async () => {
+    const siteA = await db.insert(schema.sites).values({
+      name: "retry-site-a",
+      url: "https://retry-a.example.com",
+      platform: "new-api",
+    }).returning().get();
+    const siteB = await db.insert(schema.sites).values({
+      name: "retry-site-b",
+      url: "https://retry-b.example.com",
+      platform: "new-api",
+    }).returning().get();
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: siteA.id,
+      username: "retry-user-a",
+      accessToken: "retry-token-a",
+      status: "active",
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: siteB.id,
+      username: "retry-user-b",
+      accessToken: "retry-token-b",
+      status: "active",
+    }).returning().get();
+    const requestId = "proxy-retry-detail-001";
+    const request = await db.insert(schema.proxyRequests).values({
+      requestId,
+      requestedModel: "gpt-5.6-luna",
+      downstreamPath: "/v1/responses",
+      status: "failed",
+      policySnapshotJson: "{}",
+      retryBudgetJson: JSON.stringify({
+        startedAtMs: 1_000,
+        limits: {
+          maxElapsedMs: 60_000,
+          maxAttempts: 3,
+          maxCredentialRotations: 3,
+          maxChannelSwitches: 3,
+        },
+        attempts: 3,
+        credentialRotations: 2,
+        channelSwitches: 2,
+      }),
+    }).returning().get();
+
+    await db.insert(schema.proxyRequestAttempts).values([
+      {
+        requestRowId: request.id,
+        attemptId: `${requestId}:attempt:0`,
+        attemptIndex: 0,
+        channelId: 225,
+        accountId: accountA.id,
+        endpoint: "responses",
+        requestPath: "/responses",
+        targetUrl: "https://retry-a.example.com/responses?key=secret-a",
+        status: "failed",
+        commitState: "request_sent",
+        statusCode: 400,
+        errorScope: "upstream",
+        errorSummary: "first upstream rejected the model",
+        startedAt: "2026-08-18 11:23:25",
+        finishedAt: "2026-08-18 11:23:27",
+      },
+      {
+        requestRowId: request.id,
+        attemptId: `${requestId}:attempt:1`,
+        attemptIndex: 1,
+        channelId: 200,
+        accountId: accountB.id,
+        endpoint: "responses",
+        requestPath: "/v1/responses",
+        targetUrl: "https://retry-b.example.com/v1/responses",
+        status: "failed",
+        commitState: "response_started",
+        statusCode: 502,
+        errorScope: "transport",
+        errorSummary: "second upstream stream ended",
+        startedAt: "2026-08-18 11:23:27",
+        finishedAt: "2026-08-18 11:23:28",
+      },
+      {
+        requestRowId: request.id,
+        attemptId: `${requestId}:attempt:2`,
+        attemptIndex: 2,
+        channelId: 240,
+        accountId: accountA.id,
+        endpoint: "responses",
+        requestPath: "/responses",
+        targetUrl: "https://retry-a.example.com/responses",
+        status: "failed",
+        commitState: "request_sent",
+        statusCode: 400,
+        errorScope: "upstream",
+        errorSummary: "third upstream rejected the model",
+        startedAt: "2026-08-18 11:23:29",
+        finishedAt: "2026-08-18 11:23:29",
+      },
+    ]).run();
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        requestId,
+        attemptId: `${requestId}:attempt:0`,
+        accountId: accountA.id,
+        channelId: 225,
+        modelRequested: "gpt-5.6-luna",
+        modelActual: "gpt-5.6-luna",
+        status: "failed",
+        httpStatus: 400,
+        latencyMs: 2_000,
+        errorMessage: "first upstream rejected the model",
+        retryCount: 0,
+      },
+      {
+        requestId,
+        attemptId: `${requestId}:attempt:1`,
+        accountId: accountB.id,
+        channelId: 200,
+        modelRequested: "gpt-5.6-luna",
+        modelActual: "gpt-5.6-luna",
+        status: "failed",
+        httpStatus: 502,
+        latencyMs: 900,
+        errorMessage: "second upstream stream ended",
+        retryCount: 1,
+      },
+    ]).run();
+    const finalLog = await db.insert(schema.proxyLogs).values({
+      requestId,
+      attemptId: `${requestId}:attempt:2`,
+      accountId: accountA.id,
+      channelId: 240,
+      modelRequested: "gpt-5.6-luna",
+      modelActual: "gpt-5.6-luna",
+      status: "failed",
+      httpStatus: 400,
+      latencyMs: 783,
+      errorMessage: "third upstream rejected the model",
+      retryCount: 2,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/stats/proxy-logs/${finalLog.id}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      retryAttempts: Array<Record<string, unknown>>;
+    };
+    expect(body.retryAttempts).toHaveLength(3);
+    expect(body.retryAttempts[0]).toMatchObject({
+      attemptIndex: 0,
+      channelId: 225,
+      accountUsername: "retry-user-a",
+      siteName: "retry-site-a",
+      logHttpStatus: 400,
+      latencyMs: 2_000,
+      logErrorMessage: "first upstream rejected the model",
+    });
+    expect(body.retryAttempts[0]?.targetUrl).toContain("key=redacted");
+    expect(body.retryAttempts[1]).toMatchObject({
+      attemptIndex: 1,
+      channelId: 200,
+      accountUsername: "retry-user-b",
+      siteName: "retry-site-b",
+      logHttpStatus: 502,
+      latencyMs: 900,
+    });
+    expect(body.retryAttempts[2]).toMatchObject({
+      attemptIndex: 2,
+      channelId: 240,
+      proxyLogId: finalLog.id,
+      retryCount: 2,
+      logHttpStatus: 400,
+      latencyMs: 783,
     });
   });
 

@@ -9,6 +9,7 @@ import {
 import { authMiddleware } from './middleware/auth.js';
 import { DEMO_MODE_BLOCK_RESPONSE, isDemoModeRequestBlocked } from './middleware/demoMode.js';
 import { sitesRoutes } from './routes/api/sites.js';
+import { channelsRoutes } from './routes/api/channels.js';
 import { accountsRoutes } from './routes/api/accounts.js';
 import { checkinRoutes } from './routes/api/checkin.js';
 import { tokensRoutes } from './routes/api/tokens.js';
@@ -292,6 +293,7 @@ app.addHook('onRequest', async (request, reply) => {
 await app.register(operationsRoutes);
 await app.register(registerDesktopRoutes);
 await app.register(sitesRoutes);
+await app.register(channelsRoutes);
 await app.register(accountsRoutes);
 await app.register(checkinRoutes);
 await app.register(tokensRoutes);

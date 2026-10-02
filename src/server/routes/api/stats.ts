@@ -24,6 +24,7 @@ import { parseCheckinRewardAmount } from "../../services/checkinRewardParser.js"
 import { estimateRewardWithTodayIncomeFallback } from "../../services/todayIncomeRewardService.js";
 import {
   getProxyLogBaseSelectFields,
+  getProxyLogRetryAttemptDetails,
   parseProxyLogBillingDetails,
   withProxyLogSelectFields,
 } from "../../services/proxyLogStore.js";
@@ -1051,7 +1052,12 @@ export async function statsRoutes(app: FastifyInstance) {
         return reply.code(404).send({ message: "proxy log not found" });
       }
 
-      return mapProxyLogRow(row, { includeBillingDetails: true });
+      return {
+        ...mapProxyLogRow(row, { includeBillingDetails: true }),
+        retryAttempts: await getProxyLogRetryAttemptDetails(
+          row.proxy_logs.requestId,
+        ),
+      };
     },
   );
 

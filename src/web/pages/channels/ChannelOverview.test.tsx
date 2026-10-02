@@ -6,9 +6,7 @@ import ChannelOverview from './ChannelOverview.js';
 
 const { apiMock, isMobileMock } = vi.hoisted(() => ({
   apiMock: {
-    getSites: vi.fn(),
-    getAccounts: vi.fn(),
-    getCredentialVaultItems: vi.fn(),
+    getChannelsOverview: vi.fn(),
   },
   isMobileMock: vi.fn(),
 }));
@@ -29,19 +27,49 @@ async function flushMicrotasks() {
   });
 }
 
+function buildOverview(channels: any[], totals?: Record<string, number>) {
+  const normalizedChannels = channels.map((channel) => ({
+    apiEndpoints: [],
+    runtimeHealth: [],
+    connectionCount: 0,
+    activeConnectionCount: 0,
+    credentialCount: 0,
+    activeCredentialCount: 0,
+    ...channel,
+  }));
+  return {
+    generatedAt: '2026-08-18T00:00:00.000Z',
+    channels: normalizedChannels,
+    connections: [],
+    oauthConnections: [],
+    credentials: [],
+    totals: {
+      sites: normalizedChannels.length,
+      ordinaryConnections: 0,
+      officialConnections: 0,
+      activeCredentials: 0,
+      ...totals,
+    },
+  };
+}
+
 describe('ChannelOverview', () => {
   let root: ReactTestRenderer | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
     isMobileMock.mockReturnValue(false);
-    apiMock.getSites.mockResolvedValue([
+    apiMock.getChannelsOverview.mockResolvedValue(buildOverview([
       {
         id: 1,
         name: 'Panel Site',
         url: 'https://panel.example.com',
         platform: 'new-api',
         apiEndpoints: [{ enabled: true }, { enabled: false }],
+        connectionCount: 2,
+        activeConnectionCount: 1,
+        credentialCount: 2,
+        activeCredentialCount: 1,
       },
       {
         id: 2,
@@ -49,20 +77,11 @@ describe('ChannelOverview', () => {
         url: 'https://oauth.example.com',
         platform: 'codex',
       },
-    ]);
-    apiMock.getAccounts.mockResolvedValue([
-      { id: 10, siteId: 1, status: 'active', oauthProvider: null },
-      { id: 11, siteId: 1, status: 'disabled', oauthProvider: null },
-      { id: 12, siteId: 2, status: 'active', oauthProvider: 'codex' },
-    ]);
-    apiMock.getCredentialVaultItems.mockResolvedValue({
-      items: [
-        { id: 20, siteId: 1, status: 'active' },
-        { id: 21, siteId: 1, status: 'revoked' },
-        { id: 22, siteId: null, status: 'active' },
-      ],
-      total: 3,
-    });
+    ], {
+      ordinaryConnections: 2,
+      officialConnections: 1,
+      activeCredentials: 1,
+    }));
   });
 
   afterEach(() => {
@@ -83,7 +102,7 @@ describe('ChannelOverview', () => {
     await flushMicrotasks();
 
     const text = collectText(root!.toJSON());
-    expect(apiMock.getAccounts).toHaveBeenCalledWith();
+    expect(apiMock.getChannelsOverview).toHaveBeenCalledTimes(1);
     expect(text).toContain('2个上游站点');
     expect(text).toContain('1个官方渠道');
     expect(text).toContain('2个普通连接');
@@ -119,7 +138,7 @@ describe('ChannelOverview', () => {
   });
 
   it('shows Site breaker scope, cooldown and failure reason', async () => {
-    apiMock.getSites.mockResolvedValue([{
+    apiMock.getChannelsOverview.mockResolvedValue(buildOverview([{
       id: 1,
       name: 'Broken Site',
       url: 'https://broken.example.com',
@@ -137,9 +156,7 @@ describe('ChannelOverview', () => {
         lastFailureDomain: 'endpoint',
         lastFailureReason: 'fetch failed: ECONNREFUSED',
       }],
-    }]);
-    apiMock.getAccounts.mockResolvedValue([]);
-    apiMock.getCredentialVaultItems.mockResolvedValue({ items: [], total: 0 });
+    }]));
 
     await act(async () => {
       root = create(
@@ -161,7 +178,7 @@ describe('ChannelOverview', () => {
   });
 
   it('shows an isolated API endpoint cooldown without marking the whole Site unavailable', async () => {
-    apiMock.getSites.mockResolvedValue([{
+    apiMock.getChannelsOverview.mockResolvedValue(buildOverview([{
       id: 1,
       name: 'Endpoint Pool Site',
       url: 'https://panel.example.com',
@@ -174,9 +191,7 @@ describe('ChannelOverview', () => {
         cooldownUntil: new Date(Date.now() + 125_000).toISOString(),
         lastFailureReason: 'fetch failed: ECONNREFUSED',
       }],
-    }]);
-    apiMock.getAccounts.mockResolvedValue([]);
-    apiMock.getCredentialVaultItems.mockResolvedValue({ items: [], total: 0 });
+    }]));
 
     await act(async () => {
       root = create(
@@ -196,7 +211,7 @@ describe('ChannelOverview', () => {
   });
 
   it('shows first-byte soft degradation even when the Site is otherwise healthy', async () => {
-    apiMock.getSites.mockResolvedValue([{
+    apiMock.getChannelsOverview.mockResolvedValue(buildOverview([{
       id: 1,
       name: 'Slow First Byte Site',
       url: 'https://slow-first-byte.example.com',
@@ -215,9 +230,7 @@ describe('ChannelOverview', () => {
         firstByteSampleCount: 8,
         firstByteMultiplier: 0.35,
       }],
-    }]);
-    apiMock.getAccounts.mockResolvedValue([]);
-    apiMock.getCredentialVaultItems.mockResolvedValue({ items: [], total: 0 });
+    }]));
 
     await act(async () => {
       root = create(

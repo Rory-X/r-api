@@ -461,6 +461,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         forcedChannelId,
         bridgeRoutePlan: bridgeRouteResolution.plan,
         excludeCredentials,
+        onRoutingDecision: attemptLedger?.recordRoutingDecision,
       });
 
       if (!selected) {

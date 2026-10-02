@@ -34,7 +34,10 @@ import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../.
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
 import { readRuntimeResponseText } from '../executors/types.js';
-import { selectProxyChannelForAttempt } from '../channelSelection.js';
+import {
+  selectProxyChannelForAttempt,
+  type ProxyChannelRoutingDecisionEvent,
+} from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 type SurfaceWarningScope = 'chat' | 'responses';
@@ -131,6 +134,7 @@ export async function selectSurfaceChannelForAttempt(input: {
   forcedChannelId?: number | null;
   bridgeRoutePlan?: BridgeProxyRoutePlan | null;
   excludeCredentials?: readonly TokenRouterCredentialIdentity[];
+  onRoutingDecision?: (event: ProxyChannelRoutingDecisionEvent) => Promise<void> | void;
 }): Promise<SelectedChannel> {
   return await selectProxyChannelForAttempt(input);
 }

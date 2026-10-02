@@ -17,6 +17,8 @@ describe('TokenRouter proxy health domains', () => {
   let claimSiteRuntimeRecoveryProbe: TokenRouterModule['claimSiteRuntimeRecoveryProbe'];
   let recordSiteRuntimeRecoveryProbeFailure: TokenRouterModule['recordSiteRuntimeRecoveryProbeFailure'];
   let listDueSiteRuntimeRecoveryTargets: TokenRouterModule['listDueSiteRuntimeRecoveryTargets'];
+  let listSiteRuntimeHealthSnapshots: TokenRouterModule['listSiteRuntimeHealthSnapshots'];
+  let flushSiteRuntimeHealthPersistence: TokenRouterModule['flushSiteRuntimeHealthPersistence'];
   let dataDir = '';
   let seed = 0;
 
@@ -35,6 +37,8 @@ describe('TokenRouter proxy health domains', () => {
     claimSiteRuntimeRecoveryProbe = tokenRouterModule.claimSiteRuntimeRecoveryProbe;
     recordSiteRuntimeRecoveryProbeFailure = tokenRouterModule.recordSiteRuntimeRecoveryProbeFailure;
     listDueSiteRuntimeRecoveryTargets = tokenRouterModule.listDueSiteRuntimeRecoveryTargets;
+    listSiteRuntimeHealthSnapshots = tokenRouterModule.listSiteRuntimeHealthSnapshots;
+    flushSiteRuntimeHealthPersistence = tokenRouterModule.flushSiteRuntimeHealthPersistence;
   });
 
   beforeEach(async () => {
@@ -284,6 +288,47 @@ describe('TokenRouter proxy health domains', () => {
       channelId: channel.id,
       nowMs: halfOpenAtMs + 31_000,
     })).resolves.toBe(false);
+  });
+
+  it('persists consecutive health transitions in the queryable health model', async () => {
+    const site = await createSite();
+    const account = await createAccount(site.id, 'durable-health');
+    const token = await createToken(account.id, 'durable-health');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      enabled: true,
+    }).returning().get();
+    const router = new TokenRouter();
+
+    await router.recordFailure(channel.id, {
+      errorText: 'fetch failed: ECONNREFUSED durable-health.example.com',
+      modelName: 'gpt-5.4',
+    });
+    await flushSiteRuntimeHealthPersistence();
+    expect(await db.select().from(schema.siteRuntimeHealthStates)
+      .where(eq(schema.siteRuntimeHealthStates.scopeKey, `site:${site.id}`)).get())
+      .toMatchObject({ recoveryState: 'open', breakerLevel: 1 });
+
+    await router.recordProbeSuccess(channel.id, 220, 'gpt-5.4');
+    await flushSiteRuntimeHealthPersistence();
+    expect(await db.select().from(schema.siteRuntimeHealthStates)
+      .where(eq(schema.siteRuntimeHealthStates.scopeKey, `site:${site.id}`)).get())
+      .toMatchObject({ recoveryState: 'healthy', breakerLevel: 0 });
+
+    resetSiteRuntimeHealthState();
+    await expect(listSiteRuntimeHealthSnapshots()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        siteId: site.id,
+        scope: 'site',
+        state: 'healthy',
+      }),
+    ]));
   });
 
   it('caps repeated failed half-open probes at a ten-minute breaker window', async () => {

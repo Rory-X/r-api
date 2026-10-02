@@ -287,6 +287,7 @@ export async function handleChatSurfaceRequest(
       retryCount,
       stickySessionKey,
       forcedChannelId,
+      onRoutingDecision: attemptLedger?.recordRoutingDecision,
     });
 
     if (!selected) {
