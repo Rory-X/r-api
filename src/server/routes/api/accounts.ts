@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { db, schema, runtimeDbDialect } from "../../db/index.js";
+import { db, schema } from "../../db/index.js";
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { refreshBalance } from "../../services/balanceService.js";
 import { getAdapter } from "../../services/platforms/index.js";
@@ -61,6 +61,11 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import {
+  AccountManualModelServiceError,
+  addManualModelsToAccount,
+  removeManualModelsFromAccount,
+} from "../../services/accountManualModelService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1482,120 +1487,29 @@ export async function accountsRoutes(app: FastifyInstance) {
     },
   );
 
-  // Add models manually to an account
-  app.post<{ Params: { id: string }; Body: unknown }>(
-    "/api/accounts/:id/models/manual",
-    async (request, reply) => {
-      const parsedBody = parseAccountManualModelsPayload(request.body);
-      if (!parsedBody.success) {
-        return reply.code(400).send({ message: parsedBody.error });
-      }
-
-      const accountId = parseInt(request.params.id, 10);
-      if (!Number.isFinite(accountId) || accountId <= 0) {
-        return reply.code(400).send({ message: "账号 ID 无效" });
-      }
-
-      const { models } = parsedBody.data;
-      if (!Array.isArray(models) || models.length === 0) {
-        return reply.code(400).send({ message: "模型列表不能为空" });
-      }
-
-      const normalizedModels = Array.from(
-        new Set(
-          models.map((m) => String(m).trim()).filter((m) => m.length > 0),
-        ),
-      );
-      if (normalizedModels.length === 0) {
-        return reply.code(400).send({ message: "模型列表不能为空" });
-      }
-
-      const account = await db
-        .select()
-        .from(schema.accounts)
-        .where(eq(schema.accounts.id, accountId))
-        .get();
-
-      if (!account) {
-        return reply.code(404).send({ message: "账号不存在" });
-      }
-
-      try {
-        await db.transaction(async (tx) => {
-          const checkedAt = new Date().toISOString();
-          for (const modelName of normalizedModels) {
-            if (runtimeDbDialect === "mysql") {
-              const existing = await tx
-                .select()
-                .from(schema.modelAvailability)
-                .where(
-                  and(
-                    eq(schema.modelAvailability.accountId, accountId),
-                    eq(schema.modelAvailability.modelName, modelName),
-                  ),
-                )
-                .get();
-
-              if (existing) {
-                await tx
-                  .update(schema.modelAvailability)
-                  .set({
-                    available: true,
-                    latencyMs: null,
-                    isManual: true,
-                    checkedAt,
-                  })
-                  .where(eq(schema.modelAvailability.id, existing.id))
-                  .run();
-              } else {
-                await tx
-                  .insert(schema.modelAvailability)
-                  .values({
-                    accountId,
-                    modelName,
-                    available: true,
-                    isManual: true,
-                    latencyMs: null,
-                    checkedAt,
-                  })
-                  .run();
-              }
-            } else {
-              // SQLite / PostgreSQL path
-              await (
-                tx.insert(schema.modelAvailability).values({
-                  accountId,
-                  modelName,
-                  available: true,
-                  isManual: true,
-                  latencyMs: null,
-                  checkedAt,
-                }) as any
-              )
-                .onConflictDoUpdate({
-                  target: [
-                    schema.modelAvailability.accountId,
-                    schema.modelAvailability.modelName,
-                  ],
-                  set: {
-                    available: true,
-                    isManual: true,
-                    latencyMs: null,
-                    checkedAt,
-                  },
-                })
-                .run();
-            }
-          }
-        });
-        await rebuildRoutesBestEffort();
-
-        return { success: true };
-      } catch (err: any) {
-        return reply
-          .code(500)
-          .send({ success: false, message: err?.message || "保存失败" });
-      }
-    },
-  );
+  for (const [method, mutate, failureMessage] of [
+    ["POST", addManualModelsToAccount, "保存失败"],
+    ["DELETE", removeManualModelsFromAccount, "删除失败"],
+  ] as const) {
+    app.route<{ Params: { id: string }; Body: unknown }>({
+      method,
+      url: "/api/accounts/:id/models/manual",
+      handler: async (request, reply) => {
+        const parsedBody = parseAccountManualModelsPayload(request.body);
+        if (!parsedBody.success) {
+          return reply.code(400).send({ message: parsedBody.error });
+        }
+        try {
+          const result = await mutate(Number(request.params.id), parsedBody.data.models ?? []);
+          return result ? { success: true, ...result } : { success: true };
+        } catch (error) {
+          const statusCode = error instanceof AccountManualModelServiceError ? error.statusCode : 500;
+          return reply.code(statusCode).send({
+            success: false,
+            message: error instanceof Error ? error.message : failureMessage,
+          });
+        }
+      },
+    });
+  }
 }

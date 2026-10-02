@@ -190,6 +190,7 @@ export default function Accounts() {
     siteName: string;
     manualModelsInput: string;
     addingManualModels: boolean;
+    removingManualModel: string | null;
   }>({
     open: false,
     account: null,
@@ -200,6 +201,7 @@ export default function Accounts() {
     siteName: "",
     manualModelsInput: "",
     addingManualModels: false,
+    removingManualModel: null,
   });
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -616,7 +618,7 @@ export default function Accounts() {
     }
   };
 
-  const applyLoadedModelModal = (account: any, result: any) => {
+  const applyLoadedModelModal = (account: any, result: any, preservePendingDisabled = false) => {
     const models = Array.isArray(result?.models) ? result.models : [];
     const disabledSet = new Set<string>(
       models.filter((m: any) => m.disabled).map((m: any) => m.name as string),
@@ -625,7 +627,9 @@ export default function Accounts() {
       ...s,
       loading: false,
       models,
-      pendingDisabled: disabledSet,
+      pendingDisabled: preservePendingDisabled
+        ? new Set(Array.from(s.pendingDisabled).filter((name) => models.some((model: any) => model.name === name)))
+        : disabledSet,
       siteName: result?.siteName || account.site?.name || s.siteName,
     }));
   };
@@ -634,6 +638,7 @@ export default function Accounts() {
     account: any,
     options: {
       refreshUpstream?: boolean;
+      preservePendingDisabled?: boolean;
       resetBeforeLoad?: boolean;
       closeOnError?: boolean;
       successMessage?: string | null;
@@ -652,6 +657,8 @@ export default function Accounts() {
             pendingDisabled: new Set<string>(),
             siteName: "",
             manualModelsInput: "",
+            addingManualModels: false,
+            removingManualModel: null,
           }
         : {}),
     }));
@@ -661,7 +668,7 @@ export default function Accounts() {
       }
       const result = await api.getAccountModels(account.id);
       if (modelModalRequestSeqRef.current !== requestId) return;
-      applyLoadedModelModal(account, result);
+      applyLoadedModelModal(account, result, options.preservePendingDisabled);
       if (options.successMessage) {
         toast.success(options.successMessage);
       }
@@ -692,6 +699,7 @@ export default function Accounts() {
       account: null,
       manualModelsInput: "",
       addingManualModels: false,
+      removingManualModel: null,
     }));
   };
 
@@ -729,6 +737,8 @@ export default function Accounts() {
 
   const handleAddManualModels = async () => {
     if (!modelModal.account || !modelModal.manualModelsInput.trim()) return;
+    const account = modelModal.account;
+    const requestId = modelModalRequestSeqRef.current;
     const modelsToAdd = modelModal.manualModelsInput
       .split(",")
       .map((m) => m.trim())
@@ -743,8 +753,9 @@ export default function Accounts() {
       );
       if (res.success) {
         toast.success("模型已手动添加");
-        setModelModal((s) => ({ ...s, manualModelsInput: "" }));
-        await loadModelModalModels(modelModal.account, {
+        if (modelModalRequestSeqRef.current !== requestId) return;
+        setModelModal((s) => ({ ...s, manualModelsInput: "", addingManualModels: false }));
+        await loadModelModalModels(account, {
           refreshUpstream: false,
         });
       } else {
@@ -753,7 +764,9 @@ export default function Accounts() {
     } catch (e: any) {
       toast.error(e.message || "手动添加模型失败");
     } finally {
-      setModelModal((s) => ({ ...s, addingManualModels: false }));
+      if (modelModalRequestSeqRef.current === requestId) {
+        setModelModal((s) => ({ ...s, addingManualModels: false }));
+      }
     }
   };
 
@@ -3536,6 +3549,29 @@ export default function Accounts() {
           setModelModal((state) => ({ ...state, manualModelsInput: value }))
         }
         onAddManualModels={handleAddManualModels}
+        onRemoveManualModel={async (modelName) => {
+          if (!modelModal.account) return;
+          const account = modelModal.account;
+          const requestId = modelModalRequestSeqRef.current;
+          setModelModal((state) => ({ ...state, removingManualModel: modelName }));
+          try {
+            const result = await api.removeAccountManualModels(account.id, [modelName]);
+            if (result.rebuiltRoutes === false) {
+              toast.error("模型已删除，但路由重建失败，请手动刷新路由");
+            } else {
+              toast.success(`已删除模型 ${modelName}`);
+            }
+            if (modelModalRequestSeqRef.current !== requestId) return;
+            setModelModal((state) => ({ ...state, removingManualModel: null }));
+            await loadModelModalModels(account, { preservePendingDisabled: true });
+          } catch (err: any) {
+            toast.error(err?.message || "删除失败");
+          } finally {
+            if (modelModalRequestSeqRef.current === requestId) {
+              setModelModal((state) => ({ ...state, removingManualModel: null }));
+            }
+          }
+        }}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +25,7 @@ describe('accounts manual models endpoint', () => {
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
-  });
+  }, 30_000);
 
   beforeEach(async () => {
     await db.delete(schema.proxyLogs).run();
@@ -40,9 +40,9 @@ describe('accounts manual models endpoint', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
     delete process.env.DATA_DIR;
-  });
+  }, 30_000);
 
   it('adds manual models and sets isManual to true', async () => {
     const site = await db.insert(schema.sites).values({
@@ -178,5 +178,148 @@ describe('accounts manual models endpoint', () => {
     expect(response.json()).toMatchObject({
       message: 'Invalid models. Expected string[].',
     });
+  });
+
+  it('deletes only manual models for the target account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Test Site',
+      url: 'https://test.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'test-token',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'manual-a',
+        available: true,
+        isManual: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'manual-b',
+        available: true,
+        isManual: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'synced-model',
+        available: true,
+        isManual: false,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/accounts/${account.id}/models/manual`,
+      payload: {
+        models: ['manual-a'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ success: true, deletedCount: 1, rebuiltRoutes: true });
+
+    const models = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    expect(models.map((model) => `${model.modelName}:${model.isManual}`).sort()).toEqual([
+      'manual-b:true',
+      'synced-model:false',
+    ]);
+  });
+
+  it('ignores duplicate and whitespace model names when deleting manual models', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Test Site',
+      url: 'https://test.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'test-token',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'manual-a',
+        available: true,
+        isManual: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'manual-b',
+        available: true,
+        isManual: true,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/accounts/${account.id}/models/manual`,
+      payload: {
+        models: [' manual-a ', 'manual-a', '   '],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const models = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    expect(models.map((model) => model.modelName)).toEqual(['manual-b']);
+  });
+
+  it('preserves auto-discovered models and the same manual model on another account', async () => {
+    const site = await db.insert(schema.sites).values({ name: 'Site', url: 'https://test.example.com', platform: 'new-api' }).returning().get();
+    const account = await db.insert(schema.accounts).values({ siteId: site.id, accessToken: 'session-a' }).returning().get();
+    const other = await db.insert(schema.accounts).values({ siteId: site.id, accessToken: 'session-b' }).returning().get();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: account.id, modelName: 'manual-a', available: true, isManual: true },
+      { accountId: account.id, modelName: 'synced-a', available: true, isManual: false },
+      { accountId: other.id, modelName: 'manual-a', available: true, isManual: true },
+    ]).run();
+
+    const response = await app.inject({ method: 'DELETE', url: `/api/accounts/${account.id}/models/manual`, payload: { models: ['manual-a', 'synced-a'] } });
+    expect(response.json()).toMatchObject({ success: true, deletedCount: 1 });
+    const remaining = await db.select().from(schema.modelAvailability).all();
+    expect(remaining.map((model) => `${model.accountId}:${model.modelName}`).sort()).toEqual([
+      `${account.id}:synced-a`, `${other.id}:manual-a`,
+    ].sort());
+  });
+
+  it('does not rebuild routes for a deletion that changes no manual records', async () => {
+    const site = await db.insert(schema.sites).values({ name: 'Site', url: 'https://test.example.com', platform: 'new-api' }).returning().get();
+    const account = await db.insert(schema.accounts).values({ siteId: site.id, accessToken: 'session' }).returning().get();
+    const workflow = await import('../../services/routeRefreshWorkflow.js');
+    const rebuild = vi.spyOn(workflow, 'rebuildRoutesBestEffort');
+    try {
+      const response = await app.inject({ method: 'DELETE', url: `/api/accounts/${account.id}/models/manual`, payload: { models: ['absent'] } });
+      expect(response.json()).toMatchObject({ success: true, deletedCount: 0 });
+      expect(rebuild).not.toHaveBeenCalled();
+    } finally {
+      rebuild.mockRestore();
+    }
+  });
+
+  it('rejects missing accounts, malformed identifiers and invalid delete payloads', async () => {
+    const missing = await app.inject({ method: 'DELETE', url: '/api/accounts/999/models/manual', payload: { models: ['manual-a'] } });
+    expect(missing.statusCode).toBe(404);
+    for (const id of ['0', '1junk']) {
+      const response = await app.inject({ method: 'DELETE', url: `/api/accounts/${id}/models/manual`, payload: { models: ['manual-a'] } });
+      expect(response.statusCode).toBe(400);
+    }
+    for (const models of [[], ['   '], [123]]) {
+      const response = await app.inject({ method: 'DELETE', url: '/api/accounts/1/models/manual', payload: { models } });
+      expect(response.statusCode).toBe(400);
+    }
   });
 });

@@ -25,6 +25,19 @@ function expectCallsRebuildRoutesOnly(source: string): void {
 }
 
 describe('route refresh workflow architecture boundaries', () => {
+  it('keeps manual model persistence in its service and refreshes through the shared workflow', () => {
+    const routeSource = readSource('./accounts.ts');
+    const serviceSource = readSource('../../services/accountManualModelService.ts');
+
+    expect(routeSource).toContain('addManualModelsToAccount');
+    expect(routeSource).toContain('removeManualModelsFromAccount');
+    expect(routeSource).not.toMatch(/tx\.insert\(schema\.modelAvailability\)/);
+    expectImportsRouteRefreshWorkflow(serviceSource);
+    expectNoDirectModelServiceRouteRefresh(serviceSource);
+    expect(serviceSource).not.toContain('/routes/');
+    expect(serviceSource).not.toContain('fastify');
+  });
+
   it('keeps api controllers on the shared route refresh workflow instead of modelService', () => {
     const tokensSource = readSource('./tokens.ts');
     const settingsSource = readSource('./settings.ts');

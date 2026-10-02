@@ -18,6 +18,7 @@ type AccountModelModalState = {
   siteName: string;
   manualModelsInput: string;
   addingManualModels: boolean;
+  removingManualModel?: string | null;
 };
 
 type AccountModelsModalProps = {
@@ -30,6 +31,7 @@ type AccountModelsModalProps = {
   onSetPendingDisabled: (pendingDisabled: Set<string>) => void;
   onManualInputChange: (value: string) => void;
   onAddManualModels: () => Promise<void> | void;
+  onRemoveManualModel?: (modelName: string) => Promise<void> | void;
 };
 
 export default function AccountModelsModal({
@@ -42,7 +44,9 @@ export default function AccountModelsModal({
   onSetPendingDisabled,
   onManualInputChange,
   onAddManualModels,
+  onRemoveManualModel,
 }: AccountModelsModalProps) {
+  const busy = modelModal.saving || modelModal.loading || modelModal.addingManualModels || !!modelModal.removingManualModel;
   return (
     <CenteredModal
       open={modelModal.open}
@@ -54,7 +58,7 @@ export default function AccountModelsModal({
           <button onClick={onClose} className="btn btn-ghost">取消</button>
           <button
             onClick={onSave}
-            disabled={modelModal.saving || modelModal.loading}
+            disabled={busy}
             className="btn btn-primary"
           >
             {modelModal.saving ? <><span className="spinner spinner-sm" />保存中...</> : '保存'}
@@ -87,6 +91,7 @@ export default function AccountModelsModal({
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
                   <input
                     type="checkbox"
+                    disabled={busy}
                     checked={modelModal.pendingDisabled.size === 0}
                     ref={(el) => {
                       if (el) {
@@ -108,13 +113,14 @@ export default function AccountModelsModal({
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button
                     onClick={() => void onRefresh()}
-                    disabled={modelModal.saving}
+                    disabled={busy}
                     className="btn btn-ghost"
                     style={{ fontSize: 12, padding: '4px 10px' }}
                   >
                     刷新模型
                   </button>
                   <button
+                    disabled={busy}
                     onClick={() => {
                       const next = new Set<string>();
                       for (const model of modelModal.models) {
@@ -128,6 +134,7 @@ export default function AccountModelsModal({
                     反选
                   </button>
                   <button
+                    disabled={busy}
                     onClick={() => onSetPendingDisabled(new Set(modelModal.models.map((model) => model.name)))}
                     className="btn btn-ghost"
                     style={{ fontSize: 12, padding: '4px 10px' }}
@@ -135,6 +142,7 @@ export default function AccountModelsModal({
                     全部禁用
                   </button>
                   <button
+                    disabled={busy}
                     onClick={() => onSetPendingDisabled(new Set())}
                     className="btn btn-ghost"
                     style={{ fontSize: 12, padding: '4px 10px' }}
@@ -169,6 +177,7 @@ export default function AccountModelsModal({
                     >
                       <input
                         type="checkbox"
+                        disabled={busy}
                         checked={!isDisabled}
                         onChange={() => onToggleModelDisabled(model.name)}
                         style={{ accentColor: 'var(--color-primary)', width: 15, height: 15, flexShrink: 0 }}
@@ -182,7 +191,20 @@ export default function AccountModelsModal({
                         </span>
                       ) : null}
                       {model.isManual ? (
-                        <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void onRemoveManualModel?.(model.name);
+                          }}
+                          className="btn btn-ghost btn-xs"
+                          style={{ fontSize: 10, padding: '2px 6px', color: 'var(--color-error)', flexShrink: 0 }}
+                          disabled={busy}
+                          aria-label={`删除手动模型 ${model.name}`}
+                          title="删除手动添加的模型"
+                        >
+                          {modelModal.removingManualModel === model.name ? '删除中...' : '✕ 删除'}
+                        </button>
                       ) : null}
                       {isDisabled ? (
                         <span className="badge badge-error" style={{ fontSize: 10, flexShrink: 0 }}>禁用</span>
@@ -205,17 +227,18 @@ export default function AccountModelsModal({
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 placeholder="例如: gpt-4-custom, claude-3-5-sonnet-20241022"
+                disabled={busy}
                 value={modelModal.manualModelsInput}
                 onChange={(e) => onManualInputChange(e.target.value)}
                 style={{ ...inputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !modelModal.addingManualModels) {
+                  if (e.key === 'Enter' && !busy) {
                     void onAddManualModels();
                   }
                 }}
               />
               <button
-                disabled={!modelModal.manualModelsInput.trim() || modelModal.addingManualModels}
+                disabled={!modelModal.manualModelsInput.trim() || busy}
                 onClick={() => void onAddManualModels()}
                 className="btn btn-primary btn-sm"
                 style={{ whiteSpace: 'nowrap' }}
