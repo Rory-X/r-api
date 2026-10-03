@@ -11,6 +11,7 @@ export const sites = sqliteTable('sites', {
   proxyUrl: text('proxy_url'),
   useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).default(false),
   customHeaders: text('custom_headers'),
+  customHeadersOverrideRequestHeaders: integer('custom_headers_override_request_headers', { mode: 'boolean' }).default(false),
   codexFingerprintEnabled: integer('codex_fingerprint_enabled', { mode: 'boolean' }).default(false),
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),

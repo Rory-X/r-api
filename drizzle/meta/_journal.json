@@ -477,6 +477,13 @@
       "when": 1787227708279,
       "tag": "0067_closed_zodiak",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "6",
+      "when": 1790964483606,
+      "tag": "0068_gray_sabretooth",
+      "breakpoints": true
     }
   ]
 }

@@ -6339,6 +6339,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "custom_headers_override_request_headers": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": "false",
+          "primaryKey": false
         }
       }
     },
