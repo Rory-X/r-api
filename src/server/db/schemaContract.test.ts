@@ -16,6 +16,11 @@ describe('schema contract generation', () => {
       notNull: true,
       defaultValue: "'ready'",
     });
+    for (const table of ['model_availability', 'token_model_availability']) {
+      expect(contract.tables[table].columns.context_length).toMatchObject({ logicalType: 'integer', notNull: false, defaultValue: null });
+      expect(contract.tables[table].columns.context_source).toMatchObject({ logicalType: 'text', notNull: false });
+      expect(contract.tables[table].columns.context_updated_at).toBeDefined();
+    }
     expect(contract.tables.site_disabled_models).toBeDefined();
     expect(contract.tables.downstream_api_keys).toBeDefined();
     expect(contract.tables.proxy_files).toBeDefined();

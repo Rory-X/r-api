@@ -690,6 +690,8 @@ export function runSqliteMigrations(): void {
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
   runSqliteMigrationRecoveryLoop({
+    // A pre-journal legacy schema can require one successful recovery per migration.
+    retryBudget: Math.max(SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET, readRecoveryMigrations(migrationsFolder).length + 1),
     runMigrate: () => {
       migrate(drizzle(sqlite), { migrationsFolder });
     },

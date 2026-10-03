@@ -887,6 +887,9 @@ export const modelAvailability = sqliteTable('model_availability', {
   modelName: text('model_name').notNull(),
   available: integer('available', { mode: 'boolean' }),
   isManual: integer('is_manual', { mode: 'boolean' }).default(false),
+  contextLength: integer('context_length'),
+  contextSource: text('context_source'),
+  contextUpdatedAt: text('context_updated_at'),
   latencyMs: integer('latency_ms'),
   checkedAt: text('checked_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -921,6 +924,9 @@ export const tokenModelAvailability = sqliteTable('token_model_availability', {
   tokenId: integer('token_id').notNull().references(() => accountTokens.id, { onDelete: 'cascade' }),
   modelName: text('model_name').notNull(),
   available: integer('available', { mode: 'boolean' }),
+  contextLength: integer('context_length'),
+  contextSource: text('context_source'),
+  contextUpdatedAt: text('context_updated_at'),
   latencyMs: integer('latency_ms'),
   checkedAt: text('checked_at').default(sql`(datetime('now'))`),
 }, (table) => ({
