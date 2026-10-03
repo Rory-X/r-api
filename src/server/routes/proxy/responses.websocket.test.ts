@@ -189,6 +189,8 @@ function createSelectedChannel(options?: {
   siteName?: string;
   siteUrl?: string;
   sitePlatform?: string;
+  customHeaders?: string;
+  customHeadersOverrideRequestHeaders?: boolean;
   username?: string;
   extraConfig?: unknown;
   tokenValue?: string;
@@ -203,6 +205,8 @@ function createSelectedChannel(options?: {
       name: options?.siteName ?? (isCodex ? 'codex-site' : 'openai-site'),
       url: options?.siteUrl ?? (isCodex ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com'),
       platform: sitePlatform,
+      customHeaders: options?.customHeaders,
+      customHeadersOverrideRequestHeaders: options?.customHeadersOverrideRequestHeaders,
     },
     account: {
       id: options?.accountId ?? 33,
@@ -520,9 +524,11 @@ describeWithLocalListener('responses websocket transport', () => {
     }
   });
 
-  it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {
+  it.each([false, true])('forwards websocket events with site header priority %s', async (enabled) => {
     const selectedChannel = createSelectedChannel({
       siteUrl: upstreamSiteUrl,
+      customHeaders: '{"Authorization":"Bearer site","Cookie":"site=1","Content-Type":"application/site+json","X-Site-Scope":"native-websocket"}',
+      customHeadersOverrideRequestHeaders: enabled,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
@@ -602,6 +608,12 @@ describeWithLocalListener('responses websocket transport', () => {
       'response.completed',
     ]);
     expect(messages[3]?.response?.output?.[0]?.content?.[0]?.text).toBe('pong');
+    expect(upstreamUpgradeHeaders).toMatchObject({
+      authorization: enabled ? 'Bearer site' : `Bearer ${selectedChannel.tokenValue}`,
+      cookie: 'site=1',
+      'content-type': enabled ? 'application/site+json' : 'application/json',
+      'x-site-scope': 'native-websocket',
+    });
     expect(fetchMock).toHaveBeenCalledTimes(0);
     expect(upstreamConnectionCount).toBe(1);
   });
@@ -1533,6 +1545,10 @@ describeWithLocalListener('responses websocket transport', () => {
       .mockResolvedValueOnce(managedAuth(1))
       .mockResolvedValueOnce(managedAuth(1))
       .mockResolvedValueOnce(managedAuth(2));
+
+    const selectedChannel = createSelectedChannel({ siteUrl: upstreamSiteUrl });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl, { Authorization: 'Bearer sk-managed-turns' });
     await waitForSocketOpen(socket);

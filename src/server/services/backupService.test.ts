@@ -65,6 +65,7 @@ describe('backupService', () => {
       customHeaders: JSON.stringify({
         'cf-access-client-id': 'roundtrip-client',
       }),
+      customHeadersOverrideRequestHeaders: true,
       status: 'active',
       isPinned: true,
       sortOrder: 9,
@@ -332,6 +333,7 @@ describe('backupService', () => {
     expect(restoredSite?.externalCheckinUrl).toBe('https://checkin.roundtrip.example.com');
     expect(restoredSite?.useSystemProxy).toBe(true);
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
+    expect(restoredSite?.customHeadersOverrideRequestHeaders).toBe(true);
     expect(restoredSite?.isPinned).toBe(true);
     expect(restoredSite?.sortOrder).toBe(9);
 
@@ -1170,6 +1172,7 @@ describe('backupService', () => {
 
     expect(restoredSites).toHaveLength(1);
     expect(restoredSites[0]?.homepageUrl).toBe('https://legacy-native.example.com');
+    expect(restoredSites[0]?.customHeadersOverrideRequestHeaders).toBe(false);
     expect(restoredAccounts).toHaveLength(1);
     expect(restoredAccounts[0]?.username).toBe('legacy-user');
     expect(restoredDownstreamKeys).toHaveLength(1);

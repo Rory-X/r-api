@@ -529,6 +529,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       proxyUrl,
       useSystemProxy,
       customHeaders,
+      customHeadersOverrideRequestHeaders,
       externalCheckinUrl,
       status,
       isPinned,
@@ -622,6 +623,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
           customHeaders: normalizedCustomHeaders.customHeaders,
+          customHeadersOverrideRequestHeaders: customHeadersOverrideRequestHeaders ?? false,
           codexFingerprintEnabled: (createBody as Record<string, unknown>).codexFingerprintEnabled === true
             || (createBody as Record<string, unknown>).codexFingerprintEnabled === 1,
           externalCheckinUrl: normalizedExternalCheckinUrl.url,
@@ -753,6 +755,9 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (normalizedProxyUrl.present) updates.proxyUrl = normalizedProxyUrl.proxyUrl;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
     if (normalizedCustomHeaders.present) updates.customHeaders = normalizedCustomHeaders.customHeaders;
+    if (body.customHeadersOverrideRequestHeaders !== undefined) {
+      updates.customHeadersOverrideRequestHeaders = body.customHeadersOverrideRequestHeaders;
+    }
     if (normalizedExternalCheckinUrl.present) updates.externalCheckinUrl = normalizedExternalCheckinUrl.url;
     if (body.status !== undefined) updates.status = normalizedStatus;
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;

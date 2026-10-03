@@ -199,6 +199,103 @@ describe('siteProxy', () => {
     expect(headers.get('x-trace-id')).toBe('trace-1');
   });
 
+  itWithLocalListener.each([
+    { mode: 'url', enabled: false }, { mode: 'url', enabled: true },
+    { mode: 'record', enabled: false }, { mode: 'record', enabled: true },
+  ])('sends final $mode headers with priority $enabled through the selected proxy', async ({ mode, enabled }) => {
+    const upstreamServer = createServer((request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(request.headers));
+    });
+    upstreamServer.listen(0, '127.0.0.1');
+    await once(upstreamServer, 'listening');
+    const address = upstreamServer.address();
+    if (!address || typeof address === 'string') throw new Error('Missing upstream address');
+    const targetBaseUrl = `http://pool-member.example.com:${address.port}`;
+    const site = {
+      name: 'transport-headers',
+      url: mode === 'url' ? targetBaseUrl : 'https://primary-site.example.com',
+      platform: 'new-api',
+      useSystemProxy: true,
+      customHeadersOverrideRequestHeaders: enabled,
+      customHeaders: JSON.stringify({
+        Authorization: 'Bearer site', Cookie: 'site=1', 'Content-Type': 'application/site+json',
+        'User-Agent': 'site-agent', Version: 'site-version', 'X-Site-Only': 'present',
+      }),
+    };
+    await db.insert(schema.sites).values(site).run();
+    await db.insert(schema.settings).values({
+      key: 'system_proxy_url', value: JSON.stringify('socks5h://127.0.0.1:1080'),
+    }).run();
+    const connectionSpy = vi.spyOn(SocksClient, 'createConnection').mockImplementation(async () => {
+      const socket = connectSocket(address.port, '127.0.0.1');
+      await once(socket, 'connect');
+      return { socket } as Awaited<ReturnType<typeof SocksClient.createConnection>>;
+    });
+    try {
+      const { withAccountProxyOverride, withSiteProxyRequestInit, withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+      const { performFetch } = await import('../proxy-core/executors/types.js');
+      const request = {
+        endpoint: 'chat' as const, path: '/v1/chat/completions', body: {},
+        headers: {
+          authorization: 'Bearer request', cookie: 'request=1', 'content-type': 'application/json',
+          'user-agent': 'request-agent', version: 'request-version', 'x-request-only': 'present',
+        },
+      };
+      const response = await withAccountProxyOverride(mode === 'record' ? 'socks5h://127.0.0.1:1081' : null, () => performFetch({
+        siteUrl: site.url, targetUrl: `${targetBaseUrl}${request.path}`, request,
+        buildInit: (url, prepared) => {
+          const init = { method: 'GET', headers: prepared.headers };
+          return mode === 'url' ? withSiteProxyRequestInit(url, init) : withSiteRecordProxyRequestInit(site, init);
+        },
+      }, request));
+      const received = await response.json();
+      expect(received).toMatchObject({
+        authorization: enabled ? 'Bearer site' : 'Bearer request',
+        cookie: enabled ? 'site=1' : 'request=1',
+        'content-type': enabled ? 'application/site+json' : 'application/json',
+        'user-agent': enabled ? 'site-agent' : 'request-agent',
+        version: enabled ? 'site-version' : 'request-version',
+        'x-site-only': 'present', 'x-request-only': 'present',
+      });
+      expect(connectionSpy).toHaveBeenCalledWith(expect.objectContaining({
+        proxy: expect.objectContaining({ port: mode === 'record' ? 1081 : 1080 }),
+      }));
+    } finally {
+      connectionSpy.mockRestore();
+      upstreamServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => upstreamServer.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('lets matched site custom headers override explicit headers when configured', async () => {
+    await db.insert(schema.sites).values({
+      name: 'headers-override-site',
+      url: 'https://headers-override-site.example.com',
+      platform: 'new-api',
+      customHeaders: JSON.stringify({
+        Authorization: 'Bearer site-token',
+        'User-Agent': 'site-agent',
+      }),
+      customHeadersOverrideRequestHeaders: true,
+    }).run();
+
+    const { withSiteProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = await withSiteProxyRequestInit('https://headers-override-site.example.com/v1/models', {
+      method: 'GET',
+      headers: {
+        authorization: 'Bearer request-token',
+        'user-agent': 'request-agent',
+        'X-Trace-Id': 'trace-1',
+      },
+    });
+    const headers = new Headers(requestInit.headers);
+
+    expect(headers.get('authorization')).toBe('Bearer site-token');
+    expect(headers.get('user-agent')).toBe('site-agent');
+    expect(headers.get('x-trace-id')).toBe('trace-1');
+  });
+
   it('merges site custom headers from site records even without cache lookup', async () => {
     const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
     const requestInit = withSiteRecordProxyRequestInit({
@@ -218,6 +315,29 @@ describe('siteProxy', () => {
     expect(headers.get('x-site-scope')).toBe('site-level');
     expect(headers.get('x-request-id')).toBe('req-1');
     expect('dispatcher' in requestInit).toBe(true);
+  });
+
+  it('lets direct site record custom headers override explicit headers when configured', async () => {
+    const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = withSiteRecordProxyRequestInit({
+      proxyUrl: null,
+      useSystemProxy: false,
+      customHeaders: JSON.stringify({
+        Authorization: 'Bearer site-token',
+        'User-Agent': 'site-agent',
+      }),
+      customHeadersOverrideRequestHeaders: true,
+    }, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer request-token',
+        'user-agent': 'request-agent',
+      },
+    });
+    const headers = new Headers(requestInit.headers);
+
+    expect(headers.get('authorization')).toBe('Bearer site-token');
+    expect(headers.get('user-agent')).toBe('site-agent');
   });
 
   it('merges parsed-object site custom headers from site records', async () => {

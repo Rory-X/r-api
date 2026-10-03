@@ -998,6 +998,7 @@ async function handleResponsesWebsocketConnection(
                       sessionId: websocketRuntimeSessionKey,
                       requestUrl,
                       headers: prepared.headers,
+                      site: codexWebsocketChannel.site,
                       body: prepared.body,
                       onAttemptEvent: observeWebsocketAttempt,
                     });

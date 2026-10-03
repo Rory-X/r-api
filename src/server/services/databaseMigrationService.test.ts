@@ -148,6 +148,7 @@ describe('databaseMigrationService', () => {
     const liveContract = cloneContract(currentContract);
     delete liveContract.tables.sites.columns.use_system_proxy;
     delete liveContract.tables.sites.columns.custom_headers;
+    delete liveContract.tables.sites.columns.custom_headers_override_request_headers;
 
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
@@ -172,6 +173,7 @@ describe('databaseMigrationService', () => {
 
     expect(useSystemProxySql).toContain('use_system_proxy');
     expect(customHeadersSql).toContain('custom_headers');
+    expect(executedSql.some((sqlText) => sqlText.includes('custom_headers_override_request_headers'))).toBe(true);
   });
 
   it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
@@ -214,6 +216,7 @@ describe('databaseMigrationService', () => {
           platform: 'openai',
           useSystemProxy: true,
           customHeaders: '{"x-site-scope":"internal"}',
+          customHeadersOverrideRequestHeaders: true,
           status: 'active',
         }],
         siteAnnouncements: [],
@@ -244,6 +247,9 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[useSystemProxyIndex]).toBe(true);
     expect(customHeadersIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[customHeadersIndex]).toBe('{"x-site-scope":"internal"}');
+    const overrideIndex = siteStatement!.columns.indexOf('custom_headers_override_request_headers');
+    expect(overrideIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement!.values[overrideIndex]).toBe(true);
   });
 
   it('includes site api endpoints when building migration statements', () => {

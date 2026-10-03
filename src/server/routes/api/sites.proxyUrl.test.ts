@@ -7,6 +7,29 @@ import { mkdtempSync } from 'node:fs';
 type DbModule = typeof import('../../db/index.js');
 
 describe('sites proxy settings', () => {
+  it('defaults new sites to request priority and preserves the override across unrelated updates', async () => {
+    const created = await app.inject({ method: 'POST', url: '/api/sites', payload: { name: 'headers', url: 'https://headers.example.com', platform: 'new-api', customHeaders: { 'User-Agent': 'site-agent' } } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().customHeadersOverrideRequestHeaders).toBe(false);
+    const id = created.json().id;
+    const enabled = await app.inject({ method: 'PUT', url: `/api/sites/${id}`, payload: { customHeadersOverrideRequestHeaders: true } });
+    expect(enabled.json().customHeadersOverrideRequestHeaders).toBe(true);
+    const renamed = await app.inject({ method: 'PUT', url: `/api/sites/${id}`, payload: { name: 'renamed' } });
+    expect(renamed.json().customHeadersOverrideRequestHeaders).toBe(true);
+    const disabled = await app.inject({ method: 'PUT', url: `/api/sites/${id}`, payload: { customHeadersOverrideRequestHeaders: false } });
+    expect(disabled.json().customHeadersOverrideRequestHeaders).toBe(false);
+  });
+
+  it('persists an enabled override at creation and rejects non-boolean values', async () => {
+    const created = await app.inject({ method: 'POST', url: '/api/sites', payload: { name: 'headers', url: 'https://headers.example.com', platform: 'new-api', customHeadersOverrideRequestHeaders: true } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().customHeadersOverrideRequestHeaders).toBe(true);
+    for (const value of ['false', 1, null]) {
+      const response = await app.inject({ method: 'PUT', url: `/api/sites/${created.json().id}`, payload: { customHeadersOverrideRequestHeaders: value } });
+      expect(response.statusCode).toBe(400);
+    }
+  });
+
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];

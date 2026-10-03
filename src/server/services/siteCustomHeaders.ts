@@ -1,6 +1,15 @@
 import { Headers, type HeadersInit } from 'undici';
 
 export type SiteCustomHeadersRecord = Record<string, string>;
+export type SiteCustomHeadersConfigLike = {
+  customHeaders?: unknown;
+  customHeadersOverrideRequestHeaders?: boolean | null;
+};
+export type SiteCustomHeadersMergePriority = 'request' | 'site';
+
+export type SiteCustomHeadersMergeOptions = {
+  priority?: SiteCustomHeadersMergePriority;
+};
 
 export type ParsedSiteCustomHeadersInput = {
   present: boolean;
@@ -105,18 +114,27 @@ export function readSiteCustomHeaders(input: unknown): SiteCustomHeadersRecord |
 export function mergeHeadersWithSiteCustomHeaders(
   siteCustomHeaders: unknown,
   requestHeaders?: HeadersInit,
+  options: SiteCustomHeadersMergeOptions = {},
 ): HeadersInit | undefined {
   const normalizedSiteHeaders = readSiteCustomHeaders(siteCustomHeaders);
   if (!normalizedSiteHeaders) {
     return requestHeaders;
   }
 
-  const merged = new Headers(normalizedSiteHeaders);
-  if (requestHeaders) {
-    const explicitHeaders = new Headers(requestHeaders);
-    explicitHeaders.forEach((value, key) => {
-      merged.set(key, value);
-    });
-  }
+  const priority = options.priority ?? 'request';
+  const merged = new Headers(priority === 'site' ? requestHeaders : normalizedSiteHeaders);
+  const headersToApplyLast = new Headers(priority === 'site' ? normalizedSiteHeaders : requestHeaders);
+  headersToApplyLast.forEach((value, key) => {
+    merged.set(key, value);
+  });
   return merged;
+}
+
+export function mergeSiteRequestHeaders(
+  site: SiteCustomHeadersConfigLike | null | undefined,
+  requestHeaders?: HeadersInit,
+): HeadersInit | undefined {
+  return mergeHeadersWithSiteCustomHeaders(site?.customHeaders, requestHeaders, {
+    priority: site?.customHeadersOverrideRequestHeaders ? 'site' : 'request',
+  });
 }

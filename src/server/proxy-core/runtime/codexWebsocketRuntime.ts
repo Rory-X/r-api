@@ -1,5 +1,8 @@
 import type { IncomingMessage } from 'node:http';
+import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
+import { Headers } from 'undici';
+import { mergeSiteRequestHeaders, readSiteCustomHeaders } from '../../services/siteCustomHeaders.js';
 import {
   extractResponsesTerminalResponseId,
   isResponsesPreviousResponseNotFoundError,
@@ -201,6 +204,7 @@ function clearSessionSocket(session: CodexWebsocketSession, socket: WebSocket): 
   if (session.socket !== socket) return;
   session.socket = null;
   session.socketUrl = null;
+  session.socketSiteHeadersFingerprint = null;
 }
 
 function buildContinuationAwareRuntimeBody(
@@ -225,10 +229,16 @@ async function ensureSessionSocket(
   input: CodexWebsocketRuntimeSendInput,
 ): Promise<{ socket: WebSocket; reusedSession: boolean }> {
   const requestUrl = toCodexWebsocketUrl(input.requestUrl);
+  // A handshake is immutable: reconnect after a site header edit, keeping credentials out of session metadata.
+  const siteHeadersFingerprint = createHash('sha256').update(JSON.stringify({
+    headers: readSiteCustomHeaders(input.site?.customHeaders),
+    override: input.site?.customHeadersOverrideRequestHeaders === true,
+  })).digest('hex');
   const existing = session.socket;
   if (
     existing
     && session.socketUrl === requestUrl
+    && session.socketSiteHeadersFingerprint === siteHeadersFingerprint
     && existing.readyState === WebSocket.OPEN
   ) {
     return {
@@ -243,11 +253,15 @@ async function ensureSessionSocket(
   }
 
   const nextSocket = new WebSocket(requestUrl, {
-    headers: buildCodexWebsocketHandshakeHeaders(input.headers),
+    headers: Object.fromEntries(new Headers(mergeSiteRequestHeaders(
+      input.site,
+      buildCodexWebsocketHandshakeHeaders(input.headers),
+    )).entries()),
   });
   await waitForSocketOpen(nextSocket);
   session.socket = nextSocket;
   session.socketUrl = requestUrl;
+  session.socketSiteHeadersFingerprint = siteHeadersFingerprint;
 
   nextSocket.on('close', () => {
     clearSessionSocket(session, nextSocket);

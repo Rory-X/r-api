@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
+import { Headers } from 'undici';
 import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
@@ -153,12 +154,14 @@ describe('chat proxy site api endpoint rotation', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('rotates to the next configured ai endpoint for transport failures', async () => {
+  it.each([false, true])('keeps site header priority %s when rotating endpoints after transport failures', async (enabled) => {
     const site = await db.insert(schema.sites).values({
       name: 'nihao-panel',
       url: 'https://console.example.com',
       platform: 'openai',
       status: 'active',
+      customHeaders: '{"Authorization":"Bearer site","Cookie":"site=1","Content-Type":"application/site+json","X-Site-Scope":"pool"}',
+      customHeadersOverrideRequestHeaders: enabled,
     }).returning().get();
 
     const account = await db.insert(schema.accounts).values({
@@ -228,6 +231,13 @@ describe('chat proxy site api endpoint rotation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/responses');
     expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-b.example.com/v1/responses');
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = new Headers(init.headers);
+      expect(headers.get('authorization')).toBe(enabled ? 'Bearer site' : 'Bearer sk-nihao');
+      expect(headers.get('cookie')).toBe('site=1');
+      expect(headers.get('content-type')).toBe(enabled ? 'application/site+json' : 'application/json');
+      expect(headers.get('x-site-scope')).toBe('pool');
+    }
     expect(selectNextChannelMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).toHaveBeenCalledTimes(1);

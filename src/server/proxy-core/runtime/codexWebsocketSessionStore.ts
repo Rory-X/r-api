@@ -13,6 +13,7 @@ export function createCodexWebsocketSessionStore(): CodexWebsocketSessionStore {
         sessionId: normalized,
         socket: null,
         socketUrl: null,
+        socketSiteHeadersFingerprint: null,
         queue: Promise.resolve(),
       };
       sessions.set(normalized, created);

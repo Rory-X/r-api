@@ -22,6 +22,7 @@ export type SiteForm = {
   codexFingerprintEnabled: boolean;
   apiEndpoints: SiteApiEndpointField[];
   customHeaders: SiteCustomHeaderField[];
+  customHeadersOverrideRequestHeaders: boolean;
   globalWeight: string;
 };
 
@@ -45,6 +46,7 @@ export type SiteSavePayload = {
     sortOrder: number;
   }>;
   customHeaders: string;
+  customHeadersOverrideRequestHeaders: boolean;
   globalWeight: number;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
@@ -85,6 +87,7 @@ export function emptySiteForm(): SiteForm {
     codexFingerprintEnabled: false,
     apiEndpoints: [emptySiteApiEndpoint()],
     customHeaders: [emptySiteCustomHeader()],
+    customHeadersOverrideRequestHeaders: false,
     globalWeight: '1',
   };
 }
@@ -137,7 +140,7 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'globalWeight' | 'homepageUrl' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy' | 'codexFingerprintEnabled'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'homepageUrl' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy' | 'codexFingerprintEnabled'>> & {
   homepageUrl?: string | null;
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
@@ -150,6 +153,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     lastFailureReason?: string | null;
   }> | null;
   customHeaders?: string | null;
+  customHeadersOverrideRequestHeaders?: boolean | null;
   globalWeight?: number | string | null;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
@@ -165,6 +169,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     codexFingerprintEnabled: !!site.codexFingerprintEnabled,
     apiEndpoints: parseApiEndpointsForEditor(site.apiEndpoints),
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
+    customHeadersOverrideRequestHeaders: !!site.customHeadersOverrideRequestHeaders,
     globalWeight,
   };
 }

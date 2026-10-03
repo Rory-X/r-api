@@ -1,9 +1,11 @@
 import type WebSocket from 'ws';
+import type { SiteCustomHeadersConfigLike } from '../../services/siteCustomHeaders.js';
 
 export type CodexWebsocketRuntimeSendInput = {
   sessionId: string;
   requestUrl: string;
   headers: Record<string, string>;
+  site?: SiteCustomHeadersConfigLike;
   body: Record<string, unknown>;
   onAttemptEvent?: (event: CodexWebsocketRuntimeAttemptEvent) => void | Promise<void>;
 };
@@ -32,6 +34,7 @@ export type CodexWebsocketSession = {
   sessionId: string;
   socket: WebSocket | null;
   socketUrl: string | null;
+  socketSiteHeadersFingerprint: string | null;
   queue: Promise<unknown>;
 };
 

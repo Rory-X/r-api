@@ -66,6 +66,7 @@ type SiteRow = {
   useSystemProxy?: boolean;
   codexFingerprintEnabled?: boolean;
   customHeaders?: string | null;
+  customHeadersOverrideRequestHeaders?: boolean | null;
   globalWeight?: number;
   isPinned?: boolean;
   sortOrder?: number;
@@ -774,6 +775,7 @@ export default function Sites() {
       codexFingerprintEnabled: !!form.codexFingerprintEnabled,
       apiEndpoints: serializedApiEndpoints.apiEndpoints,
       customHeaders: serializedCustomHeaders.customHeaders,
+      customHeadersOverrideRequestHeaders: form.customHeadersOverrideRequestHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
       postRefreshProbeEnabled: probeEnabled,
       postRefreshProbeModel: probeModel.trim(),
@@ -1581,8 +1583,27 @@ export default function Sites() {
                 </button>
               </div>
             ))}
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={form.customHeadersOverrideRequestHeaders}
+                onChange={(event) => setForm((previous) => ({
+                  ...previous,
+                  customHeadersOverrideRequestHeaders: event.target.checked,
+                }))}
+                aria-label="允许站点自定义请求头覆盖同名出站请求头"
+              />
+              <span>
+                允许站点自定义请求头覆盖同名出站请求头
+                <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+                  {form.customHeadersOverrideRequestHeaders
+                    ? '站点自定义请求头优先，包括 Authorization、Cookie、Content-Type、User-Agent 和 Version；请确认填写的凭据适用于该站点。'
+                    : '默认由请求本身的同名请求头优先，站点配置仅补充缺少的请求头。'}
+                </span>
+              </span>
+            </label>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-              按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。
+              按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复。
             </div>
             {isEditing && (
               <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>

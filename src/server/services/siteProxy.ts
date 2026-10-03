@@ -8,7 +8,7 @@ import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { SocksClient } from 'socks';
 import type { Dispatcher, RequestInit as UndiciRequestInit } from 'undici';
 import { Agent as UndiciAgent, ProxyAgent } from 'undici';
-import { mergeHeadersWithSiteCustomHeaders } from './siteCustomHeaders.js';
+import { mergeSiteRequestHeaders, type SiteCustomHeadersConfigLike } from './siteCustomHeaders.js';
 import { resolveProxyUrlFromExtraConfig } from './accountExtraConfig.js';
 import { stripTrailingSlashes } from './urlNormalization.js';
 import { buildUpstreamAgentOptions } from './upstreamHttpTransport.js';
@@ -38,6 +38,7 @@ type SiteProxyRow = {
   proxyUrl: string | null;
   useSystemProxy: boolean;
   customHeaders: unknown;
+  customHeadersOverrideRequestHeaders: boolean;
 };
 
 type ParsedSiteProxyInput = {
@@ -46,10 +47,9 @@ type ParsedSiteProxyInput = {
   proxyUrl: string | null;
 };
 
-export type SiteProxyConfigLike = {
+export type SiteProxyConfigLike = SiteCustomHeadersConfigLike & {
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
-  customHeaders?: unknown;
 };
 
 let siteProxyCache: {
@@ -122,6 +122,7 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
           proxyUrl: schema.sites.proxyUrl,
           useSystemProxy: schema.sites.useSystemProxy,
           customHeaders: schema.sites.customHeaders,
+          customHeadersOverrideRequestHeaders: schema.sites.customHeadersOverrideRequestHeaders,
         })
         .from(schema.sites)
         .all(),
@@ -149,6 +150,7 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
         proxyUrl: normalizeSiteProxyUrl(row.proxyUrl),
         useSystemProxy: !!row.useSystemProxy,
         customHeaders: row.customHeaders ?? null,
+        customHeadersOverrideRequestHeaders: !!row.customHeadersOverrideRequestHeaders,
       })),
       systemProxyUrl: parsedSystemProxyUrl,
     };
@@ -385,10 +387,11 @@ function findBestMatchingSiteRow(rows: SiteProxyRow[], normalizedRequestUrl: str
 async function resolveSiteRequestConfigByRequestUrl(requestUrl: string): Promise<{
   proxyUrl: string | null;
   customHeaders: unknown;
+  customHeadersOverrideRequestHeaders: boolean;
 }> {
   const normalizedRequestUrl = normalizeSiteUrl(requestUrl);
   if (!normalizedRequestUrl) {
-    return { proxyUrl: null, customHeaders: null };
+    return { proxyUrl: null, customHeaders: null, customHeadersOverrideRequestHeaders: false };
   }
 
   const rows = await getCachedSiteProxyRows();
@@ -398,6 +401,7 @@ async function resolveSiteRequestConfigByRequestUrl(requestUrl: string): Promise
   return {
     proxyUrl: proxyUrl || null,
     customHeaders: matchedRow?.customHeaders ?? null,
+    customHeadersOverrideRequestHeaders: !!matchedRow?.customHeadersOverrideRequestHeaders,
   };
 }
 
@@ -414,7 +418,7 @@ export async function withSiteProxyRequestInit(
   const nextOptions: UndiciRequestInit = {
     ...(options || {}),
   };
-  const mergedHeaders = mergeHeadersWithSiteCustomHeaders(resolved.customHeaders, options?.headers);
+  const mergedHeaders = mergeSiteRequestHeaders(resolved, options?.headers);
   if (mergedHeaders) {
     nextOptions.headers = mergedHeaders;
   }
@@ -469,7 +473,7 @@ export function withSiteRecordProxyRequestInit(
   const nextOptions: UndiciRequestInit = {
     ...(options || {}),
   };
-  const mergedHeaders = mergeHeadersWithSiteCustomHeaders(site?.customHeaders, options?.headers);
+  const mergedHeaders = mergeSiteRequestHeaders(site, options?.headers);
   if (mergedHeaders) {
     nextOptions.headers = mergedHeaders;
   }

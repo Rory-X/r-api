@@ -10,6 +10,12 @@ import {
 } from './sitesEditor.js';
 
 describe('buildSiteSaveAction', () => {
+  it('keeps old sites on request priority and restores an explicitly enabled override', () => {
+    expect(emptySiteForm().customHeadersOverrideRequestHeaders).toBe(false);
+    expect(siteFormFromSite({ name: 'legacy' }).customHeadersOverrideRequestHeaders).toBe(false);
+    expect(siteFormFromSite({ customHeadersOverrideRequestHeaders: true }).customHeadersOverrideRequestHeaders).toBe(true);
+  });
+
   it('returns add action in add mode', () => {
     const action = buildSiteSaveAction(
       { mode: 'add' },
@@ -24,6 +30,7 @@ describe('buildSiteSaveAction', () => {
           { url: 'https://api-a.example.com', enabled: true, sortOrder: 0 },
           { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
         ],
+        customHeadersOverrideRequestHeaders: true,
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         codexFingerprintEnabled: false,globalWeight: 1.2,
@@ -47,6 +54,7 @@ describe('buildSiteSaveAction', () => {
           { url: 'https://api-a.example.com', enabled: true, sortOrder: 0 },
           { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
         ],
+        customHeadersOverrideRequestHeaders: true,
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         codexFingerprintEnabled: false,globalWeight: 1.2,
@@ -70,6 +78,7 @@ describe('buildSiteSaveAction', () => {
         proxyUrl: '',
         useSystemProxy: true,
         codexFingerprintEnabled: true,apiEndpoints: [],
+        customHeadersOverrideRequestHeaders: true,
         customHeaders: '',
         globalWeight: 0.8,
       },
@@ -87,6 +96,7 @@ describe('buildSiteSaveAction', () => {
         proxyUrl: '',
         useSystemProxy: true,
         codexFingerprintEnabled: true,apiEndpoints: [],
+        customHeadersOverrideRequestHeaders: true,
         customHeaders: '',
         globalWeight: 0.8,
       },
@@ -106,7 +116,8 @@ describe('buildSiteSaveAction', () => {
           proxyUrl: '',
           useSystemProxy: false,
           codexFingerprintEnabled: false,apiEndpoints: [],
-          customHeaders: '',
+          customHeadersOverrideRequestHeaders: true,
+        customHeaders: '',
           globalWeight: 1,
         },
       ),

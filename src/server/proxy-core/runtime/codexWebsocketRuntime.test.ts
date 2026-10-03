@@ -11,12 +11,14 @@ describeWithLocalListener('codexWebsocketRuntime', () => {
   let upstreamWsUrl: string;
   let upstreamConnectionCount = 0;
   let upstreamRequests: Record<string, unknown>[] = [];
+  let upstreamHeaders: import('node:http').IncomingHttpHeaders[] = [];
   let upstreamMessageHandler: (socket: import('ws').WebSocket, parsed: Record<string, unknown>, requestIndex: number) => void;
 
   beforeAll(async () => {
     upstreamServer = new WebSocketServer({ port: 0 });
-    upstreamServer.on('connection', (socket) => {
+    upstreamServer.on('connection', (socket, request) => {
       upstreamConnectionCount += 1;
+      upstreamHeaders.push(request.headers);
       socket.on('message', (payload) => {
         const parsed = JSON.parse(String(payload)) as Record<string, unknown>;
         upstreamRequests.push(parsed);
@@ -32,6 +34,7 @@ describeWithLocalListener('codexWebsocketRuntime', () => {
     resetCodexSessionResponseStore();
     upstreamConnectionCount = 0;
     upstreamRequests = [];
+    upstreamHeaders = [];
     upstreamMessageHandler = (socket, parsed, requestIndex) => {
       const responseId = `resp-${requestIndex}`;
       socket.send(JSON.stringify({
@@ -54,6 +57,51 @@ describeWithLocalListener('codexWebsocketRuntime', () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
+  });
+
+  it.each([false, true])('applies site header priority %s to the actual upstream handshake', async (enabled) => {
+    const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
+    const runtime = createCodexWebsocketRuntime();
+    const sessionId = `header-priority-${enabled}`;
+    try {
+      await runtime.sendRequest({
+        sessionId,
+        requestUrl: upstreamWsUrl,
+        headers: {
+          Authorization: 'Bearer request',
+          Cookie: 'request=1',
+          'Content-Type': 'application/json',
+          'User-Agent': 'request-agent',
+          Version: 'request-version',
+          'OpenAI-Beta': 'runtime-beta=1',
+        },
+        site: {
+          customHeaders: JSON.stringify({
+            authorization: 'Bearer site',
+            cookie: 'site=1',
+            'content-type': 'application/site+json',
+            'user-agent': 'site-agent',
+            version: 'site-version',
+            'openai-beta': 'site-beta=1',
+            'x-site-only': 'present',
+          }),
+          customHeadersOverrideRequestHeaders: enabled,
+        },
+        body: { model: 'gpt-5.4', input: [] },
+      });
+      expect(upstreamHeaders[0]).toMatchObject({
+        authorization: enabled ? 'Bearer site' : 'Bearer request',
+        cookie: enabled ? 'site=1' : 'request=1',
+        'content-type': enabled ? 'application/site+json' : 'application/json',
+        'user-agent': enabled ? 'site-agent' : 'request-agent',
+        version: enabled ? 'site-version' : 'request-version',
+        'x-site-only': 'present',
+      });
+      if (enabled) expect(upstreamHeaders[0]['openai-beta']).toBe('site-beta=1');
+      else expect(upstreamHeaders[0]['openai-beta']).toContain('runtime-beta=1,responses_websockets=');
+    } finally {
+      await runtime.closeSession(sessionId);
+    }
   });
 
   it('reuses the same upstream websocket connection across turns for one execution session', async () => {
@@ -117,6 +165,42 @@ describeWithLocalListener('codexWebsocketRuntime', () => {
     ]);
 
     await runtime.closeSession('exec-session-1');
+  });
+
+  it('reconnects after site header settings change while preserving response continuation', async () => {
+    const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
+    const runtime = createCodexWebsocketRuntime();
+    const input = {
+      sessionId: 'exec-session-header-edit', requestUrl: upstreamWsUrl,
+      headers: { Authorization: 'Bearer request' },
+      site: { customHeaders: '{"authorization":"Bearer site"}', customHeadersOverrideRequestHeaders: false },
+      body: { model: 'gpt-5.4', input: [] },
+    };
+    try {
+      await runtime.sendRequest(input);
+      const reused = await runtime.sendRequest({
+        ...input,
+        site: { ...input.site, customHeaders: '{ "Authorization": "Bearer site" }' },
+      });
+      expect(reused.reusedSession).toBe(true);
+      const changed = await runtime.sendRequest({
+        ...input,
+        site: { ...input.site, customHeadersOverrideRequestHeaders: true },
+        body: { model: 'gpt-5.4', input: [{ type: 'function_call_output', call_id: 'header-edit-call', output: 'ok' }] },
+      });
+      expect(changed.reusedSession).toBe(false);
+      expect(upstreamConnectionCount).toBe(2);
+      expect(upstreamHeaders.map((headers) => headers.authorization)).toEqual(['Bearer request', 'Bearer site']);
+      expect(upstreamRequests[2]).toMatchObject({ previous_response_id: 'resp-2' });
+      await runtime.sendRequest({
+        ...input,
+        site: { customHeadersOverrideRequestHeaders: true, customHeaders: '{"Authorization":"Bearer rotated"}' },
+      });
+      expect(upstreamConnectionCount).toBe(3);
+      expect(upstreamHeaders[2].authorization).toBe('Bearer rotated');
+    } finally {
+      await runtime.closeSession(input.sessionId);
+    }
   });
 
   it('closes the upstream websocket when the execution session is closed explicitly', async () => {
