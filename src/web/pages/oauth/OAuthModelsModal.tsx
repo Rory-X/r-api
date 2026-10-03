@@ -1,7 +1,8 @@
 import React from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
+import ModelContextLabel, { type ModelContextEvidence } from '../../components/ModelContextLabel.js';
 
-export type OAuthModelItem = {
+export type OAuthModelItem = ModelContextEvidence & {
   name: string;
   latencyMs: number | null;
   disabled: boolean;
@@ -85,6 +86,7 @@ export default function OAuthModelsModal({
                   <div className="oauth-models-item-main">
                     <div className="oauth-models-item-name">{model.name}</div>
                     <div className="oauth-models-item-meta">
+                      <ModelContextLabel {...model} />
                       {model.latencyMs != null ? <span>{model.latencyMs}ms</span> : null}
                       {model.isManual ? <span className="badge badge-info oauth-models-badge">手动</span> : null}
                       {model.disabled ? <span className="badge badge-warning oauth-models-badge">禁用</span> : null}

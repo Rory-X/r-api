@@ -1,11 +1,15 @@
 import React from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
+import ModelContextLabel from '../../components/ModelContextLabel.js';
 
 type AccountModelRow = {
   name: string;
   latencyMs: number | null;
   disabled: boolean;
   isManual?: boolean;
+  contextLength?: number | null;
+  contextSource?: string | null;
+  contextUpdatedAt?: string | null;
 };
 
 type AccountModelModalState = {
@@ -184,6 +188,9 @@ export default function AccountModelsModal({
                       />
                       <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
                         {model.name}
+                        <span style={{ display: 'block', marginTop: 3 }}>
+                          <ModelContextLabel {...model} />
+                        </span>
                       </span>
                       {model.latencyMs != null ? (
                         <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>

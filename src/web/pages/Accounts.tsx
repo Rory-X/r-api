@@ -183,6 +183,9 @@ export default function Accounts() {
       latencyMs: number | null;
       disabled: boolean;
       isManual?: boolean;
+      contextLength?: number | null;
+      contextSource?: string | null;
+      contextUpdatedAt?: string | null;
     }>;
     pendingDisabled: Set<string>;
     loading: boolean;

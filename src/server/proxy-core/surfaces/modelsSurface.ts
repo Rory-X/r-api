@@ -9,6 +9,7 @@ type ModelsSurfaceInput = {
   responseFormat: 'openai' | 'claude';
   tokenRouter: {
     getAvailableModels(): Promise<string[]>;
+    getModelContextLength?(modelName: string, downstreamPolicy: unknown): Promise<number | undefined>;
     explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
       selectedChannelId?: number | null;
     }>;
@@ -43,12 +44,21 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
   }
 
   const now = input.now?.() ?? new Date();
+  const contextByModel = new Map(await Promise.all(models.map(async (id) => [
+    id, await input.tokenRouter.getModelContextLength?.(id, input.downstreamPolicy),
+  ] as const)));
+  const metadataFor = (id: string) => {
+    const contextLength = contextByModel.get(id);
+    return typeof contextLength === 'number' && Number.isSafeInteger(contextLength) && contextLength > 0
+      ? { context_length: contextLength } : {};
+  };
   if (input.responseFormat === 'claude') {
     const data = models.map((id) => ({
       id,
       type: 'model' as const,
       display_name: id,
       created_at: now.toISOString(),
+      ...metadataFor(id),
     }));
     return {
       data,
@@ -65,6 +75,7 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
       object: 'model' as const,
       created: Math.floor(now.getTime() / 1000),
       owned_by: 'r-api',
+      ...metadataFor(id),
     })),
   };
 }

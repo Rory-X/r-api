@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { listModelsSurface } from './modelsSurface.js';
 
 describe('listModelsSurface', () => {
+  it.each(['openai', 'claude'] as const)('publishes known context and omits unknown metadata in %s format', async (responseFormat) => {
+    const result = await listModelsSurface({
+      downstreamPolicy: { type: 'all' }, responseFormat,
+      tokenRouter: {
+        getAvailableModels: vi.fn().mockResolvedValue(['known', 'unknown', 'blocked']),
+        explainSelection: vi.fn().mockResolvedValue({ selectedChannelId: 1 }),
+        getModelContextLength: vi.fn(async (model) => model === 'known' ? 128000 : undefined),
+      },
+      refreshModelsAndRebuildRoutes: vi.fn(),
+      isModelAllowed: vi.fn(async (model) => model !== 'blocked'),
+    });
+    expect(result.data).toHaveLength(2);
+    expect(result.data.find((model) => model.id === 'known')).toHaveProperty('context_length', 128000);
+    expect(result.data.find((model) => model.id === 'unknown')).not.toHaveProperty('context_length');
+  });
   it('returns OpenAI list shape and hides models without a resolvable channel', async () => {
     const result = await listModelsSurface({
       downstreamPolicy: { type: 'all' },

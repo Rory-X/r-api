@@ -24,6 +24,19 @@ function props(removingManualModel: string | null = null) {
 }
 
 describe('manual model deletion control', () => {
+  it('shows sourced context while making unknown models explicit', () => {
+    const input = props();
+    const models = input.modelModal.models.map((model, index) => ({
+      ...model,
+      ...(index === 0 ? { contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: '2026-10-04T00:00:00Z' } : {}),
+    }));
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<AccountModelsModal {...input} modelModal={{ ...input.modelModal, models }} />); });
+    expect(JSON.stringify(renderer.toJSON())).toContain('128,000');
+    expect(JSON.stringify(renderer.toJSON())).toContain('上下文未知');
+    expect(renderer.root.findAll((node) => typeof node.props.title === 'string' && node.props.title.includes('openai.models:context_length'))).toHaveLength(1);
+    act(() => renderer.unmount());
+  });
   it('offers deletion only for manual models without toggling their disabled status', () => {
     const input = props();
     let renderer: ReturnType<typeof create>;

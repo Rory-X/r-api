@@ -55,7 +55,7 @@ describe('/v1/models route', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('hides models that have no routable channel even if model availability contains them', async () => {
+  it.each([false, true])('hides orphan models and exposes only sourced token context (known=%s)', async (known) => {
     const site = await db.insert(schema.sites).values({
       name: 'test-site',
       url: 'https://upstream.example.com',
@@ -110,6 +110,11 @@ describe('/v1/models route', () => {
       supportedModels: JSON.stringify(['routable-model']),
     }).run();
 
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id, modelName: 'routable-model', available: true,
+      ...(known ? { contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: '2026-10-04T00:00:00Z' } : {}),
+    }).run();
+
     const response = await app.inject({
       method: 'GET',
       url: '/v1/models',
@@ -119,6 +124,8 @@ describe('/v1/models route', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    if (known) expect(response.json().data[0]).toHaveProperty('context_length', 128000);
+    else expect(response.json().data[0]).not.toHaveProperty('context_length');
     const body = response.json() as {
       object: 'list';
       data: Array<{ id: string }>;

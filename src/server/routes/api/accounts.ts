@@ -1,3 +1,4 @@
+import { readModelContextEvidence } from '../../contracts/modelDiscovery.js';
 import { FastifyInstance } from "fastify";
 import { db, schema } from "../../db/index.js";
 import { and, eq, gte, lt, sql } from "drizzle-orm";
@@ -1451,6 +1452,9 @@ export async function accountsRoutes(app: FastifyInstance) {
           available: schema.modelAvailability.available,
           latencyMs: schema.modelAvailability.latencyMs,
           isManual: schema.modelAvailability.isManual,
+          contextLength: schema.modelAvailability.contextLength,
+          contextSource: schema.modelAvailability.contextSource,
+          contextUpdatedAt: schema.modelAvailability.contextUpdatedAt,
         })
         .from(schema.modelAvailability)
         .where(eq(schema.modelAvailability.accountId, accountId))
@@ -1474,6 +1478,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           latencyMs: r.latencyMs,
           disabled: disabledSet.has(r.modelName),
           isManual: !!r.isManual,
+          ...readModelContextEvidence(r),
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 

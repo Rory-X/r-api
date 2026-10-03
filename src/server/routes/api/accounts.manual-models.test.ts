@@ -77,6 +77,18 @@ describe('accounts manual models endpoint', () => {
     expect(models[0]?.isManual).toBe(true);
     expect(models[1]?.isManual).toBe(true);
   });
+  it('exposes sourced metadata and leaves names-only model context unknown', async () => {
+    const site = await db.insert(schema.sites).values({ name: 'context', url: 'https://context.example.com', platform: 'openai' }).returning().get();
+    const account = await db.insert(schema.accounts).values({ siteId: site.id, accessToken: 'test-token' }).returning().get();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: account.id, modelName: 'known', available: true, contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: '2026-10-04T00:00:00Z' },
+      { accountId: account.id, modelName: 'unknown', available: true },
+    ]).run();
+    const response = await app.inject({ method: 'GET', url: `/api/accounts/${account.id}/models` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().models.find((model: any) => model.name === 'known')).toMatchObject({ contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: '2026-10-04T00:00:00Z' });
+    expect(response.json().models.find((model: any) => model.name === 'unknown')).not.toHaveProperty('contextLength');
+  });
 
   it('updates existing synced models to manual if provided', async () => {
     const site = await db.insert(schema.sites).values({

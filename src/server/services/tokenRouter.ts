@@ -1,3 +1,4 @@
+import { getKnownModelContextLength, type ModelContextRef } from './modelContextService.js';
 import { buildVisibleTokenRoutes } from '../../shared/tokenRouteVisibility.js';
 ﻿import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
@@ -4038,6 +4039,37 @@ export class TokenRouter {
     if (shouldRecordSiteRuntimeHealth(domain)) {
       await recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
     }
+  }
+
+  /** Publish a limit only when every eligible dispatch credential has evidence. */
+  async getModelContextLength(
+    requestedModel: string,
+    downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+  ): Promise<number | undefined> {
+    const match = await this.findRoute(requestedModel, downstreamPolicy);
+    if (!match) return undefined;
+    await this.hydrateModelCapabilityCache(match, requestedModel);
+    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
+    const refs: ModelContextRef[] = [];
+    for (const candidate of match.channels) {
+      const options: CandidateEligibilityOptions = {
+        requestedModel,
+        capabilityModelName: resolveCapabilityModelName(candidate, mappedModel, requestedByDisplayName),
+        bypassSourceModelCheck: requestedByDisplayName,
+        downstreamPolicy,
+      };
+      if (this.getCandidateEligibilityReasons(candidate, options).length > 0) continue;
+      const modelName = resolveActualModelForSelectedChannel(requestedModel, match.route, mappedModel, candidate.channel.sourceModel);
+      if (isOauthRouteUnitCandidate(candidate)) {
+        refs.push(...this.getEligibleRouteUnitMembers(candidate, options).map((member) => ({
+          accountId: member.account.id, tokenId: null, modelName,
+        })));
+      } else {
+        refs.push({ accountId: candidate.account.id, tokenId: candidate.token?.id ?? null, modelName });
+      }
+    }
+    return getKnownModelContextLength(refs);
   }
 
   /**
