@@ -500,7 +500,7 @@ function buildStatements(
   for (const row of snapshot.accounts.modelAvailability) {
     statements.push({
       table: 'model_availability',
-      columns: ['id', 'account_id', 'model_name', 'available', 'latency_ms', 'checked_at'],
+      columns: ['id', 'account_id', 'model_name', 'available', 'latency_ms', 'checked_at', 'context_length', 'context_source', 'context_updated_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.accountId, 0),
@@ -508,6 +508,9 @@ function buildStatements(
         asBoolean(row.available, false),
         asNumber(row.latencyMs, null),
         asNullableString(row.checkedAt),
+        asNumber(row.contextLength, null),
+        asNullableString(row.contextSource),
+        asNullableString(row.contextUpdatedAt),
       ],
     });
   }
@@ -515,7 +518,7 @@ function buildStatements(
   for (const row of snapshot.accounts.tokenModelAvailability) {
     statements.push({
       table: 'token_model_availability',
-      columns: ['id', 'token_id', 'model_name', 'available', 'latency_ms', 'checked_at'],
+      columns: ['id', 'token_id', 'model_name', 'available', 'latency_ms', 'checked_at', 'context_length', 'context_source', 'context_updated_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.tokenId, 0),
@@ -523,6 +526,9 @@ function buildStatements(
         asBoolean(row.available, false),
         asNumber(row.latencyMs, null),
         asNullableString(row.checkedAt),
+        asNumber(row.contextLength, null),
+        asNullableString(row.contextSource),
+        asNullableString(row.contextUpdatedAt),
       ],
     });
   }

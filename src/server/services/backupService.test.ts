@@ -119,6 +119,11 @@ describe('backupService', () => {
       updatedAt: now,
     }).returning().get();
 
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: accountToken.id, modelName: 'gpt-discovered', available: true,
+      contextLength: 64000, contextSource: 'openai.models:context_window', contextUpdatedAt: now,
+    }).run();
+
     const sourceRoute = await db.insert(schema.tokenRoutes).values({
       modelPattern: 'gpt-source-*',
       displayName: 'gpt-source',
@@ -196,6 +201,7 @@ describe('backupService', () => {
       {
         accountId: account.id,
         modelName: 'gpt-discovered',
+        contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: now,
         available: true,
         isManual: false,
         latencyMs: 42,
@@ -370,6 +376,8 @@ describe('backupService', () => {
     ]);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-manual' && row.isManual)).toBe(true);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-discovered' && !row.isManual)).toBe(true);
+    expect(restoredModelAvailability.find((row) => row.modelName === 'gpt-discovered')).toMatchObject({ contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: now });
+    expect((await db.select().from(schema.tokenModelAvailability).all()).find((row) => row.modelName === 'gpt-discovered')).toMatchObject({ contextLength: 64000, contextSource: 'openai.models:context_window', contextUpdatedAt: now });
     expect(restoredDownstreamKeys).toEqual([
       expect.objectContaining({
         name: 'Shared Downstream',

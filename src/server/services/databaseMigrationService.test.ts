@@ -149,6 +149,11 @@ describe('databaseMigrationService', () => {
     delete liveContract.tables.sites.columns.use_system_proxy;
     delete liveContract.tables.sites.columns.custom_headers;
     delete liveContract.tables.sites.columns.custom_headers_override_request_headers;
+    for (const table of ['model_availability', 'token_model_availability']) {
+      delete liveContract.tables[table].columns.context_length;
+      delete liveContract.tables[table].columns.context_source;
+      delete liveContract.tables[table].columns.context_updated_at;
+    }
 
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
@@ -174,6 +179,11 @@ describe('databaseMigrationService', () => {
     expect(useSystemProxySql).toContain('use_system_proxy');
     expect(customHeadersSql).toContain('custom_headers');
     expect(executedSql.some((sqlText) => sqlText.includes('custom_headers_override_request_headers'))).toBe(true);
+    for (const table of ['model_availability', 'token_model_availability']) {
+      for (const column of ['context_length', 'context_source', 'context_updated_at']) {
+        expect(executedSql.some((sqlText) => sqlText.includes(table) && sqlText.includes(column))).toBe(true);
+      }
+    }
   });
 
   it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
@@ -224,8 +234,8 @@ describe('databaseMigrationService', () => {
         accounts: [],
         accountTokens: [],
         checkinLogs: [],
-        modelAvailability: [],
-        tokenModelAvailability: [],
+        modelAvailability: [{ id: 1, accountId: 1, modelName: 'known', available: true, contextLength: 128000, contextSource: 'test.models:context_length', contextUpdatedAt: '2026-10-04T00:00:00Z' }],
+        tokenModelAvailability: [{ id: 1, tokenId: 1, modelName: 'known', available: true, contextLength: 64000, contextSource: 'test.models:context_window', contextUpdatedAt: '2026-10-04T00:00:00Z' }],
         tokenRoutes: [],
         routeChannels: [],
         proxyLogs: [],
@@ -239,6 +249,12 @@ describe('databaseMigrationService', () => {
       },
     });
 
+    for (const [table, length, source] of [['model_availability', 128000, 'test.models:context_length'], ['token_model_availability', 64000, 'test.models:context_window']] as const) {
+      const statement = statements.find((item) => item.table === table)!;
+      expect(statement.values[statement.columns.indexOf('context_length')]).toBe(length);
+      expect(statement.values[statement.columns.indexOf('context_source')]).toBe(source);
+      expect(statement.values[statement.columns.indexOf('context_updated_at')]).toBe('2026-10-04T00:00:00Z');
+    }
     const siteStatement = statements.find((statement) => statement.table === 'sites');
     const useSystemProxyIndex = siteStatement?.columns.indexOf('use_system_proxy') ?? -1;
     const customHeadersIndex = siteStatement?.columns.indexOf('custom_headers') ?? -1;

@@ -1,3 +1,4 @@
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 import {
   ApiTokenInfo,
   BasePlatformAdapter,
@@ -515,7 +516,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
-  private async fetchModelsByToken(baseUrl: string, token: string): Promise<string[]> {
+  private async fetchModelsByToken(baseUrl: string, token: string, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     const authToken = this.normalizeTokenKeyForCompare(token);
     if (!authToken) return [];
 
@@ -525,7 +526,10 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         const models = this.extractModelIds(res);
-        if (models.length > 0) return models;
+        if (models.length > 0) {
+          captureModelContextMetadata((Array.isArray(res?.data ?? res) ? (res?.data ?? res) : (res?.data ?? res)?.items ?? (res?.data ?? res)?.models), `${this.platformName}.models`, onMetadata, (id) => id.replace(/^models\//i, '').trim());
+          return models;
+        }
       } catch {}
     }
 
@@ -728,10 +732,10 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   // --- Models: Standard OpenAI-compatible endpoint ---
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     const normalizedBase = normalizeBaseUrl(baseUrl);
     const managementBase = this.resolveManagementBaseUrl(normalizedBase);
-    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken);
+    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken, onMetadata);
     if (directModels.length > 0) return directModels;
 
     // Session JWT cannot access /v1/models directly; discover a user key first.
@@ -740,7 +744,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     if (this.normalizeTokenKeyForCompare(discoveredApiToken) === this.normalizeTokenKeyForCompare(apiToken)) {
       return [];
     }
-    return this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+    return this.fetchModelsByToken(normalizedBase, discoveredApiToken, onMetadata);
   }
 
   override async getSiteAnnouncements(baseUrl: string, accessToken: string): Promise<SiteAnnouncement[]> {

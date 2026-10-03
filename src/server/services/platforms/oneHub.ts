@@ -1,3 +1,4 @@
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 import { OneApiAdapter } from './oneApi.js';
 
 export class OneHubAdapter extends OneApiAdapter {
@@ -13,10 +14,10 @@ export class OneHubAdapter extends OneApiAdapter {
    * The /api/available_model endpoint returns { data: { model_name: { price: ... }, ... } }
    * where the keys are model names.
    */
-  override async getModels(baseUrl: string, apiToken: string, platformUserId?: number): Promise<string[]> {
+  override async getModels(baseUrl: string, apiToken: string, platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     let openAiModels: string[] = [];
     try {
-      openAiModels = await super.getModels(baseUrl, apiToken, platformUserId);
+      openAiModels = await super.getModels(baseUrl, apiToken, platformUserId, onMetadata);
     } catch {}
     if (openAiModels.length > 0) return openAiModels;
 
@@ -27,7 +28,10 @@ export class OneHubAdapter extends OneApiAdapter {
       const payload = res?.data && typeof res.data === 'object' ? res.data : res;
       if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
         const models = Object.keys(payload).filter(Boolean);
-        if (models.length > 0) return models;
+        if (models.length > 0) {
+          captureModelContextMetadata(models.map((id) => ({ ...payload[id], id })), `${this.platformName}.available_model`, onMetadata);
+          return models;
+        }
       }
     } catch {}
 

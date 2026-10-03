@@ -166,6 +166,9 @@ export async function reconcileModelSyncPolicy(input: {
       isManual: false,
       latencyMs: prior.latencyMs,
       checkedAt: prior.checkedAt,
+      contextLength: prior.contextLength,
+      contextSource: prior.contextSource,
+      contextUpdatedAt: prior.contextUpdatedAt,
     };
     const existingAvailability = await db.select({ id: schema.modelAvailability.id })
       .from(schema.modelAvailability)

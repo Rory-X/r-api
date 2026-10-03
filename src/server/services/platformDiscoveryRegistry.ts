@@ -1,5 +1,6 @@
 import { fetch } from 'undici';
 import { schema } from '../db/index.js';
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../contracts/modelDiscovery.js';
 import { withSiteRecordProxyRequestInit } from './siteProxy.js';
 import { runWithSiteApiEndpointPool } from './siteApiEndpointService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
@@ -140,6 +141,7 @@ function buildAntigravityDiscoveryBaseUrls(siteUrl: string): string[] {
 export async function discoverCodexModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
+  onMetadata?: ModelDiscoveryMetadataSink;
 }): Promise<string[]> {
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
@@ -170,12 +172,15 @@ export async function discoverCodexModelsFromCloud(input: {
     }
     return response.json();
   });
+  const record = payload as { models?: unknown; data?: unknown; items?: unknown };
+  captureModelContextMetadata(Array.isArray(payload) ? payload : record?.models ?? record?.data ?? record?.items, 'codex.models', input.onMetadata);
   return normalizeDiscoveredModels(extractCodexModelIds(payload));
 }
 
 export async function discoverClaudeModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
+  onMetadata?: ModelDiscoveryMetadataSink;
 }): Promise<string[]> {
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
@@ -199,6 +204,7 @@ export async function discoverClaudeModelsFromCloud(input: {
     }
     return response.json();
   });
+  captureModelContextMetadata((payload as { data?: unknown })?.data, 'claude.models', input.onMetadata);
   return normalizeDiscoveredModels(extractClaudeModelIds(payload));
 }
 
@@ -240,6 +246,7 @@ export async function validateGeminiCliOauthConnection(input: {
 export async function discoverAntigravityModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
+  onMetadata?: ModelDiscoveryMetadataSink;
 }): Promise<string[]> {
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
@@ -280,6 +287,9 @@ export async function discoverAntigravityModelsFromCloud(input: {
         const payload = await response.json();
         const models = normalizeDiscoveredModels(extractAntigravityModelIds(payload));
         if (models.length > 0) {
+          const rawModels = (payload as { models?: unknown }).models;
+          const rows = Array.isArray(rawModels) ? rawModels : Object.entries(rawModels || {}).map(([id, value]) => ({ ...(value as object), id }));
+          captureModelContextMetadata(rows, 'antigravity.models', input.onMetadata);
           return models;
         }
         lastError = '未获取到可用模型';

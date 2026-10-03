@@ -1,3 +1,4 @@
+import type { ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 import {
   StandardApiProviderAdapterBase,
   normalizePlatformBaseUrl,
@@ -50,9 +51,10 @@ export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
     }
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     return this.fetchModelsFromStandardEndpoint({
       baseUrl,
+      onMetadata,
       headers: { Authorization: `Bearer ${apiToken}` },
       resolveUrl: resolveVersionedModelsUrl,
     });

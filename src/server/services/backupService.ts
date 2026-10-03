@@ -1783,6 +1783,9 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         isManual: false,
         latencyMs: row.latencyMs ?? null,
         checkedAt: row.checkedAt,
+        contextLength: row.contextLength,
+        contextSource: row.contextSource,
+        contextUpdatedAt: row.contextUpdatedAt,
       }).run();
     }
 
@@ -1797,6 +1800,9 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         available: row.available,
         latencyMs: row.latencyMs ?? null,
         checkedAt: row.checkedAt,
+        contextLength: row.contextLength,
+        contextSource: row.contextSource,
+        contextUpdatedAt: row.contextUpdatedAt,
       }).run();
     }
 

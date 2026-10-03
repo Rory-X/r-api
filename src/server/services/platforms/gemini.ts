@@ -1,4 +1,5 @@
 import { StandardApiProviderAdapterBase, normalizePlatformBaseUrl } from './standardApiProvider.js';
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 
 function stripModelPrefix(name: string): string {
   const trimmed = name.trim();
@@ -49,11 +50,12 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
     );
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     const normalizedBase = normalizePlatformBaseUrl(baseUrl);
 
     if (isOpenAiCompatGeminiBase(normalizedBase)) {
       const openAiModels = await this.fetchModelsFromStandardEndpoint({
+        onMetadata: onMetadata ? (models) => onMetadata(models.map((model) => ({ ...model, modelName: stripModelPrefix(model.modelName) }))) : undefined,
         baseUrl: normalizedBase,
         headers: { Authorization: `Bearer ${apiToken}` },
         resolveUrl: resolveGeminiOpenAiModelsUrl,
@@ -66,11 +68,15 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
       const nativeModels = (res?.models || [])
         .map((m: any) => String(m?.name || '').trim())
         .filter(Boolean);
-      if (nativeModels.length > 0) return normalizeModelList(nativeModels);
+      if (nativeModels.length > 0) {
+        captureModelContextMetadata(res.models, `${this.platformName}.models`, onMetadata, stripModelPrefix);
+        return normalizeModelList(nativeModels);
+      }
     } catch {}
 
     if (!isOpenAiCompatGeminiBase(normalizedBase)) {
       const openAiModels = await this.fetchModelsFromStandardEndpoint({
+        onMetadata: onMetadata ? (models) => onMetadata(models.map((model) => ({ ...model, modelName: stripModelPrefix(model.modelName) }))) : undefined,
         baseUrl: `${normalizedBase}/v1beta/openai`,
         headers: { Authorization: `Bearer ${apiToken}` },
       });

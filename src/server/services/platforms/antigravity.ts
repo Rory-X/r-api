@@ -1,3 +1,4 @@
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 import { BasePlatformAdapter, type BalanceInfo, type CheckinResult, type UserInfo } from './base.js';
 import {
   ANTIGRAVITY_CLIENT_METADATA,
@@ -55,7 +56,7 @@ export class AntigravityAdapter extends BasePlatformAdapter {
     return { balance: 0, used: 0, quota: 0 };
   }
 
-  async getModels(baseUrl: string, accessToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, accessToken: string, _platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     try {
       const payload = await this.fetchJson<{ models?: unknown }>(
         `${normalizeBaseUrl(baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL)}/v1internal:fetchAvailableModels`,
@@ -71,6 +72,8 @@ export class AntigravityAdapter extends BasePlatformAdapter {
           body: JSON.stringify({}),
         },
       );
+      const rows = Array.isArray(payload.models) ? payload.models : Object.entries(payload.models || {}).map(([id, value]) => ({ ...(value as object), id }));
+      captureModelContextMetadata(rows, 'antigravity.models', onMetadata);
       return extractAntigravityModelNames(payload);
     } catch {
       return [];

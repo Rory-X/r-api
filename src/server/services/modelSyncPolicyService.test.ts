@@ -51,6 +51,7 @@ describe('model sync policy service', () => {
     const initial = await db.insert(schema.modelAvailability).values({
       accountId,
       modelName: 'gpt-4.1',
+      contextLength: 128000, contextSource: 'openai.models:context_length', contextUpdatedAt: '2026-08-03T00:00:00Z',
       available: true,
       isManual: false,
       checkedAt: '2026-08-03T00:00:00.000Z',
@@ -69,6 +70,8 @@ describe('model sync policy service', () => {
       expect((await service.listModelSyncStates({ accountId }))[0]?.status).toBe(expectedStatus);
       const row = await db.select().from(schema.modelAvailability).where(eq(schema.modelAvailability.accountId, accountId)).get();
       expect(row?.available).toBe(index < 2);
+      expect(row?.contextLength).toBe(128000);
+      expect(row?.contextSource).toBe('openai.models:context_length');
     }
   });
 

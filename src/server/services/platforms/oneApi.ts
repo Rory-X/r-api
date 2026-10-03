@@ -1,3 +1,4 @@
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions } from './base.js';
 
 type CreateApiTokenPayload = {
@@ -76,10 +77,11 @@ export class OneApiAdapter extends BasePlatformAdapter {
     return { balance: quota - used, used, quota, todayIncome, todayQuotaConsumption };
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]> {
     const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
       headers: { Authorization: `Bearer ${apiToken}` },
     });
+    captureModelContextMetadata(res?.data, `${this.platformName}.models`, onMetadata);
     return (res?.data || []).map((m: any) => m.id).filter(Boolean);
   }
 

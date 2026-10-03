@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { normalizeDiscoveredModels, type DiscoveredModel, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 import {
   getSiteAdapterContract,
   type SiteAdapterContract,
@@ -110,7 +111,8 @@ export interface PlatformAdapter {
   verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult>;
   checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult>;
   getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo>;
-  getModels(baseUrl: string, token: string, platformUserId?: number): Promise<string[]>;
+  getModels(baseUrl: string, token: string, platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]>;
+  discoverModels?(baseUrl: string, token: string, platformUserId?: number): Promise<DiscoveredModel[]>;
   getApiToken(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string | null>;
   getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]>;
   getSiteAnnouncements(baseUrl: string, accessToken: string, platformUserId?: number): Promise<SiteAnnouncement[]>;
@@ -129,7 +131,18 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   abstract detect(url: string): Promise<boolean>;
   abstract checkin(baseUrl: string, accessToken: string): Promise<CheckinResult>;
   abstract getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo>;
-  abstract getModels(baseUrl: string, token: string, platformUserId?: number): Promise<string[]>;
+  abstract getModels(baseUrl: string, token: string, platformUserId?: number, onMetadata?: ModelDiscoveryMetadataSink): Promise<string[]>;
+
+  async discoverModels(baseUrl: string, token: string, platformUserId?: number): Promise<DiscoveredModel[]> {
+    let metadata = new Map<string, DiscoveredModel>();
+    const models = await this.getModels(baseUrl, token, platformUserId, (rows) => {
+      metadata = new Map(normalizeDiscoveredModels(rows).map((row) => [row.modelName.toLowerCase(), row]));
+    });
+    return normalizeDiscoveredModels(models.map((modelName) => ({
+      ...metadata.get(typeof modelName === 'string' ? modelName.trim().toLowerCase() : ''),
+      modelName,
+    })));
+  }
 
   async verifyToken(baseUrl: string, token: string, _platformUserId?: number): Promise<TokenVerifyResult> {
     // 1. Try as session/access token first (for management APIs)

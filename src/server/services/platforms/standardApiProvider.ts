@@ -4,12 +4,14 @@ import {
   type CheckinResult,
   type UserInfo,
 } from './base.js';
+import { captureModelContextMetadata, type ModelDiscoveryMetadataSink } from '../../contracts/modelDiscovery.js';
 
 type FetchModelsOptions = {
   baseUrl: string;
   headers?: Record<string, string>;
   resolveUrl?: (normalizedBaseUrl: string) => string;
   mapResponse?: (payload: any) => unknown[];
+  onMetadata?: ModelDiscoveryMetadataSink;
 };
 
 export function normalizePlatformBaseUrl(baseUrl: string): string {
@@ -78,6 +80,8 @@ export abstract class StandardApiProviderAdapterBase extends BasePlatformAdapter
     if (!Array.isArray(rows)) {
       throw new Error('invalid standard models payload');
     }
+
+    captureModelContextMetadata(payload?.data, `${this.platformName}.models`, options.onMetadata);
 
     return rows
       .map((item) => (typeof item === 'string' ? item.trim() : ''))
