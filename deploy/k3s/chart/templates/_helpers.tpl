@@ -16,7 +16,11 @@
 {{- end -}}
 
 {{- define "metapi.envSecretName" -}}
+{{- if .Values.existingSecret -}}
+{{- .Values.existingSecret -}}
+{{- else -}}
 {{- printf "%s-env" (include "metapi.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "metapi.labels" -}}

@@ -256,6 +256,7 @@ kubectl apply -f /opt/metapi-k3s/metapi-deploy-helper.yaml
 
 ```bash
 helm template metapi /opt/metapi-k3s/chart \
+  --set existingSecret=metapi-runtime-env \
   --set image.repository=1467078763/metapi \
   --set image.tag=latest \
   --set-string image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
@@ -271,6 +272,73 @@ helm template metapi /opt/metapi-k3s/chart \
 - `image: "1467078763/metapi:latest"`
 
 那说明这份 chart 还是 tag 语义，先不要继续配置更新中心。
+
+### 1.2 选择运行环境 Secret
+
+`deploy/k3s/chart` 支持两种方式，Secret 必须与 release 位于同一 namespace。`helm template` 只验证渲染，不会检查集群中外部 Secret 是否存在。
+
+默认 `existingSecret: ""`，chart 创建 `<release-fullname>-env`，沿用已有 `env.authToken`、`env.dbType` 和 `env.dbUrl` 配置。首次初始化可填写 `env.authToken` 或 `env.authTokenHash`；两者都有时运行时优先使用 Argon2id 哈希。哈希使用 YAML 文件填写，避免 shell 展开 `$`。
+
+```yaml
+# managed-values.yaml：包含敏感数据，保存在部署侧，不提交仓库。
+env:
+  authToken: "<initial-admin-credential>"
+  accountCredentialSecret: "<independent-stable-random-key>"
+  dbType: postgres
+  dbUrl: "postgres://<user>:<password>@<host>:5432/metapi"
+  adminSessionTtlMs: "43200000"
+  adminSessionTouchIntervalMs: "300000"
+```
+
+`env.accountCredentialSecret` 对应 `ACCOUNT_CREDENTIAL_SECRET`，应独立生成并保持稳定；它保护 Vault、账号密文和 TOTP Secret。修改后既有密文将无法解密。旧版明文 bootstrap 仍允许回退到 `AUTH_TOKEN`；已有库迁移时必须保留原加密密钥值。仅使用 `env.authTokenHash` 时必须显式设置加密密钥。会话参数分别对应 `ADMIN_SESSION_TTL_MS` 和 `ADMIN_SESSION_TOUCH_INTERVAL_MS`，运行时最低分别为 5 分钟和 1 分钟。自建 Secret 的数据变化会通过 checksum 自动触发 Pod 滚动更新；凭据、哈希、数据库 URL 和加密密钥只出现在 Secret 资源中。Helm release 本身会保存传入的 values，仍需按敏感配置管理权限。
+
+若 Secret 由管理员、External Secrets 或其他系统管理，使用顶层名称：
+
+```yaml
+# external-values.yaml
+existingSecret: metapi-runtime-env
+```
+
+此模式不创建 chart 自有 Secret，Pod 的 `envFrom.secretRef` 直接引用该名称；`env.*` 不参与渲染，也不会作为默认值补充到外部 Secret。名称须符合 Kubernetes DNS subdomain 规则（小写字母、数字、连字符和点，最多 253 字符）；空字符串表示自建模式，空格或非法类型会在渲染时拒绝。
+
+从自建模式切换时，先用相同环境值创建一个独立名称的外部 Secret，再更新 `existingSecret`。Helm upgrade 会移除旧的 chart 自有 Secret，不能只把那个旧名称填成外部引用。保留原有加密密钥值，并在部署后检查 Pod 已读到新的 Secret。
+
+外部 Secret 需要提供完整的运行环境，以下是结构示例，替换占位值并在部署侧安全保存：
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: metapi-runtime-env
+  namespace: ai
+type: Opaque
+stringData:
+  AUTH_TOKEN: "<initial-admin-credential>" # 或 AUTH_TOKEN_HASH: "<argon2id-hash>"
+  ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED: "true"
+  ACCOUNT_CREDENTIAL_SECRET: "<independent-stable-random-key>"
+  ADMIN_SESSION_TTL_MS: "43200000"
+  ADMIN_SESSION_TOUCH_INTERVAL_MS: "300000"
+  DB_TYPE: postgres
+  DB_URL: "postgres://<user>:<password>@<host>:5432/metapi"
+  DB_SSL: "false"
+  DATA_DIR: /app/data
+  PORT: "4000"
+  TZ: Asia/Shanghai
+  CHECKIN_CRON: "0 8 * * *"
+  BALANCE_REFRESH_CRON: "0 * * * *"
+  DEPLOY_HELPER_TOKEN: "<same-helper-token>"
+```
+
+示例启用了 `ADMIN_CREDENTIAL_BOOTSTRAP_REQUIRED=true`，新数据库缺少 `AUTH_TOKEN` 或有效 `AUTH_TOKEN_HASH` 时会拒绝初始化。数据库已有持久化 `admin_password_hash` 后，外部 Secret 可移除 bootstrap 凭据，但必须保留原有 `ACCOUNT_CREDENTIAL_SECRET`；自建模式仍要求至少一个 bootstrap 输入，因为离线模板无法确认数据库状态。完整认证契约见[配置说明](./configuration.md#首次启动时至少准备这些环境变量)。
+
+渲染自检可以执行：
+
+```bash
+helm template metapi deploy/k3s/chart --namespace ai -f managed-values.yaml
+helm template metapi deploy/k3s/chart --namespace ai -f external-values.yaml
+```
+
+外部模式应只有 Deployment 与 Service，没有 chart 自有 Secret，也没有 `checksum/env-secret`。Helm 无法对外部 Secret 的内容计算 checksum，外部系统轮换后需显式执行 `kubectl rollout restart deployment/<release-fullname> -n ai`，使 Pod 重新读取环境变量。hostPath 仍为节点本地存储，两种模式都保留 `replicaCount > 1` 的保护检查。
 
 ### 2. 让主 r-api 和 helper 用同一个 token
 

@@ -1,5 +1,10 @@
 replicaCount: 1
 
+# Empty: chart creates its environment Secret. Otherwise, reference a Secret in
+# the release namespace containing the complete runtime environment; env below
+# is ignored. External Secret changes require an explicit rollout.
+existingSecret: ""
+
 image:
   repository: 1467078763/metapi
   tag: latest
@@ -21,6 +26,12 @@ persistence:
 
 env:
   authToken: ""
+  authTokenHash: ""
+  # Keep this stable and independent of the administrator password. Optional
+  # only for legacy authToken fallback; required for hash-only bootstrap.
+  accountCredentialSecret: ""
+  adminSessionTtlMs: "43200000"
+  adminSessionTouchIntervalMs: "300000"
   dbType: postgres
   dbUrl: ""
   dbSsl: "false"

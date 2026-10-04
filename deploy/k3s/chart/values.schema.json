@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["existingSecret"],
+  "properties": {
+    "existingSecret": {
+      "description": "Empty for a chart-managed Secret, or a Kubernetes DNS subdomain name in the release namespace.",
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+    },
+    "env": {
+      "type": "object",
+      "properties": {
+        "authToken": { "type": "string" },
+        "authTokenHash": { "type": "string" },
+        "accountCredentialSecret": { "type": "string" },
+        "adminSessionTtlMs": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[1-9][0-9]*$" },
+            { "type": "integer", "minimum": 1 }
+          ]
+        },
+        "adminSessionTouchIntervalMs": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[1-9][0-9]*$" },
+            { "type": "integer", "minimum": 1 }
+          ]
+        }
+      }
+    }
+  }
+}
