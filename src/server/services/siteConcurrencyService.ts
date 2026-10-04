@@ -15,7 +15,18 @@ export class SiteConcurrencyError extends Error {
 }
 
 export function isSiteConcurrencyError(error: unknown): error is SiteConcurrencyError {
-  return error instanceof SiteConcurrencyError;
+  return getSiteConcurrencyError(error) !== null;
+}
+
+export function getSiteConcurrencyError(error: unknown): SiteConcurrencyError | null {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    if (current instanceof SiteConcurrencyError) return current;
+    seen.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 export class SiteConcurrencyLease extends DatabaseSlotLease {

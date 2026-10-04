@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export function createDownstreamAbortScope(request: IncomingMessage, response: ServerResponse) {
   const controller = new AbortController();
-  const abort = () => controller.abort(new Error('Downstream client disconnected'));
+  const abort = () => controller.abort(new DOMException('Downstream client disconnected', 'AbortError'));
   const onClose = () => { if (!response.writableEnded) abort(); };
   request.once('aborted', abort);
   response.once('close', onClose);

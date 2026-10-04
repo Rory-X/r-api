@@ -1,5 +1,9 @@
+import { getSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { getProxyRequestSignal } from '../../proxy-core/requestAbortContext.js';
+import { siteCapacityErrorPayload } from '../../proxy-core/siteCapacity.js';
 ﻿import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { fetch } from 'undici';
+import { fetchSiteResponse } from '../../proxy-core/siteCapacity.js';
+import { readRuntimeResponseText, runtimeReadErrorFallback } from '../../proxy-core/executors/types.js';
 import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -83,7 +87,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
           const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/embeddings');
           const response = await fetchWithObservedFirstByte(
-            async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
+            async (signal) => fetchSiteResponse(selected.site, targetUrl, withSiteRecordProxyRequestInit(selected.site, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -101,8 +105,9 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
           const status = response.status;
           let responseText = '';
           try {
-            responseText = await response.text();
+            responseText = await readRuntimeResponseText(response);
           } catch (error) {
+            runtimeReadErrorFallback(error, '');
             if (!response.ok) {
               throw new SiteApiEndpointRequestError('unknown error', {
                 status,
@@ -171,6 +176,12 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data);
       } catch (err: any) {
+        if (getProxyRequestSignal()?.aborted) return;
+        const capacityError = getSiteConcurrencyError(err);
+        if (capacityError) {
+          if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+          return reply.code(capacityError.status).send(siteCapacityErrorPayload(capacityError));
+        }
         const status = err instanceof SiteApiEndpointRequestError ? (err.status || 0) : 0;
         const errorText = err?.message || 'network failure';
         const firstByteLatencyMs = err instanceof SiteApiEndpointRequestError ? err.firstByteLatencyMs : null;

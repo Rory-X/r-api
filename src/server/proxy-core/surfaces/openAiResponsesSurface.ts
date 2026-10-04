@@ -1,3 +1,5 @@
+import { getSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { getProxyRequestSignal } from '../requestAbortContext.js';
 import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../../config.js';
@@ -787,7 +789,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               }
               ctx.request = recoveredRequest;
               ctx.response = recoveredResponse;
-              ctx.rawErrText = await readRuntimeResponseText(recoveredResponse).catch(() => 'unknown error');
+              ctx.rawErrText = await readRuntimeResponseText(recoveredResponse, 'unknown error');
             }
           }
           const compactFallbackEnabled = config.responsesCompactFallbackToResponsesEnabled;
@@ -839,7 +841,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             }
             ctx.request = recoveredRequest;
             ctx.response = recoveredResponse;
-            ctx.rawErrText = await readRuntimeResponseText(recoveredResponse).catch(() => 'unknown error');
+            ctx.rawErrText = await readRuntimeResponseText(recoveredResponse, 'unknown error');
           }
           return endpointStrategy.tryRecover(ctx);
         };
@@ -1550,6 +1552,15 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	        });
 	        return reply.send(downstreamData);
 	      } catch (err: any) {
+      const capacityError = getSiteConcurrencyError(err);
+      if (capacityError) {
+        const failure = await failureToolkit.handleLocalCapacityFailure({ selected, requestedModel, error: capacityError, latencyMs: Date.now() - startTime, retryCount });
+        await finalizeDebugFailure(failure.status, failure.payload);
+        if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+        return reply.code(failure.status).send(failure.payload);
+      }
+      if (getProxyRequestSignal()?.aborted) { await attemptLedger?.finishRequest('cancelled'); return; }
+
 	        clearSurfaceStickyChannel({
 	          stickySessionKey,
 	          selected,

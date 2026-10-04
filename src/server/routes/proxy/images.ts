@@ -1,5 +1,9 @@
+import { getSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { getProxyRequestSignal } from '../../proxy-core/requestAbortContext.js';
+import { siteCapacityErrorPayload } from '../../proxy-core/siteCapacity.js';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { fetch } from 'undici';
+import { fetchSiteResponse } from '../../proxy-core/siteCapacity.js';
+import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -84,7 +88,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/generations');
           const response = await fetchWithObservedFirstByte(
-            async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
+            async (signal) => fetchSiteResponse(selected.site, targetUrl, withSiteRecordProxyRequestInit(selected.site, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -99,7 +103,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
+          const responseText = await readRuntimeResponseText(response);
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -197,6 +201,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
+        if (getProxyRequestSignal()?.aborted) return;
+        const capacityError = getSiteConcurrencyError(err);
+        if (capacityError) {
+          if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+          return reply.code(capacityError.status).send(siteCapacityErrorPayload(capacityError));
+        }
         const status = err instanceof SiteApiEndpointRequestError ? (err.status || 0) : 0;
         const errorText = err?.message || 'network failure';
         const firstByteLatencyMs = err instanceof SiteApiEndpointRequestError ? err.firstByteLatencyMs : null;
@@ -334,7 +344,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
               }),
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig));
           const response = await fetchWithObservedFirstByte(
-            async (signal) => fetch(targetUrl, {
+            async (signal) => fetchSiteResponse(selected.site, targetUrl, {
               ...requestInit,
               signal,
             }),
@@ -344,7 +354,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
+          const responseText = await readRuntimeResponseText(response);
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -442,6 +452,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
+        if (getProxyRequestSignal()?.aborted) return;
+        const capacityError = getSiteConcurrencyError(err);
+        if (capacityError) {
+          if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+          return reply.code(capacityError.status).send(siteCapacityErrorPayload(capacityError));
+        }
         const status = err instanceof SiteApiEndpointRequestError ? (err.status || 0) : 0;
         const errorText = err?.message || 'network failure';
         const firstByteLatencyMs = err instanceof SiteApiEndpointRequestError ? err.firstByteLatencyMs : null;

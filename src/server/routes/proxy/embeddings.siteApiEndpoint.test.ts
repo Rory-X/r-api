@@ -25,7 +25,8 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../proxy-core/firstByteTimeout.js', () => ({
+vi.mock('../../proxy-core/firstByteTimeout.js', async () => ({
+  ...await vi.importActual<typeof import('../../proxy-core/firstByteTimeout.js')>('../../proxy-core/firstByteTimeout.js'),
   fetchWithObservedFirstByte: (...args: unknown[]) => fetchWithObservedFirstByteMock(...args),
   getObservedResponseMeta: (...args: unknown[]) => getObservedResponseMetaMock(...args),
 }));
@@ -204,4 +205,22 @@ describe('/v1/embeddings usage source logging', () => {
       errorMessage: expect.stringContaining('[usage:self-log]'),
     }));
   });
+  it('returns local capacity failure without dispatch, address rotation or channel health penalties', async () => {
+    const site = await db.insert(schema.sites).values({ name: 'capacity', url: 'https://example.com', platform: 'openai', maxConcurrency: 1 }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({ siteId: site.id, url: 'https://api.example.com' }).returning().get();
+    selectChannelMock.mockResolvedValue({ channel: { id: 11, routeId: 22 }, site, account: { id: 1 }, tokenValue: 'key', actualModel: 'embed' });
+    const { acquireSiteConcurrencyLease } = await import('../../services/siteConcurrencyService.js');
+    const lease = await acquireSiteConcurrencyLease(site.id);
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v1/embeddings', payload: { model: 'embed', input: 'hello' } });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({ error: { code: 'site_capacity_unavailable' } });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(recordSuccessMock).not.toHaveBeenCalled();
+      const { eq } = await import('drizzle-orm');
+      expect(await db.select().from(schema.siteApiEndpoints).where(eq(schema.siteApiEndpoints.id, endpoint.id)).get()).toMatchObject({ cooldownUntil: null, lastFailedAt: null });
+    } finally { await lease?.release(); }
+  });
+
 });

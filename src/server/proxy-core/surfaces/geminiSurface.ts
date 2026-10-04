@@ -1,6 +1,9 @@
+import { getSiteConcurrencyError, isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { getProxyRequestSignal } from '../requestAbortContext.js';
+import { siteCapacityErrorPayload } from '../siteCapacity.js';
+import { fetchSiteResponse } from '../siteCapacity.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TextDecoder } from 'node:util';
-import { fetch } from 'undici';
 import { and, eq } from 'drizzle-orm';
 import { config } from '../../config.js';
 import { db, schema } from '../../db/index.js';
@@ -455,7 +458,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
 
         const targetUrl = geminiGenerateContentTransformer.resolveModelsUrl(selected.site.url, apiVersion, selected.tokenValue);
         const upstreamPath = `/${apiVersion}/models`;
-        const upstream = await fetch(
+        const upstream = await fetchSiteResponse(selected.site,
           targetUrl,
           { method: 'GET' },
         );
@@ -506,6 +509,15 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
         }
       } catch (error) {
+        const capacityError = getSiteConcurrencyError(error);
+        if (capacityError) {
+          const payload = siteCapacityErrorPayload(capacityError);
+          await finalizeDebugFailure(capacityError.status, payload);
+          if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+          return reply.code(capacityError.status).send(payload);
+        }
+        if (getProxyRequestSignal()?.aborted) return;
+
         await tokenRouter.recordFailure?.(selected.channel.id, {
           errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
         });
@@ -800,6 +812,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               dispatch: (signal?: AbortSignal) => (
                 isInternalGemini
                   ? dispatchRuntimeRequest({
+                    site: selected.site,
                     siteUrl: selected.site.url,
                     targetUrl,
                     signal,
@@ -822,7 +835,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                       body: JSON.stringify(requestForFetch.body),
                     }, channelProxyUrl),
                   })
-                  : fetch(targetUrl, {
+                  : fetchSiteResponse(selected.site, targetUrl, {
                     method: 'POST',
                     headers: requestHeaders,
                     body: JSON.stringify(requestBody),
@@ -882,7 +895,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               }
               return response;
             } catch (error) {
-              if (identity) {
+              if (identity && !isSiteConcurrencyError(error)) {
                 directOutcomeUnknown = true;
                 attemptOutcomeUnknown = true;
                 directAttemptCommitState = 'sent_unknown';
@@ -924,12 +937,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
               };
               oauth = getOauthInfoFromAccount(selected.account);
+              await readRuntimeResponseText(upstream);
               directDispatchState = buildDirectDispatchState();
               upstream = await dispatchWithObservedFirstByte();
               firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
               contentType = upstream.headers.get('content-type') || 'application/json';
               recoverApplied = true;
-            } catch {
+            } catch (error) {
+              if (isSiteConcurrencyError(error) || getProxyRequestSignal()?.aborted) throw error;
               // Preserve the original 401 response when refresh fails.
             }
           }
@@ -1179,6 +1194,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               );
               return;
             } catch (error) {
+              if (isSiteConcurrencyError(error) || getProxyRequestSignal()?.aborted) throw error;
               const latency = Date.now() - startTime;
               const errorMessage = error instanceof Error
                 ? error.message
@@ -1486,6 +1502,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           signal?: AbortSignal,
         ) => (
           dispatchRuntimeRequest({
+                    site: selected.site,
             siteUrl: selected.site.url,
             targetUrl,
             signal,
@@ -1696,6 +1713,15 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         }
         return reply.code(upstream.status).send(downstreamPayload);
       } catch (error) {
+        const capacityError = getSiteConcurrencyError(error);
+        if (capacityError) {
+          const payload = siteCapacityErrorPayload(capacityError);
+          await finalizeDebugFailure(capacityError.status, payload);
+          if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+          return reply.code(capacityError.status).send(payload);
+        }
+        if (getProxyRequestSignal()?.aborted) return;
+
         lastStatus = 502;
         lastContentType = 'application/json';
         lastText = JSON.stringify({

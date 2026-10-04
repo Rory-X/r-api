@@ -12,10 +12,12 @@ import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import {
   Response,
-  fetch,
   type RequestInit as UndiciRequestInit,
   type Response as UndiciResponse,
 } from 'undici';
+import { fetchSiteResponse, type SiteCapacityConfigLike } from '../siteCapacity.js';
+import { combineProxySignals, getProxyRequestSignal } from '../requestAbortContext.js';
+import { isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 
 export type ProxyRuntimeRequest = {
   endpoint: 'chat' | 'messages' | 'responses';
@@ -32,6 +34,7 @@ export type ProxyRuntimeRequest = {
 };
 
 export type RuntimeDispatchInput = {
+  site?: SiteCapacityConfigLike;
   siteUrl: string;
   request: ProxyRuntimeRequest;
   targetUrl?: string;
@@ -73,10 +76,8 @@ export async function performFetch(
   requestUrl = input.targetUrl || buildUpstreamUrl(input.siteUrl, request.path),
 ): Promise<RuntimeResponse> {
   const init = await input.buildInit(requestUrl, request);
-  const combinedSignal = input.signal && init.signal
-    ? AbortSignal.any([input.signal, init.signal as AbortSignal])
-    : (input.signal ?? init.signal);
-  return fetch(requestUrl, {
+  const combinedSignal = combineProxySignals(input.signal, init.signal);
+  return fetchSiteResponse(input.site, requestUrl, {
     ...init,
     signal: combinedSignal,
   });
@@ -168,13 +169,14 @@ function decodeRuntimeResponseStream(
 
 export async function readRuntimeResponseText(
   response: RuntimeResponse,
+  fallback = '',
 ): Promise<string> {
   const contentEncoding = typeof response.headers?.get === 'function'
     ? response.headers.get('content-encoding')
     : null;
   if (!hasZstdContentEncoding(contentEncoding)) {
     return typeof response.text === 'function'
-      ? response.text().catch(() => '')
+      ? response.text().catch((error) => runtimeReadErrorFallback(error, fallback))
       : '';
   }
 
@@ -184,6 +186,11 @@ export async function readRuntimeResponseText(
   } catch {
     return looksLikeZstdFrame(rawBuffer) ? '' : rawBuffer.toString('utf8');
   }
+}
+
+export function runtimeReadErrorFallback(error: unknown, fallback: string): string {
+  if (isSiteConcurrencyError(error) || getProxyRequestSignal()?.aborted || (error as { name?: string } | null)?.name === 'AbortError') throw error;
+  return fallback;
 }
 
 function asNodeReadableStream(

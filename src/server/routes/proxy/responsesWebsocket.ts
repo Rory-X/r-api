@@ -1,3 +1,5 @@
+import { getSiteConcurrencyError, isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { siteCapacityErrorPayload } from '../../proxy-core/siteCapacity.js';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IncomingMessage } from 'node:http';
@@ -605,6 +607,7 @@ async function handleResponsesWebsocketConnection(
     || headerValueToTrimmedString(request.headers['conversation-id'])
     || headerValueToTrimmedString(request.headers['conversation_id'])
     || randomUUID();
+  const connectionAbort = new AbortController();
   const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
@@ -621,6 +624,7 @@ async function handleResponsesWebsocketConnection(
   let messageQueue = Promise.resolve();
 
   socket.once('close', () => {
+    connectionAbort.abort(new DOMException('Downstream websocket disconnected', 'AbortError'));
     void activeTurnLease?.release();
     activeTurnLease = null;
     const sessionKeys = runtimeSessionKeys.size > 0
@@ -639,6 +643,7 @@ async function handleResponsesWebsocketConnection(
     messageQueue = messageQueue
       .catch(() => undefined)
       .then(async () => {
+        if (connectionAbort.signal.aborted) return;
         let turnLease: DownstreamConcurrencyLease | null = null;
         try {
           const parsed = parseJsonObject(raw);
@@ -901,7 +906,7 @@ async function handleResponsesWebsocketConnection(
             let websocketRequestFinished = false;
             let websocketSawUnknownAttempt = false;
             let websocketSawKnownFailure = false;
-            const finishWebsocketRequest = async (status: 'succeeded' | 'failed' | 'unknown') => {
+            const finishWebsocketRequest = async (status: 'succeeded' | 'failed' | 'unknown' | 'cancelled') => {
               if (websocketRequestFinished) return;
               websocketRequestFinished = true;
               await websocketAttemptLedger?.finishRequest(status);
@@ -999,10 +1004,12 @@ async function handleResponsesWebsocketConnection(
                       requestUrl,
                       headers: prepared.headers,
                       site: codexWebsocketChannel.site,
+                      signal: connectionAbort.signal,
                       body: prepared.body,
                       onAttemptEvent: observeWebsocketAttempt,
                     });
                   } catch (error) {
+                    if (isSiteConcurrencyError(error) || connectionAbort.signal.aborted) throw error;
                     const runtimeError = error instanceof CodexWebsocketRuntimeError
                       ? error
                       : new CodexWebsocketRuntimeError('upstream websocket request failed');
@@ -1028,6 +1035,13 @@ async function handleResponsesWebsocketConnection(
                     : 'failed',
               );
             } catch (error) {
+              if (connectionAbort.signal.aborted) { await finishWebsocketRequest('cancelled'); return; }
+              const capacityError = getSiteConcurrencyError(error);
+              if (capacityError) {
+                await finishWebsocketRequest('failed');
+                writeResponsesWebsocketError(socket, capacityError.status, capacityError.message, siteCapacityErrorPayload(capacityError));
+                return;
+              }
               const runtimeError = unwrapCodexWebsocketRuntimeError(error);
               if (!websocketRequestFinished) {
                 await finishWebsocketRequest(

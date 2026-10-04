@@ -1,3 +1,5 @@
+import { getSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { getProxyRequestSignal } from '../requestAbortContext.js';
 import { resolveProviderProfile } from '../providers/registry.js';
 import { createDownstreamAbortScope, withAbortableStreamReader } from '../downstreamAbort.js';
 import { canRetryLocally, classifyRetryErrorScope, type AttemptCommitState } from '../../services/proxyRetryContract.js';
@@ -1122,6 +1124,15 @@ async function runChatSurfaceRequest(request: FastifyRequest, reply: FastifyRepl
 
       return reply.send(downstreamResponse);
     } catch (err: any) {
+      const capacityError = getSiteConcurrencyError(err);
+      if (capacityError) {
+        const failure = await failureToolkit.handleLocalCapacityFailure({ selected, requestedModel, error: capacityError, latencyMs: Date.now() - startTime, retryCount });
+        await finalizeDebugFailure(failure.status, failure.payload);
+        if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+        return reply.code(failure.status).send(failure.payload);
+      }
+      if (getProxyRequestSignal()?.aborted) { await attemptLedger?.finishRequest('cancelled'); return; }
+
       clearSurfaceStickyChannel({ stickySessionKey, selected });
       if (clientSignal.aborted) {
         await settlePendingEndpointSuccessHooks();
@@ -1589,6 +1600,15 @@ export async function handleClaudeCountTokensSurfaceRequest(
       );
       return reply.code(upstream.status).type(contentType).send(payload);
     } catch (error: any) {
+      const capacityError = getSiteConcurrencyError(error);
+      if (capacityError) {
+        const failure = await failureToolkit.handleLocalCapacityFailure({ selected, requestedModel, error: capacityError, latencyMs: Date.now() - startTime, retryCount });
+        await finalizeDebugFailure(failure.status, failure.payload);
+        if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+        return reply.code(failure.status).send(failure.payload);
+      }
+      if (getProxyRequestSignal()?.aborted) return;
+
       clearSurfaceStickyChannel({
         stickySessionKey,
         selected,

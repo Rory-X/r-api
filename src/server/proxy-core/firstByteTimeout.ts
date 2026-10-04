@@ -1,4 +1,16 @@
 import { Headers, Response } from 'undici';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+type FirstByteObservation = { pause(): void; resume(): void };
+const observationScope = new AsyncLocalStorage<FirstByteObservation>();
+
+/** Local admission waits are not time spent waiting for an upstream byte. */
+export async function withoutFirstByteObservation<T>(operation: () => Promise<T>): Promise<T> {
+  const observation = observationScope.getStore();
+  observation?.pause();
+  try { return await operation(); }
+  finally { observation?.resume(); }
+}
 
 export type ObservedResponseMeta = {
   dispatchStartedAtMs: number;
@@ -31,6 +43,7 @@ function buildObservedTimeoutResponse(
   input: {
     dispatchStartedAtMs: number;
     responseHeadersAtMs?: number | null;
+    excludedWaitMs?: number;
   },
 ): Response {
   const responseHeadersAtMs = input.responseHeadersAtMs ?? null;
@@ -43,7 +56,7 @@ function buildObservedTimeoutResponse(
     firstByteAtMs: null,
     responseHeaderLatencyMs: responseHeadersAtMs === null
       ? null
-      : Math.max(0, responseHeadersAtMs - input.dispatchStartedAtMs),
+      : Math.max(0, responseHeadersAtMs - input.dispatchStartedAtMs - (input.excludedWaitMs ?? 0)),
     firstByteLatencyMs: null,
     timedOutBeforeFirstByte: true,
   });
@@ -114,7 +127,7 @@ function buildReplayResponse<T extends Response>(
       }
       releaseReader();
     },
-  });
+  }, { highWaterMark: 0 });
 
   return new Response(stream, {
     status: response.status,
@@ -135,24 +148,53 @@ export async function fetchWithObservedFirstByte<T extends Response>(
   const controller = timeoutMs > 0 ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let timedOutBeforeFirstByte = false;
+  let excludedWaitMs = 0;
+  let pauseDepth = 0;
+  let pausedAtMs = 0;
+  let armedAtMs = Date.now();
+  let remainingMs = timeoutMs;
+  let finished = false;
   const timeoutSentinel = Symbol('first-byte-timeout');
+  let resolveTimeout: (value: typeof timeoutSentinel) => void = () => {};
+  const armTimer = () => {
+    if (!timeoutMs || finished || timedOutBeforeFirstByte) return;
+    armedAtMs = Date.now();
+    timer = setTimeout(() => {
+      timedOutBeforeFirstByte = true;
+      controller?.abort(new Error(buildFirstByteTimeoutMessage(timeoutMs)));
+      resolveTimeout(timeoutSentinel);
+    }, remainingMs);
+  };
   const timeoutPromise = timeoutMs > 0
     ? new Promise<typeof timeoutSentinel>((resolve) => {
-      timer = setTimeout(() => {
-        timedOutBeforeFirstByte = true;
-        controller?.abort(new Error(buildFirstByteTimeoutMessage(timeoutMs)));
-        resolve(timeoutSentinel);
-      }, timeoutMs);
+      resolveTimeout = resolve;
+      armTimer();
     })
     : null;
+  const observation: FirstByteObservation = {
+    pause() {
+      if (finished || pauseDepth++ > 0) return;
+      pausedAtMs = Date.now();
+      remainingMs = Math.max(0, remainingMs - (pausedAtMs - armedAtMs));
+      clearTimer(timer);
+      timer = null;
+    },
+    resume() {
+      if (finished || --pauseDepth > 0) return;
+      excludedWaitMs += Date.now() - pausedAtMs;
+      armTimer();
+    },
+  };
 
   try {
+    const dispatchPromise = observationScope.run(observation, () => dispatch(controller?.signal));
     const dispatched = timeoutPromise
-      ? await Promise.race([dispatch(controller?.signal), timeoutPromise])
-      : await dispatch(controller?.signal);
+      ? await Promise.race([dispatchPromise, timeoutPromise])
+      : await dispatchPromise;
     if (dispatched === timeoutSentinel) {
       return buildObservedTimeoutResponse(timeoutMs, {
         dispatchStartedAtMs: startedAtMs,
+        excludedWaitMs,
       }) as T;
     }
     const response = dispatched as T;
@@ -163,8 +205,8 @@ export async function fetchWithObservedFirstByte<T extends Response>(
         dispatchStartedAtMs: startedAtMs,
         responseHeadersAtMs,
         firstByteAtMs: responseHeadersAtMs,
-        responseHeaderLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs),
-        firstByteLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs),
+        responseHeaderLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs - excludedWaitMs),
+        firstByteLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs - excludedWaitMs),
         timedOutBeforeFirstByte: false,
       });
     }
@@ -178,6 +220,7 @@ export async function fetchWithObservedFirstByte<T extends Response>(
       return buildObservedTimeoutResponse(timeoutMs, {
         dispatchStartedAtMs: startedAtMs,
         responseHeadersAtMs,
+        excludedWaitMs,
       }) as T;
     }
     clearTimer(timer);
@@ -186,8 +229,8 @@ export async function fetchWithObservedFirstByte<T extends Response>(
       dispatchStartedAtMs: startedAtMs,
       responseHeadersAtMs,
       firstByteAtMs,
-      responseHeaderLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs),
-      firstByteLatencyMs: Math.max(0, firstByteAtMs - startedAtMs),
+      responseHeaderLatencyMs: Math.max(0, responseHeadersAtMs - startedAtMs - excludedWaitMs),
+      firstByteLatencyMs: Math.max(0, firstByteAtMs - startedAtMs - excludedWaitMs),
       timedOutBeforeFirstByte: false,
     });
   } catch (error) {
@@ -195,10 +238,12 @@ export async function fetchWithObservedFirstByte<T extends Response>(
     if (timedOutBeforeFirstByte && timeoutMs > 0) {
       return buildObservedTimeoutResponse(timeoutMs, {
         dispatchStartedAtMs: startedAtMs,
+        excludedWaitMs,
       }) as T;
     }
     throw error;
   } finally {
+    finished = true;
     clearTimer(timer);
   }
 }

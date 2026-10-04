@@ -1,6 +1,7 @@
 import { resolveRuntimeRequestUrl } from '../providers/requestUrl.js';
 import { fetch } from 'undici';
 import { readRuntimeResponseText } from '../executors/types.js';
+import { isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 import { fetchWithObservedFirstByte, isObservedFirstByteTimeoutResponse } from '../firstByteTimeout.js';
 import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import {
@@ -240,7 +241,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         },
       );
     } catch (error) {
-      await emitCommitState('transport_unknown');
+      if (!isSiteConcurrencyError(error)) await emitCommitState('transport_unknown');
       throw error;
     }
 
@@ -272,7 +273,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
 
     await emitCommitState('request_sent', response);
 
-    let rawErrText = await readRuntimeResponseText(response).catch(() => 'unknown error');
+    let rawErrText = await readRuntimeResponseText(response, 'unknown error');
     const baseContext: EndpointAttemptContext = {
       endpointIndex,
       endpointCount,

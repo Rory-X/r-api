@@ -2,6 +2,8 @@ import type { IncomingMessage } from 'node:http';
 import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
 import { Headers } from 'undici';
+import { withSiteCapacityOperation } from '../siteCapacity.js';
+import { combineProxySignals } from '../requestAbortContext.js';
 import { mergeSiteRequestHeaders, readSiteCustomHeaders } from '../../services/siteCustomHeaders.js';
 import {
   extractResponsesTerminalResponseId,
@@ -228,6 +230,7 @@ async function ensureSessionSocket(
   session: CodexWebsocketSession,
   input: CodexWebsocketRuntimeSendInput,
 ): Promise<{ socket: WebSocket; reusedSession: boolean }> {
+  input.signal?.throwIfAborted();
   const requestUrl = toCodexWebsocketUrl(input.requestUrl);
   // A handshake is immutable: reconnect after a site header edit, keeping credentials out of session metadata.
   const siteHeadersFingerprint = createHash('sha256').update(JSON.stringify({
@@ -252,23 +255,23 @@ async function ensureSessionSocket(
     clearSessionSocket(session, existing);
   }
 
+  input.signal?.throwIfAborted();
+
   const nextSocket = new WebSocket(requestUrl, {
     headers: Object.fromEntries(new Headers(mergeSiteRequestHeaders(
       input.site,
       buildCodexWebsocketHandshakeHeaders(input.headers),
     )).entries()),
   });
-  await waitForSocketOpen(nextSocket);
   session.socket = nextSocket;
+  // Keep an error owner even when a disconnect interrupts the handshake and
+  // waitForSocketOpen removes its temporary listeners.
+  nextSocket.on('close', () => clearSessionSocket(session, nextSocket));
+  nextSocket.on('error', () => clearSessionSocket(session, nextSocket));
+  await waitForSocketOpen(nextSocket);
+  input.signal?.throwIfAborted();
   session.socketUrl = requestUrl;
   session.socketSiteHeadersFingerprint = siteHeadersFingerprint;
-
-  nextSocket.on('close', () => {
-    clearSessionSocket(session, nextSocket);
-  });
-  nextSocket.on('error', () => {
-    clearSessionSocket(session, nextSocket);
-  });
 
   return {
     socket: nextSocket,
@@ -284,6 +287,7 @@ async function sendSessionRequestAttempt(
   attemptIndex: number,
 ): Promise<CodexWebsocketRuntimeResult> {
   const { socket, reusedSession } = await ensureSessionSocket(session, input);
+  input.signal?.throwIfAborted();
   const events: Array<Record<string, unknown>> = [];
   const requestPath = (() => {
     try {
@@ -448,6 +452,8 @@ async function sendSessionRequestAttempt(
       responseStarted: false,
     }).then(() => {
       try {
+        input.signal?.throwIfAborted();
+        if (settled) return;
         socket.send(JSON.stringify(buildCodexWebsocketRequestBody(input.body)), (error?: Error) => {
           if (!error) return;
           clearSessionSocket(session, socket);
@@ -484,6 +490,7 @@ async function sendSessionRequest(
         body: currentBody,
       }, attemptIndex++);
     } catch (error) {
+      input.signal?.throwIfAborted();
       if (
         previousResponseRecoveryTried
         || !(error instanceof CodexWebsocketRuntimeError)
@@ -520,16 +527,36 @@ export function createCodexWebsocketRuntime(input?: {
       }
 
       const session = sessionStore.getOrCreate(sessionId);
+      session.controller ??= new AbortController();
+      const signal = combineProxySignals(payload.signal, session.controller.signal)!;
+      signal.throwIfAborted();
       const run = session.queue
         .catch(() => undefined)
-        .then(() => sendSessionRequest(session, payload));
+        .then(() => withSiteCapacityOperation(payload.site, async (activeSignal) => {
+          activeSignal?.throwIfAborted();
+          const onAbort = () => { session.socket?.terminate(); };
+          activeSignal?.addEventListener('abort', onAbort, { once: true });
+          try { return await sendSessionRequest(session, { ...payload, signal: activeSignal }); }
+          finally { activeSignal?.removeEventListener('abort', onAbort); }
+        }, signal));
       session.queue = run.then(() => undefined, () => undefined);
-      return run;
+      // A queued caller can leave immediately without consuming capacity or
+      // waiting for another generation. Its queued task checks the same signal.
+      return new Promise((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+        void run.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+      });
     },
 
     async closeSession(sessionId: string): Promise<void> {
       const session = sessionStore.take(sessionId);
       if (!session) return;
+      session.closed = true;
+      session.controller?.abort(new Error('Downstream websocket disconnected'));
+      // Stop active/connecting sockets before waiting for the generation queue.
+      session.socket?.terminate();
       await session.queue.catch(() => undefined);
       await closeSocket(session.socket);
       session.socket = null;

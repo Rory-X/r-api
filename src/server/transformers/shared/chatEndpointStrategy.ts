@@ -78,7 +78,7 @@ export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInpu
 
         ctx.request = normalizedClaudeRequest;
         ctx.response = normalizedResponse;
-        ctx.rawErrText = await normalizedResponse.text().catch(() => 'unknown error');
+        ctx.rawErrText = await normalizedResponse.text();
       }
 
       if (!isUnsupportedMediaTypeError(ctx.response.status, ctx.rawErrText)) {
@@ -114,7 +114,7 @@ export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInpu
 
       ctx.request = minimalRequest;
       ctx.response = minimalResponse;
-      ctx.rawErrText = await minimalResponse.text().catch(() => 'unknown error');
+      ctx.rawErrText = await minimalResponse.text();
       return null;
     },
     shouldDowngrade(ctx: EndpointAttemptContext): boolean {

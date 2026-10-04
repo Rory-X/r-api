@@ -1,6 +1,10 @@
+import { isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import type { SiteProxyConfigLike } from '../../services/siteProxy.js';
+import type { SiteCapacityConfigLike } from '../siteCapacity.js';
+import { siteCapacityErrorPayload } from '../siteCapacity.js';
+import type { SiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 import {
   tokenRouter,
   type TokenRouterCredentialIdentity,
@@ -289,7 +293,7 @@ export async function writeSurfaceProxyLog(input: {
 }
 
 export function createSurfaceDispatchRequest(input: {
-  site: SiteProxyConfigLike & { url: string };
+  site: SiteProxyConfigLike & SiteCapacityConfigLike & { url: string };
   accountExtraConfig?: string | null;
   siteUrl?: string;
   signal?: AbortSignal;
@@ -301,6 +305,7 @@ export function createSurfaceDispatchRequest(input: {
     signal?: AbortSignal,
   ) => (
     dispatchRuntimeRequest({
+      site: input.site,
       siteUrl: input.siteUrl ?? input.site.url,
       targetUrl,
       signal: input.signal && signal ? AbortSignal.any([input.signal, signal]) : (input.signal ?? signal),
@@ -357,10 +362,11 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
     input.ctx.request = refreshedRequest;
     input.ctx.response = refreshedResponse;
     if (input.captureFailureBody !== false) {
-      const failureBody = await readRuntimeResponseText(refreshedResponse).catch(() => '');
+      const failureBody = await readRuntimeResponseText(refreshedResponse);
       input.ctx.rawErrText = failureBody.trim() || 'unknown error';
     }
-  } catch {
+  } catch (error) {
+    if (isSiteConcurrencyError(error)) throw error;
     return null;
   }
 
@@ -615,6 +621,17 @@ export function createSurfaceFailureToolkit(input: {
 
   return {
     log,
+    async handleLocalCapacityFailure(args: {
+      selected: SurfaceSelectedChannel;
+      requestedModel: string;
+      error: SiteConcurrencyError;
+      isStream?: boolean;
+      latencyMs: number;
+      retryCount: number;
+    }) {
+      await log({ selected: args.selected, modelRequested: args.requestedModel, status: 'failed', httpStatus: args.error.status, errorMessage: args.error.message, isStream: args.isStream, latencyMs: args.latencyMs, retryCount: args.retryCount });
+      return { status: args.error.status, payload: siteCapacityErrorPayload(args.error) };
+    },
     async handleUpstreamFailure(args: {
       selected: SurfaceSelectedChannel;
       requestedModel: string;

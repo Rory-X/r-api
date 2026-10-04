@@ -1,5 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { isSiteConcurrencyError } from './siteConcurrencyService.js';
 import { classifyProxyHealthDomain } from './proxyHealthDomain.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 
@@ -309,7 +310,7 @@ export async function runWithSiteApiEndpointPool<T>(
       }
       return result;
     } catch (error) {
-      if (options?.signal?.aborted) throw error;
+      if (options?.signal?.aborted || isSiteConcurrencyError(error) || (error as { name?: string } | null)?.name === 'AbortError') throw error;
       lastError = error;
       attachSiteApiEndpointId(error, target.endpointId);
       if (!target.endpointId) {

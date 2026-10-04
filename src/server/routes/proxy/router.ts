@@ -10,8 +10,15 @@ import { searchProxyRoute } from './search.js';
 import { geminiProxyRoute } from './gemini.js';
 import { videosProxyRoute } from './videos.js';
 import { filesProxyRoute } from './files.js';
+import { withProxyRequestAbortScope } from '../../proxy-core/requestAbortContext.js';
 
 export async function proxyRoutes(app: FastifyInstance) {
+  app.addHook('onRoute', (route) => {
+    const handler = route.handler;
+    route.handler = function (request, reply) {
+      return withProxyRequestAbortScope(request.raw, reply.raw, async () => handler.call(this, request, reply));
+    };
+  });
   // Auth middleware for all /v1 routes
   app.addHook('onRequest', async (request, reply) => {
     await proxyAuthMiddleware(request, reply);

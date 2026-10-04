@@ -1,5 +1,9 @@
+import { getSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
+import { getProxyRequestSignal } from '../../proxy-core/requestAbortContext.js';
+import { siteCapacityErrorPayload } from '../../proxy-core/siteCapacity.js';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { fetch } from 'undici';
+import { fetchSiteResponse } from '../../proxy-core/siteCapacity.js';
+import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
@@ -115,8 +119,8 @@ export async function videosProxyRoute(app: FastifyInstance) {
                 model: upstreamModel,
               }),
             }, accountProxy);
-          const response = await fetch(targetUrl, requestInit);
-          const responseText = await response.text();
+          const response = await fetchSiteResponse(selected.site, targetUrl, requestInit);
+          const responseText = await readRuntimeResponseText(response);
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -169,6 +173,12 @@ export async function videosProxyRoute(app: FastifyInstance) {
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
+        if (getProxyRequestSignal()?.aborted) return;
+        const capacityError = getSiteConcurrencyError(error);
+        if (capacityError) {
+          if (reply.raw.headersSent) { if (!reply.raw.writableEnded) reply.raw.end(); return; }
+          return reply.code(capacityError.status).send(siteCapacityErrorPayload(capacityError));
+        }
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
         const errorText = error?.message || 'network failure';
         await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
@@ -221,7 +231,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    let upstream: Awaited<ReturnType<typeof fetch>>;
+    let upstream: Awaited<ReturnType<typeof fetchSiteResponse>>;
     try {
       ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET'));
     } catch (error) {
@@ -230,7 +240,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       }
       throw error;
     }
-    const text = await upstream.text();
+    const text = await readRuntimeResponseText(upstream);
     try {
       const data = JSON.parse(text);
       await refreshProxyVideoTaskSnapshot(mapping.publicId, {
@@ -254,7 +264,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    let upstream: Awaited<ReturnType<typeof fetch>>;
+    let upstream: Awaited<ReturnType<typeof fetchSiteResponse>>;
     try {
       ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE'));
     } catch (error) {
@@ -268,7 +278,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       return reply.code(upstream.status).send();
     }
 
-    const text = await upstream.text();
+    const text = await readRuntimeResponseText(upstream);
     return reply.code(upstream.status).send({
       error: { message: text || 'Upstream delete failed', type: 'upstream_error' },
     });
@@ -278,17 +288,17 @@ export async function videosProxyRoute(app: FastifyInstance) {
 async function requestMappedVideoTaskUpstream(
   mapping: NonNullable<Awaited<ReturnType<typeof getProxyVideoTaskByPublicId>>>,
   method: 'GET' | 'DELETE',
-): Promise<{ upstream: Awaited<ReturnType<typeof fetch>> }> {
+): Promise<{ upstream: Awaited<ReturnType<typeof fetchSiteResponse>> }> {
   const buildRequest = async (baseUrl: string) => {
     const targetUrl = buildUpstreamUrl(baseUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
-    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
+    const upstream = await fetchSiteResponse(site ?? undefined, targetUrl, await withSiteProxyRequestInit(targetUrl, {
       method,
       headers: {
         Authorization: `Bearer ${mapping.tokenValue}`,
       },
     }));
     if (!upstream.ok) {
-      const errorText = await upstream.clone().text().catch(() => '');
+      const errorText = await readRuntimeResponseText(upstream.clone());
       if (shouldRetryProxyRequest(upstream.status, errorText || `HTTP ${upstream.status}`)) {
         throw new SiteApiEndpointRequestError(errorText || `HTTP ${upstream.status}`, {
           status: upstream.status,
