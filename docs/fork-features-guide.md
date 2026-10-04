@@ -52,6 +52,27 @@
 
 添加后执行一次 **刷新账户状态** 或 **刷新模型**。成功标志是账号显示可用模型，并且 **路由** 页面出现对应模型通道。
 
+### 文档重排序（rerank）
+
+提供 `POST /v1/rerank`，使用已授权的下游 Key 和已有模型路由。先添加真正提供 `/v1/rerank` 的兼容上游，发现或手动登记排序模型，并为 Key 显式授权该模型或对应路由群组；空模型/群组范围会被拒绝。
+
+```bash
+curl http://127.0.0.1:4000/v1/rerank \
+  -H "Authorization: Bearer $R_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"rerank-model","query":"如何设置并发？","documents":["站点限制合计活跃请求。","默认不限额。"],"top_n":1,"return_documents":true}'
+```
+
+`model`、非空 `query`、非空 `documents` 必填。文档接受字符串或带 `text` 的对象；`top_n` 为不超过文档数的正整数，`return_documents` 为布尔值。这是非流式接口，`stream=true` 返回 400。兼容 Cohere/Jina 风格的 `results` 或网关的 `data` 数组，返回项必须有合法、互不重复的文档 `index` 和有限数值 `relevance_score`；无效上游响应返回 502。
+
+只有显式声明 rerank 透传的网关可选，包括通用 OpenAI 兼容站点、New API、One API、One Hub、Done Hub 和 Veloera。透传声明不保证每个实例实际提供此端点；官方 OpenAI、原生 Gemini、Codex、Claude 与其他未声明的平台会被排除，不会改走聊天协议。排序模型错误或成功不会覆盖同名模型的聊天运行时能力记录。
+
+接口复用站点总并发、地址池、首字节观测、渠道重试归属和下游 Key 配额。排队后及每次重试前重新检查 Key 生命周期、策略版本、成本和 token 配额；策略变化返回 `downstream_policy_changed`，需要新建请求。已经预扣的请求次数不会在上游重试时重复扣除。未收到首字节的歧义超时或已经接受响应后的断流不会自动重放；客户端断开记录为取消并释放资源，不记成功或费用。
+
+只从明确的上游 usage/accounting 容器提取用量，文档中的 token 字段不参与计费。真实 token 用量更新总 token、输入和输出配额，费用复用既有价格/self-log 规则。缺少 usage 且无法从可信上游日志恢复时，日志中的 token 为 `null`，不会根据文档长度或搜索计量单位猜测 token 数。
+
+响应头 `x-metapi-request-id` 可用于管理端查询 `/api/proxy-request-ledgers/:requestId`，查看 rerank 路由解释、每次 attempt 的端点身份、提交状态和最终结果。
+
 ### 创建下游密钥
 
 进入 **下游密钥 → 新增下游密钥**：

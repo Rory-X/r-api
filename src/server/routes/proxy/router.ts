@@ -1,3 +1,4 @@
+import { rerankProxyRoute } from './rerank.js';
 import { FastifyInstance } from 'fastify';
 import { proxyAuthMiddleware } from '../../middleware/auth.js';
 import { chatProxyRoute, claudeMessagesProxyRoute } from './chat.js';
@@ -30,6 +31,7 @@ export async function proxyRoutes(app: FastifyInstance) {
   await app.register(responsesProxyRoute);
   await app.register(modelsProxyRoute);
   await app.register(embeddingsProxyRoute);
+  await app.register(rerankProxyRoute);
   await app.register(searchProxyRoute);
   await app.register(filesProxyRoute);
   await app.register(imagesProxyRoute);

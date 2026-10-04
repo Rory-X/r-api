@@ -1,7 +1,8 @@
+import { isProxyAdmissionError } from '../../contracts/proxyAdmission.js';
+import type { ProxyEndpoint } from '../../contracts/proxyEndpoint.js';
 import { resolveRuntimeRequestUrl } from '../providers/requestUrl.js';
 import { fetch } from 'undici';
 import { readRuntimeResponseText } from '../executors/types.js';
-import { isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 import { fetchWithObservedFirstByte, isObservedFirstByteTimeoutResponse } from '../firstByteTimeout.js';
 import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import {
@@ -15,8 +16,8 @@ import {
   type AttemptCommitState,
 } from '../../services/proxyRetryContract.js';
 
-export type BuiltEndpointRequest = {
-  endpoint: UpstreamEndpoint;
+export type BuiltEndpointRequest<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
+  endpoint: TEndpoint;
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
@@ -29,12 +30,12 @@ export type BuiltEndpointRequest = {
   };
 };
 
-export type EndpointAttemptContext = {
+export type EndpointAttemptContext<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
   endpointIndex: number;
   endpointCount: number;
   attemptId: string;
   attemptIndex: number;
-  request: BuiltEndpointRequest;
+  request: BuiltEndpointRequest<TEndpoint>;
   targetUrl: string;
   response: Awaited<ReturnType<typeof fetch>>;
   rawErrText: string;
@@ -42,34 +43,34 @@ export type EndpointAttemptContext = {
   recoverApplied?: boolean;
 };
 
-export type EndpointAttemptSuccessContext = {
+export type EndpointAttemptSuccessContext<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
   endpointIndex: number;
   endpointCount: number;
   attemptId: string;
   attemptIndex: number;
-  request: BuiltEndpointRequest;
+  request: BuiltEndpointRequest<TEndpoint>;
   targetUrl: string;
   response: Awaited<ReturnType<typeof fetch>>;
   commitState: AttemptCommitState;
   recoverApplied?: boolean;
 };
 
-export type EndpointAttemptCommitStateContext = {
+export type EndpointAttemptCommitStateContext<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
   endpointIndex: number;
   endpointCount: number;
   attemptId: string;
   attemptIndex: number;
-  request: BuiltEndpointRequest;
+  request: BuiltEndpointRequest<TEndpoint>;
   targetUrl: string;
   commitState: AttemptCommitState;
   event: AttemptCommitEvent;
   response?: Awaited<ReturnType<typeof fetch>>;
 };
 
-export type EndpointAttemptStartContext = {
+export type EndpointAttemptStartContext<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
   endpointIndex: number;
   endpointCount: number;
-  request: BuiltEndpointRequest;
+  request: BuiltEndpointRequest<TEndpoint>;
   targetUrl: string;
 };
 
@@ -78,10 +79,10 @@ export type EndpointAttemptIdentity = {
   attemptIndex: number;
 };
 
-export type EndpointRecoverResult = {
+export type EndpointRecoverResult<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
   upstream: Awaited<ReturnType<typeof fetch>>;
   upstreamPath: string;
-  request?: BuiltEndpointRequest;
+  request?: BuiltEndpointRequest<TEndpoint>;
   targetUrl?: string;
 } | null;
 
@@ -100,31 +101,32 @@ export type EndpointFlowResult =
     commitState?: AttemptCommitState;
   };
 
-export type ExecuteEndpointFlowInput = {
+export type ExecuteEndpointFlowInput<TEndpoint extends ProxyEndpoint = UpstreamEndpoint> = {
+  signal?: AbortSignal;
   siteUrl: string;
   proxyUrl?: string | null;
   disableCrossProtocolFallback?: boolean;
-  endpointCandidates: UpstreamEndpoint[];
-  buildRequest: (endpoint: UpstreamEndpoint, endpointIndex: number) => BuiltEndpointRequest;
+  endpointCandidates: TEndpoint[];
+  buildRequest: (endpoint: TEndpoint, endpointIndex: number) => BuiltEndpointRequest<TEndpoint>;
   dispatchRequest?: (
-    request: BuiltEndpointRequest,
+    request: BuiltEndpointRequest<TEndpoint>,
     targetUrl: string,
     signal?: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof fetch>>>;
   firstByteTimeoutMs?: number;
-  tryRecover?: (ctx: EndpointAttemptContext) => Promise<EndpointRecoverResult>;
-  shouldDowngrade?: (ctx: EndpointAttemptContext) => boolean;
-  shouldAbortRemainingEndpoints?: (ctx: EndpointAttemptContext & { errText: string }) => boolean;
-  onDowngrade?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
-  onAttemptFailure?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
-  onAttemptSuccess?: (ctx: EndpointAttemptSuccessContext) => void | Promise<void>;
+  tryRecover?: (ctx: EndpointAttemptContext<TEndpoint>) => Promise<EndpointRecoverResult<TEndpoint>>;
+  shouldDowngrade?: (ctx: EndpointAttemptContext<TEndpoint>) => boolean;
+  shouldAbortRemainingEndpoints?: (ctx: EndpointAttemptContext<TEndpoint> & { errText: string }) => boolean;
+  onDowngrade?: (ctx: EndpointAttemptContext<TEndpoint> & { errText: string }) => void | Promise<void>;
+  onAttemptFailure?: (ctx: EndpointAttemptContext<TEndpoint> & { errText: string }) => void | Promise<void>;
+  onAttemptSuccess?: (ctx: EndpointAttemptSuccessContext<TEndpoint>) => void | Promise<void>;
   deferSuccessHooks?: boolean;
-  onAttemptCommitState?: (ctx: EndpointAttemptCommitStateContext) => void | Promise<void>;
+  onAttemptCommitState?: (ctx: EndpointAttemptCommitStateContext<TEndpoint>) => void | Promise<void>;
   createAttemptIdentity?: (
-    ctx: EndpointAttemptStartContext,
+    ctx: EndpointAttemptStartContext<TEndpoint>,
   ) => EndpointAttemptIdentity | Promise<EndpointAttemptIdentity>;
   onAttemptStart?: (
-    ctx: EndpointAttemptStartContext & EndpointAttemptIdentity,
+    ctx: EndpointAttemptStartContext<TEndpoint> & EndpointAttemptIdentity,
   ) => void | Promise<void>;
 };
 
@@ -145,7 +147,7 @@ async function runEndpointFlowHook<T>(
   }
 }
 
-export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Promise<EndpointFlowResult> {
+export async function executeEndpointFlow<TEndpoint extends ProxyEndpoint = UpstreamEndpoint>(input: ExecuteEndpointFlowInput<TEndpoint>): Promise<EndpointFlowResult> {
   const endpointCount = input.endpointCandidates.length;
   if (endpointCount <= 0) {
     return {
@@ -161,7 +163,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   let finalCommitState: AttemptCommitState | undefined;
 
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
-    const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
+    const endpoint = input.endpointCandidates[endpointIndex] as TEndpoint;
     const request = input.buildRequest(endpoint, endpointIndex);
     const defaultTarget = resolveRuntimeRequestUrl(input.siteUrl, request);
     const targetUrl = input.proxyUrl
@@ -241,7 +243,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         },
       );
     } catch (error) {
-      if (!isSiteConcurrencyError(error)) await emitCommitState('transport_unknown');
+      if (!isProxyAdmissionError(error) && !input.signal?.aborted) await emitCommitState('transport_unknown');
       throw error;
     }
 
@@ -274,7 +276,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     await emitCommitState('request_sent', response);
 
     let rawErrText = await readRuntimeResponseText(response, 'unknown error');
-    const baseContext: EndpointAttemptContext = {
+    const baseContext: EndpointAttemptContext<TEndpoint> = {
       endpointIndex,
       endpointCount,
       ...attemptIdentity,

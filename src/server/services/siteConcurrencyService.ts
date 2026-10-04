@@ -7,6 +7,7 @@ import { claimDatabaseLeaseSlot, DatabaseSlotLease } from './databaseSlotLease.j
 
 
 export class SiteConcurrencyError extends Error {
+  readonly localProxyAdmissionFailure = true;
   readonly status = 503;
   readonly code = 'site_capacity_unavailable';
   constructor(message = 'Site concurrency limit reached', options?: { cause?: unknown }) {

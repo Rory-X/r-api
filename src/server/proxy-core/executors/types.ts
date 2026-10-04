@@ -1,3 +1,4 @@
+import type { ProxyEndpoint } from '../../contracts/proxyEndpoint.js';
 import {
   brotliDecompressSync,
   createBrotliDecompress,
@@ -20,7 +21,7 @@ import { combineProxySignals, getProxyRequestSignal } from '../requestAbortConte
 import { isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 
 export type ProxyRuntimeRequest = {
-  endpoint: 'chat' | 'messages' | 'responses';
+  endpoint: ProxyEndpoint;
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
@@ -35,6 +36,7 @@ export type ProxyRuntimeRequest = {
 
 export type RuntimeDispatchInput = {
   site?: SiteCapacityConfigLike;
+  beforeDispatch?: () => Promise<void>;
   siteUrl: string;
   request: ProxyRuntimeRequest;
   targetUrl?: string;
@@ -80,7 +82,7 @@ export async function performFetch(
   return fetchSiteResponse(input.site, requestUrl, {
     ...init,
     signal: combinedSignal,
-  });
+  }, input.beforeDispatch);
 }
 
 function hasZstdContentEncoding(contentEncoding: string | null): boolean {
@@ -169,21 +171,22 @@ function decodeRuntimeResponseStream(
 
 export async function readRuntimeResponseText(
   response: RuntimeResponse,
-  fallback = '',
+  fallback: string | null = '',
 ): Promise<string> {
   const contentEncoding = typeof response.headers?.get === 'function'
     ? response.headers.get('content-encoding')
     : null;
   if (!hasZstdContentEncoding(contentEncoding)) {
     return typeof response.text === 'function'
-      ? response.text().catch((error) => runtimeReadErrorFallback(error, fallback))
+      ? response.text().catch((error) => { if (fallback === null) throw error; return runtimeReadErrorFallback(error, fallback); })
       : '';
   }
 
   const rawBuffer = Buffer.from(await response.arrayBuffer());
   try {
     return decodeRuntimeResponseBuffer(rawBuffer, contentEncoding).toString('utf8');
-  } catch {
+  } catch (error) {
+    if (fallback === null) throw error;
     return looksLikeZstdFrame(rawBuffer) ? '' : rawBuffer.toString('utf8');
   }
 }

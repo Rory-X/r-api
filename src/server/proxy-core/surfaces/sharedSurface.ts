@@ -1,3 +1,4 @@
+import type { ProxyEndpoint } from '../../contracts/proxyEndpoint.js';
 import { isSiteConcurrencyError } from '../../services/siteConcurrencyService.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
@@ -8,6 +9,7 @@ import type { SiteConcurrencyError } from '../../services/siteConcurrencyService
 import {
   tokenRouter,
   type TokenRouterCredentialIdentity,
+  type TokenRouterSelectionConstraints,
 } from '../../services/tokenRouter.js';
 import type { BridgeProxyRoutePlan } from '../../services/bridgeContinuationRouting.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
@@ -44,7 +46,7 @@ import {
 } from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
-type SurfaceWarningScope = 'chat' | 'responses';
+type SurfaceWarningScope = 'chat' | 'responses' | 'rerank';
 
 type SurfaceSelectedChannel = {
   channel: {
@@ -137,6 +139,7 @@ export async function selectSurfaceChannelForAttempt(input: {
   stickySessionKey?: string | null;
   forcedChannelId?: number | null;
   bridgeRoutePlan?: BridgeProxyRoutePlan | null;
+  selectionConstraints?: TokenRouterSelectionConstraints;
   excludeCredentials?: readonly TokenRouterCredentialIdentity[];
   onRoutingDecision?: (event: ProxyChannelRoutingDecisionEvent) => Promise<void> | void;
 }): Promise<SelectedChannel> {
@@ -297,15 +300,17 @@ export function createSurfaceDispatchRequest(input: {
   accountExtraConfig?: string | null;
   siteUrl?: string;
   signal?: AbortSignal;
+  beforeDispatch?: () => Promise<void>;
 }) {
   const channelProxyUrl = resolveChannelProxyUrl(input.site, input.accountExtraConfig);
   return (
-    request: BuiltEndpointRequest,
+    request: BuiltEndpointRequest<ProxyEndpoint>,
     targetUrl?: string,
     signal?: AbortSignal,
   ) => (
     dispatchRuntimeRequest({
       site: input.site,
+      beforeDispatch: input.beforeDispatch,
       siteUrl: input.siteUrl ?? input.site.url,
       targetUrl,
       signal: input.signal && signal ? AbortSignal.any([input.signal, signal]) : (input.signal ?? signal),
@@ -374,6 +379,7 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
 }
 
 export async function recordSurfaceSuccess(input: {
+  endpoint?: ProxyEndpoint;
   selected: SurfaceSuccessSelectedChannel;
   requestedModel: string;
   modelName: string;
@@ -404,7 +410,7 @@ export async function recordSurfaceSuccess(input: {
     billingDetails?: unknown;
     upstreamPath?: string | null;
   }) => Promise<void>;
-  recordDownstreamCost?: (estimatedCost: number, totalTokens?: number | null) => void;
+  recordDownstreamCost?: (estimatedCost: number, totalTokens?: number | null) => void | Promise<void>;
   bestEffortMetrics?: {
     errorLabel: string;
   };
@@ -463,15 +469,16 @@ export async function recordSurfaceSuccess(input: {
     console.error(input.bestEffortMetrics.errorLabel, error);
   }
 
-  tokenRouter.recordSuccess(
+  await tokenRouter.recordSuccess(
     input.selected.channel.id,
     input.latencyMs,
     estimatedCost,
     input.modelName,
     input.selected.account.id,
     input.firstByteLatencyMs ?? null,
+    ...(input.endpoint ? [input.endpoint] : []),
   );
-  input.recordDownstreamCost?.(estimatedCost, resolvedUsage.totalTokens);
+  await input.recordDownstreamCost?.(estimatedCost, resolvedUsage.usageSource === 'unknown' ? null : resolvedUsage.totalTokens);
   const logTokens = resolvedUsage.usageSource === 'unknown'
     ? {
       promptTokens: null,
@@ -520,6 +527,7 @@ export async function recordSurfaceSuccess(input: {
 
 export function createSurfaceFailureToolkit(input: {
   warningScope: SurfaceWarningScope;
+  endpoint?: ProxyEndpoint;
   downstreamPath: string;
   maxRetries: number;
   clientContext?: DownstreamClientContext | null;
@@ -651,6 +659,7 @@ export function createSurfaceFailureToolkit(input: {
       await tokenRouter.recordFailure(args.selected.channel.id, {
         status: args.status,
         errorText: rawErrText,
+        ...(input.endpoint === 'rerank' && classifyRetryErrorScope({ status: args.status, rawErrorText: rawErrText }) === 'model_capability' ? { domain: 'request' as const } : {}),
         modelName: args.modelName,
         ...(args.endpointId ? { endpointId: args.endpointId } : {}),
       });

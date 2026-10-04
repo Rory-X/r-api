@@ -156,6 +156,7 @@ type SelectProxyChannelForAttemptInput = {
   stickySessionKey?: string | null;
   forcedChannelId?: number | null;
   bridgeRoutePlan?: BridgeProxyRoutePlan | null;
+  selectionConstraints?: TokenRouterSelectionConstraints;
   excludeCredentials?: readonly TokenRouterCredentialIdentity[];
   onRoutingDecision?: (event: ProxyChannelRoutingDecisionEvent) => Promise<void> | void;
 };
@@ -178,6 +179,7 @@ async function selectProxyChannelCandidateForAttempt(
           normalizedForcedChannelId,
           input.downstreamPolicy,
           input.excludeChannelIds,
+          ...(input.selectionConstraints ? [input.selectionConstraints] : []),
         ),
       selectionMode: 'forced',
     };
@@ -199,10 +201,10 @@ async function selectProxyChannelCandidateForAttempt(
   };
 
   if (input.bridgeRoutePlan) {
-    const constraints = buildBridgeTokenRouterSelectionConstraints({
+    const constraints = { ...input.selectionConstraints, ...buildBridgeTokenRouterSelectionConstraints({
       plan: input.bridgeRoutePlan,
       excludedCredentials: input.excludeCredentials,
-    });
+    }) };
     const selectWithBridgePlan = async (): Promise<SelectedChannel> => {
       if (input.bridgeRoutePlan?.effectiveAction === 'preserve') {
         if (input.retryCount > 0) return null;
@@ -244,6 +246,7 @@ async function selectProxyChannelCandidateForAttempt(
         preferredChannelId,
         input.downstreamPolicy,
         input.excludeChannelIds,
+        ...(input.selectionConstraints ? [input.selectionConstraints] : []),
       );
       if (!selected) {
         const refreshSucceeded = await refreshRoutesForFirstAttempt();
@@ -252,6 +255,7 @@ async function selectProxyChannelCandidateForAttempt(
           preferredChannelId,
           input.downstreamPolicy,
           input.excludeChannelIds,
+          ...(input.selectionConstraints ? [input.selectionConstraints] : []),
         );
         if (!selected && refreshSucceeded) {
           proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
@@ -263,17 +267,18 @@ async function selectProxyChannelCandidateForAttempt(
 
   if (!selected) {
     selected = input.retryCount === 0
-      ? await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy)
+      ? await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy, ...(input.selectionConstraints ? [input.selectionConstraints] : []))
       : await tokenRouter.selectNextChannel(
         input.requestedModel,
         input.excludeChannelIds,
         input.downstreamPolicy,
+        ...(input.selectionConstraints ? [input.selectionConstraints] : []),
       );
   }
 
   if (!selected && input.retryCount === 0 && !refreshedRoutes) {
     await refreshRoutesForFirstAttempt();
-    selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
+    selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy, ...(input.selectionConstraints ? [input.selectionConstraints] : []));
   }
 
   return {
@@ -291,7 +296,7 @@ async function explainProxyChannelSelection(
       plan: input.bridgeRoutePlan,
       excludedCredentials: input.excludeCredentials,
     })
-    : {};
+    : (input.selectionConstraints ?? {});
   return await tokenRouter.explainSelection(
     input.requestedModel,
     input.excludeChannelIds,

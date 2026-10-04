@@ -998,10 +998,15 @@ export async function recordManagedKeyCostUsage(keyId: number, estimatedCost: nu
   await recordDownstreamKeyQuotaUsage(keyId, 'cost', cost);
 }
 
-export async function recordManagedKeyTokenUsage(keyId: number, totalTokens: number): Promise<void> {
+export async function recordManagedKeyTokenUsage(keyId: number, totalTokens: number, usage?: { promptTokens: number; completionTokens: number }): Promise<void> {
   const tokens = Math.max(0, Math.trunc(Number(totalTokens)));
-  if (tokens <= 0) return;
-  await recordDownstreamKeyQuotaUsage(keyId, 'total_tokens', tokens);
+  if (tokens > 0) await recordDownstreamKeyQuotaUsage(keyId, 'total_tokens', tokens);
+  if (usage) {
+    const inputTokens = Math.max(0, Math.trunc(Number(usage.promptTokens)));
+    const outputTokens = Math.max(0, Math.trunc(Number(usage.completionTokens)));
+    if (Number.isFinite(inputTokens) && inputTokens > 0) await recordDownstreamKeyQuotaUsage(keyId, 'input_tokens', inputTokens);
+    if (Number.isFinite(outputTokens) && outputTokens > 0) await recordDownstreamKeyQuotaUsage(keyId, 'output_tokens', outputTokens);
+  }
 }
 
 export function normalizeDownstreamApiKeyPayload(input: {

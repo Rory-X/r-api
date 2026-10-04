@@ -94,8 +94,12 @@ export async function withSiteCapacityResponse(site: SiteCapacityConfigLike | un
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
-export async function fetchSiteResponse(site: SiteCapacityConfigLike | undefined, url: string, init: RequestInit): Promise<RuntimeResponse> {
-  return withSiteCapacityResponse(site, (signal) => fetch(url, { ...init, signal }), init.signal ?? undefined);
+export async function fetchSiteResponse(site: SiteCapacityConfigLike | undefined, url: string, init: RequestInit, beforeDispatch?: () => Promise<void>): Promise<RuntimeResponse> {
+  return withSiteCapacityResponse(site, async (signal) => {
+    await beforeDispatch?.();
+    signal?.throwIfAborted();
+    return fetch(url, { ...init, signal });
+  }, init.signal ?? undefined);
 }
 
 export function siteCapacityErrorPayload(error: SiteConcurrencyError) {

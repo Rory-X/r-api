@@ -1,3 +1,4 @@
+import type { ProxyEndpoint, ProxyAttemptEndpoint } from '../contracts/proxyEndpoint.js';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -75,7 +76,7 @@ export type ProxyAttemptSelectionContext = {
 };
 
 export type ProxyManualAttemptStartInput = {
-  endpoint?: string | null;
+  endpoint?: ProxyAttemptEndpoint | null;
   requestPath?: string | null;
   targetUrl?: string | null;
 };
@@ -110,11 +111,11 @@ export type ProxyAttemptLedgerRuntimeSession = {
   beginAttempt: (input: ProxyManualAttemptStartInput) => Promise<EndpointAttemptIdentity>;
   markAttemptCommit: (input: ProxyManualAttemptCommitInput) => Promise<void>;
   finishAttempt: (input: ProxyManualAttemptFinishInput) => Promise<void>;
-  createAttemptIdentity: (ctx: EndpointAttemptStartContext) => EndpointAttemptIdentity;
-  onAttemptStart: (ctx: EndpointAttemptStartContext & EndpointAttemptIdentity) => Promise<void>;
-  onAttemptCommitState: (ctx: EndpointAttemptCommitStateContext) => Promise<void>;
-  onAttemptFailure: (ctx: EndpointAttemptContext & { errText: string }) => Promise<void>;
-  onAttemptSuccess: (ctx: EndpointAttemptSuccessContext) => Promise<void>;
+  createAttemptIdentity: (ctx: EndpointAttemptStartContext<ProxyEndpoint>) => EndpointAttemptIdentity;
+  onAttemptStart: (ctx: EndpointAttemptStartContext<ProxyEndpoint> & EndpointAttemptIdentity) => Promise<void>;
+  onAttemptCommitState: (ctx: EndpointAttemptCommitStateContext<ProxyEndpoint>) => Promise<void>;
+  onAttemptFailure: (ctx: EndpointAttemptContext<ProxyEndpoint> & { errText: string }) => Promise<void>;
+  onAttemptSuccess: (ctx: EndpointAttemptSuccessContext<ProxyEndpoint>) => Promise<void>;
   finishRequest: (status: Exclude<ProxyRequestStatus, 'active'>) => Promise<void>;
 };
 

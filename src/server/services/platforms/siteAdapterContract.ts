@@ -71,6 +71,7 @@ export interface SiteBrowserCredentialContract {
 export interface SiteAdapterContract {
   platformName: string;
   protocolFamilies: string[];
+  proxyEndpoints: { rerank: 'passthrough' | 'unsupported' };
   credentialKinds: SiteCredentialKind[];
   operations: Record<SiteAdapterOperation, boolean>;
   probePolicy: SiteProbePolicy;
@@ -116,6 +117,7 @@ function cloneContract(contract: SiteAdapterContract): SiteAdapterContract {
     operations: { ...contract.operations },
     checkin: { ...contract.checkin },
     modelSync: { ...contract.modelSync },
+    proxyEndpoints: { ...contract.proxyEndpoints },
     browser: {
       ...contract.browser,
       modes: [...contract.browser.modes],
@@ -134,6 +136,7 @@ function buildContract(
   return {
     platformName,
     protocolFamilies: ['openai-compatible'],
+    proxyEndpoints: { rerank: 'unsupported' },
     credentialKinds: ['session_token', 'api_key'],
     operations: { ...DEFAULT_OPERATIONS },
     probePolicy: 'management_only',
@@ -155,6 +158,7 @@ function buildContract(
 
 const CONTRACTS: Record<string, SiteAdapterContract> = {
   openai: buildContract('openai', {
+    proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['api_key'],
     operations: { ...DEFAULT_OPERATIONS, login: false, checkin: false, api_tokens: false, announcements: false },
     probePolicy: 'metadata_only',
@@ -203,6 +207,7 @@ const CONTRACTS: Record<string, SiteAdapterContract> = {
     checkin: { support: 'unsupported', idempotency: 'unknown', allowsAutomaticExecution: false },
   }),
   'new-api': buildContract('new-api', {
+    proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['session_token', 'cookie', 'api_key', 'browser_storage'],
     probePolicy: 'explicit_only',
     browser: {
@@ -229,6 +234,7 @@ const CONTRACTS: Record<string, SiteAdapterContract> = {
     notes: ['浏览器采集仅允许适配器声明字段；不上传完整 Profile、密码或无关 Storage。'],
   }),
   'one-api': buildContract('one-api', {
+    proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['session_token', 'cookie', 'api_key', 'browser_storage'],
     probePolicy: 'explicit_only',
     browser: {
@@ -242,6 +248,7 @@ const CONTRACTS: Record<string, SiteAdapterContract> = {
     },
   }),
   'one-hub': buildContract('one-hub', {
+    proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['session_token', 'cookie', 'api_key', 'browser_storage'],
     probePolicy: 'explicit_only',
     browser: {
@@ -255,6 +262,7 @@ const CONTRACTS: Record<string, SiteAdapterContract> = {
     },
   }),
   'done-hub': buildContract('done-hub', {
+    proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['session_token', 'cookie', 'api_key', 'browser_storage'],
     probePolicy: 'explicit_only',
     browser: {
@@ -269,6 +277,7 @@ const CONTRACTS: Record<string, SiteAdapterContract> = {
     checkin: { support: 'unsupported', idempotency: 'unknown', allowsAutomaticExecution: false },
   }),
   veloera: buildContract('veloera', {
+    proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['session_token', 'cookie', 'api_key', 'browser_storage'],
     probePolicy: 'explicit_only',
     browser: {

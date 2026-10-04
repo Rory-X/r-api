@@ -1,3 +1,5 @@
+import type { ProxyEndpoint } from '../contracts/proxyEndpoint.js';
+import { resolveRerankCapability } from './platforms/rerankCapability.js';
 import { getKnownModelContextLength, type ModelContextRef } from './modelContextService.js';
 import { buildVisibleTokenRoutes } from '../../shared/tokenRouteVisibility.js';
 ﻿import { and, eq, inArray, isNull } from 'drizzle-orm';
@@ -105,6 +107,7 @@ export type TokenRouterCredentialIdentity = Readonly<{
 }>;
 
 export type TokenRouterSelectionConstraints = Readonly<{
+  requiredEndpoint?: 'rerank';
   allowedSiteIds?: readonly number[];
   excludedSiteIds?: readonly number[];
   preferredCredential?: TokenRouterCredentialIdentity | null;
@@ -2707,6 +2710,7 @@ function normalizeSelectionConstraints(
   return Object.freeze({
     allowedSiteIds: Object.freeze(normalizeSelectionIdList(constraints?.allowedSiteIds)),
     excludedSiteIds: Object.freeze(normalizeSelectionIdList(constraints?.excludedSiteIds)),
+    requiredEndpoint: constraints?.requiredEndpoint,
     preferredCredential,
     excludedCredentials: Object.freeze(excludedCredentials),
   });
@@ -2725,6 +2729,7 @@ function getEphemeralSelectionExclusionReason(
   constraints: TokenRouterSelectionConstraints | undefined,
 ): string | null {
   if (!constraints) return null;
+  if (constraints.requiredEndpoint === 'rerank' && resolveRerankCapability(candidate.site) !== 'passthrough') return '上游平台未声明 rerank 透传能力';
   const allowedSiteIds = normalizeSelectionIdList(constraints.allowedSiteIds);
   if (allowedSiteIds.length > 0 && !allowedSiteIds.includes(candidate.site.id)) {
     return 'Bridge 路由约束要求保留当前 API Channel';
@@ -3517,6 +3522,7 @@ export class TokenRouter {
     modelName?: string | null,
     actualAccountId?: number,
     firstByteLatencyMs?: number | null,
+    endpoint?: ProxyEndpoint,
   ) {
     await ensureSiteRuntimeHealthStateLoaded();
     const row = await db.select()
@@ -3566,7 +3572,7 @@ export class TokenRouter {
           channelId,
           firstByteLatencyMs,
         });
-        if (modelName) {
+        if (modelName && endpoint !== 'rerank') {
           await recordProxyModelCapabilitySuccessBestEffort({
             accountId: memberRow.account.id,
             tokenId: null,
@@ -3578,7 +3584,7 @@ export class TokenRouter {
           channelId,
           firstByteLatencyMs,
         });
-        if (modelName) {
+        if (modelName && endpoint !== 'rerank') {
           await recordProxyModelCapabilitySuccessBestEffort({
             accountId: account.id,
             tokenId: ch.tokenId,
@@ -3592,7 +3598,7 @@ export class TokenRouter {
         channelId,
         firstByteLatencyMs,
       });
-      if (modelName) {
+      if (modelName && endpoint !== 'rerank') {
         await recordProxyModelCapabilitySuccessBestEffort({
           accountId: account.id,
           tokenId: ch.tokenId,
@@ -4480,7 +4486,7 @@ export class TokenRouter {
       account: memberCandidate.account,
       token: null,
     }, options.capabilityModelName || options.requestedModel));
-    if (capability?.status === 'unsupported') {
+    if (options.selectionConstraints?.requiredEndpoint !== 'rerank' && capability?.status === 'unsupported') {
       reasonParts.push(`模型能力不可用=${options.capabilityModelName || options.requestedModel}`);
     }
 
@@ -4776,7 +4782,7 @@ export class TokenRouter {
       candidate,
       options.capabilityModelName || options.requestedModel,
     ));
-    if (capability?.status === 'unsupported') {
+    if (options.selectionConstraints?.requiredEndpoint !== 'rerank' && capability?.status === 'unsupported') {
       reasonParts.push(`模型能力不可用=${options.capabilityModelName || options.requestedModel}`);
     }
 
