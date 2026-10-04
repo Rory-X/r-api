@@ -170,6 +170,8 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     if (!config.proxyEmptyContentFailEnabled) return false;
     if (input.downstreamFormat !== 'openai') return false;
     if (terminalResult.status === 'failed') return false;
+    if (chatAggregateState && [...chatAggregateState.choices.values()].some((choice) => choice.finishReason === 'content_filter')) return false;
+    if (terminalNormalizedFinal?.finishReason === 'content_filter') return false;
     if (hasMeaningfulChatAggregateOutput()) return false;
     if (hasMeaningfulNormalizedFinalOutput()) return false;
     return true;
@@ -269,6 +271,10 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       const isFailurePayload = payloadType === 'response.failed' || payloadType === 'error';
       if (isFailurePayload) {
         markFailed(parsedPayload);
+        if (payloadType === 'error' && input.downstreamFormat === 'openai') {
+          emitRaw(`data: ${JSON.stringify(parsedPayload)}\n\n`, { force: true });
+          return false;
+        }
       }
       const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, input.modelName);
       if (input.downstreamFormat === 'openai' && chatAggregateState) {

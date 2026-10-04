@@ -1,3 +1,4 @@
+import { normalizeInputFileBlock } from '../../shared/inputFile.js';
 import { canonicalRequestFromOpenAiBody } from '../../canonical/openAiRequestBridge.js';
 import { isCanonicalFunctionTool, isCanonicalNamedToolChoice } from '../../canonical/tools.js';
 import type { CanonicalContentPart, CanonicalRequestEnvelope } from '../../canonical/types.js';
@@ -36,25 +37,13 @@ function parseDataUrl(value: string): { mimeType: string; data: string } | null 
   };
 }
 
-// Dummy sentinel used when no real thoughtSignature is available but thinking
-// mode is enabled. Gemini accepts any base64 string and won't reject this.
+// Compatibility escape hatch for imported Gemini 3 tool history only. Real
+// signatures always win; this is not a generated or verified thought signature.
 const DUMMY_THOUGHT_SIGNATURE = 'c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=';
 
 function isDummyThoughtSafeModel(modelName: string): boolean {
   const normalized = asTrimmedString(modelName).toLowerCase();
-  return normalized.startsWith('gemini-') || normalized.startsWith('models/gemini-');
-}
-
-function parseInlineDataUrl(url: string): { mimeType: string; data: string } | null {
-  if (!url.startsWith('data:')) return null;
-  const [, rest] = url.split('data:', 2);
-  const [meta, data] = rest.split(',', 2);
-  if (!meta || !data) return null;
-  const [mimeType] = meta.split(';', 1);
-  return {
-    mimeType: mimeType || 'application/octet-stream',
-    data,
-  };
+  return /^(?:models\/)?gemini-3(?:[.-]|$)/.test(normalized);
 }
 
 function normalizeFunctionResponseResult(value: unknown): unknown {
@@ -66,6 +55,18 @@ function normalizeFunctionResponseResult(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+function toGeminiInlineDataPart(input: {
+  mimeType: string;
+  data: string;
+}): Record<string, unknown> {
+  return {
+    inlineData: {
+      mime_type: input.mimeType,
+      data: input.data,
+    },
+  };
 }
 
 function convertOpenAiContentToGeminiParts(content: unknown): Array<Record<string, unknown>> {
@@ -93,26 +94,51 @@ function convertOpenAiContentToGeminiParts(content: unknown): Array<Record<strin
       if (text) parts.push({ text });
       continue;
     }
-    if (type === 'image_url') {
-      const imageUrl = asTrimmedString(item.image_url && isRecord(item.image_url) ? item.image_url.url : item.url);
-      const parsed = imageUrl ? parseInlineDataUrl(imageUrl) : null;
+    if (type === 'image_url' || type === 'input_image') {
+      const imageUrl = asTrimmedString(item.image_url && isRecord(item.image_url) ? item.image_url.url : item.image_url ?? item.url);
+      const parsed = imageUrl ? parseDataUrl(imageUrl) : null;
       if (parsed) {
+        parts.push(toGeminiInlineDataPart(parsed));
+        continue;
+      }
+      if (imageUrl) {
         parts.push({
-          inlineData: {
-            mime_type: parsed.mimeType,
-            data: parsed.data,
+          fileData: {
+            fileUri: imageUrl,
           },
         });
       }
       continue;
     }
     if (type === 'input_audio') {
-      const data = asTrimmedString(item.data);
+      const audio = isRecord(item.input_audio) ? item.input_audio : item;
+      const data = asTrimmedString(audio.data);
       if (data) {
+        parts.push(toGeminiInlineDataPart({
+          mimeType: asTrimmedString(audio.mime_type ?? audio.mimeType) || 'audio/wav',
+          data,
+        }));
+      }
+      continue;
+    }
+
+    const normalizedFile = normalizeInputFileBlock(item);
+    if (normalizedFile) {
+      if (normalizedFile.fileData) {
+        const parsed = parseDataUrl(normalizedFile.fileData);
+        parts.push(toGeminiInlineDataPart({
+          mimeType: normalizedFile.mimeType || parsed?.mimeType || 'application/octet-stream',
+          data: parsed?.data || normalizedFile.fileData,
+        }));
+        continue;
+      }
+
+      const fileUri = normalizedFile.fileUrl || normalizedFile.fileId;
+      if (fileUri) {
         parts.push({
-          inlineData: {
-            mime_type: 'audio/wav',
-            data,
+          fileData: {
+            fileUri,
+            ...(normalizedFile.mimeType ? { mimeType: normalizedFile.mimeType } : {}),
           },
         });
       }
@@ -214,20 +240,20 @@ export function buildGeminiGenerateContentRequestFromOpenAi(input: {
       const toolCallId = asTrimmedString(message.tool_call_id);
       const name = toolNameById.get(toolCallId) || 'unknown';
       const result = normalizeFunctionResponseResult(message.content);
-      request.contents = [
-        ...(Array.isArray(request.contents) ? request.contents : []),
-        {
-          role: 'user',
-          parts: [{
-            functionResponse: {
-              name,
-              response: {
-                result,
-              },
-            },
-          }],
+      const responsePart = {
+        functionResponse: {
+          ...(toolCallId ? { id: toolCallId } : {}),
+          name,
+          response: { result },
         },
-      ];
+      };
+      const contents = request.contents as Array<Record<string, unknown>>;
+      const previous = contents[contents.length - 1];
+      if (previous?.role === 'user' && Array.isArray(previous.parts) && previous.parts.every((part) => isRecord(part) && isRecord(part.functionResponse))) {
+        previous.parts.push(responsePart);
+      } else {
+        contents.push({ role: 'user', parts: [responsePart] });
+      }
       continue;
     }
 
@@ -250,13 +276,13 @@ export function buildGeminiGenerateContentRequestFromOpenAi(input: {
         args = rawArguments;
       }
       const fcPart: Record<string, unknown> = {
-        functionCall: { name, args },
+        functionCall: { ...(asTrimmedString(toolCall.id) ? { id: asTrimmedString(toolCall.id) } : {}), name, args },
       };
       const id = asTrimmedString(toolCall.id);
       const signature = thoughtSignatureById.get(id);
       if (signature) {
         fcPart.thoughtSignature = signature;
-      } else if (hasThinkingEnabled && allowsDummyThoughtSignature) {
+      } else if (allowsDummyThoughtSignature) {
         fcPart.thoughtSignature = DUMMY_THOUGHT_SIGNATURE;
       } else if (hasThinkingEnabled) {
         shouldDisableThinkingConfig = true;
@@ -385,6 +411,7 @@ function canonicalPartToGeminiPart(
 
   if (part.type === 'tool_call') {
     return {
+      ...(typeof part.providerSpecificFields?.thought_signature === 'string' ? { thoughtSignature: part.providerSpecificFields.thought_signature } : {}),
       functionCall: {
         id: part.id,
         name: part.name,
@@ -397,6 +424,7 @@ function canonicalPartToGeminiPart(
     const response = part.resultJson ?? parseJsonString(part.resultText ?? '');
     return {
       functionResponse: {
+        id: part.toolCallId,
         name: toolNameById?.get(part.toolCallId) || 'unknown',
         response: {
           result: response,

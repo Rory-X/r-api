@@ -1,3 +1,4 @@
+import { buildOpenAiChatFromGeminiNative } from '../gemini/generate-content/nativeChatBridge.js';
 import {
   decodeAnthropicReasoningSignature,
 } from './reasoningTransport.js';
@@ -56,6 +57,7 @@ export type NormalizedStreamEvent = {
     id?: string;
     name?: string;
     argumentsDelta?: string;
+    providerSpecificFields?: Record<string, unknown>;
   }>;
   finishReason?: string | null;
   done?: boolean;
@@ -74,6 +76,7 @@ export type NormalizedFinalResponse = {
     id: string;
     name: string;
     arguments: string;
+    providerSpecificFields?: Record<string, unknown>;
   }>;
 };
 
@@ -229,6 +232,7 @@ function extractStreamingTextAndReasoning(
 export function normalizeStopReason(raw: unknown): string | null {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (!value) return null;
+  if (['content_filter', 'safety', 'recitation', 'blocklist', 'prohibited_content', 'spii'].includes(value)) return 'content_filter';
 
   if (value === 'failed' || value === 'error') {
     return 'error';
@@ -262,6 +266,11 @@ export function normalizeStopReason(raw: unknown): string | null {
   }
 
   return null;
+}
+
+export function resolveChatFinishReasonWithTools(reason: unknown, hasTools: boolean): string {
+  const normalized = normalizeStopReason(reason) || 'stop';
+  return normalized === 'stop' && hasTools ? 'tool_calls' : normalized;
 }
 
 export function toClaudeStopReason(finishReason: string | null | undefined): string {
@@ -570,7 +579,7 @@ function collectToolCallsFromOpenAiChoice(choice: any): Array<{ id: string; name
     ? (message as any).tool_calls
     : (Array.isArray(choice?.tool_calls) ? choice.tool_calls : []);
 
-  const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+  const toolCalls: NormalizedFinalResponse['toolCalls'] = [];
   for (let index = 0; index < rawToolCalls.length; index += 1) {
     const rawToolCall = rawToolCalls[index];
     if (!isRecord(rawToolCall)) continue;
@@ -594,6 +603,7 @@ function collectToolCallsFromOpenAiChoice(choice: any): Array<{ id: string; name
       id,
       name,
       arguments: argumentsText,
+      ...(isRecord(rawToolCall.provider_specific_fields) ? { providerSpecificFields: rawToolCall.provider_specific_fields } : {}),
     });
   }
 
@@ -1374,9 +1384,7 @@ export function normalizeUpstreamFinalResponse(
       created: ensureIntegerTimestamp(payload.created, now),
       content: content || (toolCalls.length > 0 ? '' : fallbackText),
       reasoningContent: reasoning,
-      finishReason: toolCalls.length > 0
-        ? 'tool_calls'
-        : (normalizeStopReason(choice?.finish_reason ?? payload.stop_reason) || 'stop'),
+      finishReason: resolveChatFinishReasonWithTools(choice?.finish_reason ?? payload.stop_reason, toolCalls.length > 0),
       toolCalls,
     };
   }
@@ -1389,7 +1397,7 @@ export function normalizeUpstreamFinalResponse(
       created: now,
       content: parseClaudeMessageContent(payload.content) || (toolCalls.length > 0 ? '' : fallbackText),
       reasoningContent: extractTextAndReasoning(payload.content).reasoning,
-      finishReason: toolCalls.length > 0 ? 'tool_calls' : (normalizeStopReason(payload.stop_reason) || 'stop'),
+      finishReason: resolveChatFinishReasonWithTools(payload.stop_reason, toolCalls.length > 0),
       toolCalls,
     };
   }
@@ -1413,20 +1421,8 @@ export function normalizeUpstreamFinalResponse(
     };
   }
 
-  if (isRecord(payload) && Array.isArray(payload.candidates)) {
-    const candidate = payload.candidates[0] || {};
-    const parsedCandidate = extractTextAndReasoning(candidate?.content?.parts || candidate?.content);
-    return {
-      id: isNonEmptyString((payload as any).responseId) ? (payload as any).responseId : fallbackId,
-      model: isNonEmptyString((payload as any).modelVersion)
-        ? (payload as any).modelVersion
-        : fallbackModel,
-      created: now,
-      content: parsedCandidate.content || fallbackText,
-      reasoningContent: parsedCandidate.reasoning,
-      finishReason: normalizeStopReason(candidate?.finishReason || (payload as any).finishReason) || 'stop',
-      toolCalls: [],
-    };
+  if (isRecord(payload) && (Array.isArray(payload.candidates) || isRecord(payload.promptFeedback))) {
+    return normalizeUpstreamFinalResponse(buildOpenAiChatFromGeminiNative(payload, fallbackModel), fallbackModel);
   }
 
   if (typeof payload === 'string' && payload.trim()) {
@@ -1514,12 +1510,13 @@ export function normalizeUpstreamStreamEvent(
           ? functionPart.arguments
           : undefined;
 
-        if (!id && !name && argumentsDelta === undefined) return null;
+        if (!id && !name && argumentsDelta === undefined && !isRecord(item.provider_specific_fields)) return null;
         return {
           index,
           id,
           name,
           argumentsDelta,
+          ...(isRecord(item.provider_specific_fields) ? { providerSpecificFields: item.provider_specific_fields } : {}),
         };
       })
       .filter((item): item is NonNullable<typeof item> => !!item);
@@ -1958,6 +1955,7 @@ function buildOpenAiStreamChunk(
       const serializedToolCall: Record<string, unknown> = {
         index,
       };
+      if (toolDelta.providerSpecificFields) serializedToolCall.provider_specific_fields = toolDelta.providerSpecificFields;
       if (toolDelta.id) serializedToolCall.id = toolDelta.id;
       if (toolDelta.id || toolDelta.name) serializedToolCall.type = 'function';
       if (Object.keys(fn).length > 0) serializedToolCall.function = fn;
@@ -2229,11 +2227,12 @@ export function serializeStreamDone(
 }
 
 function toOpenAiToolCalls(
-  toolCalls: Array<{ id: string; name: string; arguments: string }>,
+  toolCalls: NormalizedFinalResponse['toolCalls'],
 ): Array<Record<string, unknown>> {
   return toolCalls.map((toolCall, index) => ({
     index,
     id: toolCall.id || `call_${index}`,
+    ...(toolCall.providerSpecificFields ? { provider_specific_fields: toolCall.providerSpecificFields } : {}),
     type: 'function',
     function: {
       name: toolCall.name || '',
@@ -2323,11 +2322,7 @@ export function serializeFinalResponse(
     if (!normalized.content) message.content = '';
   }
 
-  const finishReason = (
-    toolCalls.length > 0
-      ? 'tool_calls'
-      : (normalizeStopReason(normalized.finishReason) || 'stop')
-  );
+  const finishReason = resolveChatFinishReasonWithTools(normalized.finishReason, toolCalls.length > 0);
 
   return {
     id: normalized.id,
@@ -2349,11 +2344,7 @@ export function serializeFinalResponse(
 
 export function buildSyntheticOpenAiChunks(normalized: NormalizedFinalResponse): Array<Record<string, unknown>> {
   const toolCalls = Array.isArray(normalized.toolCalls) ? normalized.toolCalls : [];
-  const finishReason = (
-    toolCalls.length > 0
-      ? 'tool_calls'
-      : (normalizeStopReason(normalized.finishReason) || 'stop')
-  );
+  const finishReason = resolveChatFinishReasonWithTools(normalized.finishReason, toolCalls.length > 0);
 
   const startDelta: Record<string, unknown> = {
     role: 'assistant',

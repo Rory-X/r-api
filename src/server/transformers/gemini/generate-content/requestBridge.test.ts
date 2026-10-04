@@ -306,6 +306,7 @@ describe('gemini generate-content request bridge', () => {
         role: 'user',
         parts: [{
           functionResponse: {
+            id: 'call_weather',
             name: 'lookup_weather',
             response: {
               result: { temperature: '22C' },
@@ -314,5 +315,26 @@ describe('gemini generate-content request bridge', () => {
         }],
       },
     ]);
+  });
+
+  it('round-trips native tool identities and signatures through the canonical bridge', () => {
+    const original = { model: 'gemini-3-flash-preview', contents: [
+      { role: 'model', parts: [{ functionCall: { id: 'native-call', name: 'weather', args: { city: 'Paris' } }, thoughtSignature: 'native-signature' }] },
+      { role: 'user', parts: [{ functionResponse: { id: 'native-call', name: 'weather', response: { temp: 22 } } }] },
+    ] };
+    const parsed = parseGeminiGenerateContentRequestToCanonical(original).value!;
+    expect(parsed.messages[0].parts[0]).toMatchObject({ type: 'tool_call', id: 'native-call', providerSpecificFields: { thought_signature: 'native-signature' } });
+    expect(parsed.messages[1].parts[0]).toMatchObject({ type: 'tool_result', toolCallId: 'native-call' });
+    const rebuilt = buildCanonicalRequestToGeminiGenerateContentBody(parsed) as any;
+    expect(rebuilt.contents[0].parts[0]).toMatchObject({ functionCall: { id: 'native-call', name: 'weather' }, thoughtSignature: 'native-signature' });
+  });
+
+  it('groups parallel tool results into one native user turn without changing identities', () => {
+    const result = buildGeminiGenerateContentRequestFromOpenAi({ modelName: 'gemini-3-flash-preview', body: { messages: [
+      { role: 'assistant', tool_calls: [{ id: 'a', function: { name: 'Read', arguments: '{}' } }, { id: 'b', function: { name: 'Read', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'a', content: 'file a' }, { role: 'tool', tool_call_id: 'b', content: 'file b' },
+    ] } }) as any;
+    expect(result.contents).toHaveLength(2);
+    expect(result.contents[1].parts.map((part: any) => part.functionResponse.id)).toEqual(['a', 'b']);
   });
 });

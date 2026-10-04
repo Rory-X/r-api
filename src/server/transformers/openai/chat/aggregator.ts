@@ -30,7 +30,7 @@ type ChoiceAggregate = {
   role?: 'assistant';
   content: string[];
   reasoning: string[];
-  toolCalls: Array<{ id: string; name: string; arguments: string }>;
+  toolCalls: NormalizedFinalResponse['toolCalls'];
   finishReason: string | null;
   annotations: Array<Record<string, unknown>>;
   annotationUrls: Set<string>;
@@ -72,12 +72,13 @@ function applyChoiceDelta(choice: ChoiceAggregate, event: OpenAiChatChoiceDelta)
   if (event.finishReason !== undefined) choice.finishReason = event.finishReason ?? null;
   if (Array.isArray(event.toolCallDeltas)) {
     for (const delta of event.toolCallDeltas) {
-      if (!delta.id && !delta.name && !delta.argumentsDelta) continue;
+      if (!delta.id && !delta.name && !delta.argumentsDelta && !delta.providerSpecificFields) continue;
       const index = Number.isFinite(delta.index) ? Math.max(0, Math.trunc(delta.index)) : choice.toolCalls.length;
       while (choice.toolCalls.length <= index) {
         choice.toolCalls.push({ id: '', name: '', arguments: '' });
       }
       const existing = choice.toolCalls[index];
+      if (delta.providerSpecificFields) existing.providerSpecificFields = delta.providerSpecificFields;
       if (delta.id) existing.id = delta.id;
       if (delta.name) existing.name = delta.name;
       if (delta.argumentsDelta) existing.arguments += delta.argumentsDelta;

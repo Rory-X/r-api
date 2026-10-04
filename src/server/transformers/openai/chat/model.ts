@@ -43,6 +43,7 @@ export type OpenAiChatToolCall = {
   id: string;
   name: string;
   arguments: string;
+  providerSpecificFields?: Record<string, unknown>;
 };
 
 export type OpenAiChatChoice = {
@@ -74,6 +75,7 @@ export type OpenAiChatChoiceDelta = {
     id?: string;
     name?: string;
     argumentsDelta?: string;
+    providerSpecificFields?: Record<string, unknown>;
   }>;
   finishReason?: string | null;
   annotations?: Array<Record<string, unknown>>;

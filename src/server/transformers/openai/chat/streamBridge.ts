@@ -133,6 +133,7 @@ export const openAiChatStream = {
 
                 return {
                   index: toolIndex,
+                  ...(toolCall.providerSpecificFields ? { provider_specific_fields: toolCall.providerSpecificFields } : {}),
                   ...(toolCall.id ? { id: toolCall.id } : {}),
                   ...(toolCall.id || toolCall.name ? { type: 'function' } : {}),
                   ...(Object.keys(functionPayload).length > 0 ? { function: functionPayload } : {}),
@@ -172,7 +173,10 @@ export const openAiChatStream = {
     }
 
     const parsedEvents = parseSerializedSse(lines);
-    if (parsedEvents.length <= 0) return lines;
+    if (parsedEvents.length <= 0) {
+      if (event.usagePayload) return [`data: ${JSON.stringify({ id: context.id, object: 'chat.completion.chunk', created: context.created, model: context.model, choices: [], usage: event.usagePayload })}\n\n`];
+      return lines;
+    }
 
     for (const parsed of parsedEvents) {
       const payload = parsed.payload;

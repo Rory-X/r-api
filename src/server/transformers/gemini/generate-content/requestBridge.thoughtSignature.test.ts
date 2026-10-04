@@ -227,4 +227,10 @@ describe('thoughtSignature injection in OpenAI→Gemini conversion', () => {
     expect(fcCount).toBe(2);
     expect(frCount).toBe(2);
   });
+
+  it.each([['gemini-3-flash-preview', true], ['models/gemini-3.1-pro-preview', true], ['gemini-2.5-pro', false], ['gemini-custom', false], ['claude-sonnet-4-5', false]])('limits missing-history compatibility to known Gemini 3 targets: %s', (modelName, allowed) => {
+    const result = buildGeminiGenerateContentRequestFromOpenAi({ modelName: modelName as string, body: { reasoning_effort: 'high', messages: [{ role: 'assistant', tool_calls: [{ id: 'call-1', function: { name: 'weather', arguments: '{}' } }] }] } }) as any;
+    expect(Boolean(result.contents[0].parts[0].thoughtSignature)).toBe(allowed);
+    expect(Boolean(result.generationConfig?.thinkingConfig)).toBe(allowed);
+  });
 });

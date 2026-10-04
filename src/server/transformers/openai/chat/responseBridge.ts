@@ -2,6 +2,7 @@ import {
   buildSyntheticOpenAiChunks,
   normalizeUpstreamFinalResponse,
   serializeFinalResponse,
+  resolveChatFinishReasonWithTools,
   type NormalizedFinalResponse,
 } from '../../shared/normalized.js';
 import { extractChatChoices, extractChatResponseExtras } from './helpers.js';
@@ -85,7 +86,7 @@ export function buildNormalizedFinalToOpenAiChatPayload(
       content: normalized.content,
       reasoningContent: normalized.reasoningContent,
       toolCalls: normalized.toolCalls,
-      finishReason: normalized.toolCalls.length > 0 ? 'tool_calls' : normalized.finishReason,
+      finishReason: resolveChatFinishReasonWithTools(normalized.finishReason, normalized.toolCalls.length > 0),
       annotations: chatNormalized.annotations,
       citations: chatNormalized.citations,
     }];
@@ -102,6 +103,7 @@ export function buildNormalizedFinalToOpenAiChatPayload(
       message.tool_calls = choice.toolCalls.map((toolCall) => ({
         id: toolCall.id,
         type: 'function',
+        ...(toolCall.providerSpecificFields ? { provider_specific_fields: toolCall.providerSpecificFields } : {}),
         function: {
           name: toolCall.name,
           arguments: toolCall.arguments,
@@ -161,6 +163,7 @@ export function buildNormalizedFinalToOpenAiChatChunks(normalized: NormalizedFin
               index: toolIndex,
               id: toolCall.id,
               type: 'function',
+              ...(toolCall.providerSpecificFields ? { provider_specific_fields: toolCall.providerSpecificFields } : {}),
               function: {
                 name: toolCall.name,
                 arguments: toolCall.arguments,

@@ -179,6 +179,7 @@ function collectToolCalls(value: unknown): OpenAiChatToolCall[] {
       id,
       name,
       arguments: args,
+      ...(isRecord(item.provider_specific_fields) ? { providerSpecificFields: item.provider_specific_fields } : {}),
     });
   }
 
@@ -197,8 +198,9 @@ function collectToolCallDeltas(value: unknown): OpenAiChatChoiceDelta['toolCallD
         id: typeof item.id === 'string' && item.id.trim() ? item.id : undefined,
         name: typeof functionPart.name === 'string' && functionPart.name.trim() ? functionPart.name : undefined,
         argumentsDelta: typeof functionPart.arguments === 'string' ? functionPart.arguments : undefined,
+        ...(isRecord(item.provider_specific_fields) ? { providerSpecificFields: item.provider_specific_fields } : {}),
       };
-      if (!delta.id && !delta.name && !delta.argumentsDelta) return null;
+      if (!delta.id && !delta.name && !delta.argumentsDelta && !delta.providerSpecificFields) return null;
       return delta;
     })
     .filter((item): item is NonNullable<typeof item> => !!item);

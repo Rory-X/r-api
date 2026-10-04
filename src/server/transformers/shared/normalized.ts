@@ -3,6 +3,7 @@ export {
   createClaudeDownstreamContext,
   createStreamTransformContext,
   normalizeStopReason,
+  resolveChatFinishReasonWithTools,
   normalizeUpstreamFinalResponse,
   normalizeUpstreamStreamEvent,
   parseDownstreamChatRequest,

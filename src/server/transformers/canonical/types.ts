@@ -51,6 +51,7 @@ export type CanonicalToolCallPart = {
   id: string;
   name: string;
   argumentsJson: string;
+  providerSpecificFields?: Record<string, unknown>;
 };
 
 export type CanonicalToolResultPart = {

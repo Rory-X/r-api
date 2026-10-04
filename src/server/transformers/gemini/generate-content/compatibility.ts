@@ -159,6 +159,7 @@ function extractToolChoice(toolConfig: unknown): string | undefined {
 
 function buildGeminiMessages(body: GeminiRecord): Array<Record<string, unknown>> {
   const messages: Array<Record<string, unknown>> = [];
+  const pendingToolIdsByName = new Map<string, string[]>();
 
   if (isRecord(body.systemInstruction) && Array.isArray(body.systemInstruction.parts)) {
     const content = toOpenAiContent(
@@ -186,8 +187,11 @@ function buildGeminiMessages(body: GeminiRecord): Array<Record<string, unknown>>
         const functionCall = isRecord(part.functionCall) ? part.functionCall : null;
         const name = asTrimmedString(functionCall?.name);
         if (!functionCall || !name) return null;
+        const id = asTrimmedString(functionCall.id) || `call_${messages.length}_${index}`;
+        pendingToolIdsByName.set(name, [...(pendingToolIdsByName.get(name) || []), id]);
         return {
-          id: asTrimmedString(functionCall.id) || `call_${index}`,
+          id,
+          ...(typeof part.thoughtSignature === 'string' ? { provider_specific_fields: { thought_signature: part.thoughtSignature } } : {}),
           type: 'function',
           function: {
             name,
@@ -208,7 +212,7 @@ function buildGeminiMessages(body: GeminiRecord): Array<Record<string, unknown>>
         const toolResponse = functionResponse.response;
         messages.push({
           role: 'tool',
-          tool_call_id: toolName,
+          tool_call_id: asTrimmedString(functionResponse.id) || pendingToolIdsByName.get(toolName)?.shift() || toolName,
           content: JSON.stringify(toolResponse ?? {}),
         });
       }

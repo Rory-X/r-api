@@ -317,6 +317,7 @@ export function canonicalRequestFromOpenAiBody(
         id: id || `tool_${parts.length}`,
         name,
         argumentsJson,
+        ...(isRecord(toolCall.provider_specific_fields) ? { providerSpecificFields: structuredClone(toolCall.provider_specific_fields) } : {}),
       });
     }
 
@@ -408,6 +409,7 @@ function canonicalPartsToOpenAiContent(
     if (part.type === 'tool_call') {
       toolCalls.push({
         id: part.id,
+        ...(part.providerSpecificFields ? { provider_specific_fields: structuredClone(part.providerSpecificFields) } : {}),
         type: 'function',
         function: {
           name: part.name,
