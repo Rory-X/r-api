@@ -1,5 +1,6 @@
+import { claimDatabaseLeaseSlot, DatabaseSlotLease } from './databaseSlotLease.js';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
 import { db, runtimeDbDialect, schema } from '../db/index.js';
 import {
@@ -763,80 +764,16 @@ export async function verifyDownstreamPolicySnapshotActive(
   return { ok: true };
 }
 
-function looksLikeConcurrencyLeaseCollision(error: unknown): boolean {
-  const seen = new Set<unknown>();
-  let current: unknown = error;
-  while (current && typeof current === 'object' && !seen.has(current)) {
-    seen.add(current);
-    const entry = current as { code?: unknown; errno?: unknown; message?: unknown; cause?: unknown };
-    const code = String(entry.code ?? entry.errno ?? '').toUpperCase();
-    const message = String(entry.message || '').toLowerCase();
-    if (
-      code === '23505'
-      || code === '1062'
-      || code === 'ER_DUP_ENTRY'
-      || code === 'SQLITE_CONSTRAINT'
-      || code === 'SQLITE_CONSTRAINT_UNIQUE'
-      || message.includes('unique constraint')
-      || message.includes('duplicate entry')
-      || message.includes('duplicate key')
-    ) {
-      return true;
-    }
-    current = entry.cause;
-  }
-  return false;
-}
-
-class DatabaseDownstreamConcurrencyLease implements DownstreamConcurrencyLease {
-  private released = false;
-  private heartbeat: ReturnType<typeof setInterval> | null = null;
-  private currentExpiresAt: string;
-
-  constructor(
-    readonly keyId: number,
-    readonly leaseToken: string,
-    readonly slot: number,
-    private readonly ttlMs: number,
-    heartbeatIntervalMs: number,
-    initialExpiresAt: string,
-  ) {
-    this.currentExpiresAt = initialExpiresAt;
-    if (heartbeatIntervalMs > 0) {
-      this.heartbeat = setInterval(() => {
-        void this.renew().catch((error) => {
-          console.warn('Failed to renew downstream concurrency lease', error);
-        });
-      }, heartbeatIntervalMs);
-      this.heartbeat.unref?.();
-    }
-  }
-
-  get expiresAt(): string {
-    return this.currentExpiresAt;
-  }
-
-  async renew(): Promise<void> {
-    if (this.released) return;
-    const nowIso = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + this.ttlMs).toISOString();
-    await db.update(schema.downstreamApiKeyLeases).set({
-      expiresAt,
-      updatedAt: nowIso,
-    }).where(eq(schema.downstreamApiKeyLeases.leaseToken, this.leaseToken)).run();
-    this.currentExpiresAt = expiresAt;
-  }
-
-  async release(): Promise<void> {
-    if (this.released) return;
-    this.released = true;
-    if (this.heartbeat) {
-      clearInterval(this.heartbeat);
-      this.heartbeat = null;
-    }
-    await db.delete(schema.downstreamApiKeyLeases)
-      .where(eq(schema.downstreamApiKeyLeases.leaseToken, this.leaseToken))
-      .run();
+class DatabaseDownstreamConcurrencyLease extends DatabaseSlotLease implements DownstreamConcurrencyLease {
+  constructor(readonly keyId: number, leaseToken: string, slot: number, ttlMs: number, heartbeatIntervalMs: number, expiresAt: string) {
+    super(leaseToken, slot, ttlMs, heartbeatIntervalMs, expiresAt, {
+      async renew(token, now, nextExpiresAt) {
+        const result = await db.update(schema.downstreamApiKeyLeases).set({ expiresAt: nextExpiresAt, updatedAt: now })
+          .where(and(eq(schema.downstreamApiKeyLeases.leaseToken, token), gt(schema.downstreamApiKeyLeases.expiresAt, now))).run();
+        return result.changes > 0;
+      },
+      async release(token) { await db.delete(schema.downstreamApiKeyLeases).where(eq(schema.downstreamApiKeyLeases.leaseToken, token)).run(); },
+    });
   }
 }
 
@@ -880,42 +817,19 @@ export async function acquireDownstreamConcurrencyLease(
     ))
     .run();
 
-  for (let slot = 1; slot <= maxConcurrency; slot += 1) {
-    const leaseToken = randomUUID();
-    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-    try {
-      await db.insert(schema.downstreamApiKeyLeases).values({
-        downstreamApiKeyId: snapshot.keyId,
-        leaseToken,
-        slot,
-        expiresAt,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      }).run();
-
-      const stillActive = await verifyDownstreamPolicySnapshotActive(snapshot);
-      if (!stillActive.ok) {
-        await db.delete(schema.downstreamApiKeyLeases)
-          .where(eq(schema.downstreamApiKeyLeases.leaseToken, leaseToken))
-          .run();
-        return stillActive;
-      }
-
-      return {
-        ok: true,
-        lease: new DatabaseDownstreamConcurrencyLease(
-          snapshot.keyId,
-          leaseToken,
-          slot,
-          ttlMs,
-          heartbeatIntervalMs,
-          expiresAt,
-        ),
-      };
-    } catch (error) {
-      if (looksLikeConcurrencyLeaseCollision(error)) continue;
-      throw error;
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+  const claimed = await claimDatabaseLeaseSlot(maxConcurrency, async (slot, leaseToken) => {
+    await db.insert(schema.downstreamApiKeyLeases).values({
+      downstreamApiKeyId: snapshot.keyId!, leaseToken, slot, expiresAt, createdAt: nowIso, updatedAt: nowIso,
+    }).run();
+  });
+  if (claimed) {
+    const stillActive = await verifyDownstreamPolicySnapshotActive(snapshot);
+    if (!stillActive.ok) {
+      await db.delete(schema.downstreamApiKeyLeases).where(eq(schema.downstreamApiKeyLeases.leaseToken, claimed.leaseToken)).run();
+      return stillActive;
     }
+    return { ok: true, lease: new DatabaseDownstreamConcurrencyLease(snapshot.keyId, claimed.leaseToken, claimed.slot, ttlMs, heartbeatIntervalMs, expiresAt) };
   }
 
   return {

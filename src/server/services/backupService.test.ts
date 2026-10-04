@@ -66,6 +66,8 @@ describe('backupService', () => {
         'cf-access-client-id': 'roundtrip-client',
       }),
       customHeadersOverrideRequestHeaders: true,
+      maxConcurrency: 3,
+      concurrencyWaitTimeoutMs: 50,
       status: 'active',
       isPinned: true,
       sortOrder: 9,
@@ -209,6 +211,8 @@ describe('backupService', () => {
       },
     ]).run();
 
+    await db.insert(schema.siteConcurrencyLeases).values({ siteId: site.id, leaseToken: 'runtime-site-lease', slot: 1, expiresAt: new Date(Date.parse(now) + 60_000).toISOString() }).run();
+
     await db.insert(schema.oauthRefreshLeases).values({
       accountId: account.id,
       provider: 'codex',
@@ -311,6 +315,7 @@ describe('backupService', () => {
       oauthRefreshLastSuccessAt: now,
       oauthRefreshLastError: 'temporary provider failure',
     });
+    expect(exported.accounts).not.toHaveProperty('siteConcurrencyLeases');
     expect(exported.accounts).not.toHaveProperty('oauthRefreshLeases');
     expect(exported.accounts).not.toHaveProperty('oauthRefreshProviderStates');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('successCount');
@@ -340,6 +345,8 @@ describe('backupService', () => {
     expect(restoredSite?.useSystemProxy).toBe(true);
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
     expect(restoredSite?.customHeadersOverrideRequestHeaders).toBe(true);
+    expect(restoredSite?.maxConcurrency).toBe(3);
+    expect(restoredSite?.concurrencyWaitTimeoutMs).toBe(50);
     expect(restoredSite?.isPinned).toBe(true);
     expect(restoredSite?.sortOrder).toBe(9);
 
@@ -358,6 +365,7 @@ describe('backupService', () => {
       oauthRefreshLastError: 'temporary provider failure',
     });
     expect(restoredAccount?.oauthCredentialPayload).toContain('roundtrip-refresh-token');
+    expect(await db.select().from(schema.siteConcurrencyLeases).all()).toEqual([]);
     expect(await db.select().from(schema.oauthRefreshLeases).all()).toEqual([]);
     expect(await db.select().from(schema.oauthRefreshProviderStates).all()).toEqual([]);
 

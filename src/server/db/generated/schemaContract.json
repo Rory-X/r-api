@@ -5854,6 +5854,52 @@
         }
       }
     },
+    "site_concurrency_leases": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "slot": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "site_day_usage": {
       "columns": {
         "id": {
@@ -6362,6 +6408,18 @@
           "logicalType": "boolean",
           "notNull": false,
           "defaultValue": "false",
+          "primaryKey": false
+        },
+        "max_concurrency": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "concurrency_wait_timeout_ms": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
           "primaryKey": false
         }
       }
@@ -8498,6 +8556,39 @@
       "unique": true
     },
     {
+      "name": "site_concurrency_leases_expires_at_idx",
+      "table": "site_concurrency_leases",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_concurrency_leases_site_id_idx",
+      "table": "site_concurrency_leases",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_concurrency_leases_site_slot_unique",
+      "table": "site_concurrency_leases",
+      "columns": [
+        "site_id",
+        "slot"
+      ],
+      "unique": true
+    },
+    {
+      "name": "site_concurrency_leases_token_unique",
+      "table": "site_concurrency_leases",
+      "columns": [
+        "lease_token"
+      ],
+      "unique": true
+    },
+    {
       "name": "site_day_usage_day_idx",
       "table": "site_day_usage",
       "columns": [
@@ -9123,6 +9214,21 @@
       "columns": [
         "site_id",
         "url"
+      ]
+    },
+    {
+      "name": "site_concurrency_leases_site_slot_unique",
+      "table": "site_concurrency_leases",
+      "columns": [
+        "site_id",
+        "slot"
+      ]
+    },
+    {
+      "name": "site_concurrency_leases_token_unique",
+      "table": "site_concurrency_leases",
+      "columns": [
+        "lease_token"
       ]
     },
     {
@@ -9873,6 +9979,17 @@
     },
     {
       "table": "site_api_endpoints",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_concurrency_leases",
       "columns": [
         "site_id"
       ],

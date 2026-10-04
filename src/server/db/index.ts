@@ -50,6 +50,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'proxy_files',
   'downstream_api_keys',
   'downstream_api_key_leases',
+  'site_concurrency_leases',
   'notification_outbox',
   'archive_manifests',
   'downstream_api_key_rate_windows',

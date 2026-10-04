@@ -17,6 +17,8 @@ export const sites = sqliteTable('sites', {
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
   globalWeight: real('global_weight').default(1),
+  maxConcurrency: integer('max_concurrency'),
+  concurrencyWaitTimeoutMs: integer('concurrency_wait_timeout_ms').notNull().default(0),
   apiKey: text('api_key'),
   postRefreshProbeEnabled: integer('post_refresh_probe_enabled', { mode: 'boolean' }).default(false),
   postRefreshProbeModel: text('post_refresh_probe_model').default(''),
@@ -27,6 +29,23 @@ export const sites = sqliteTable('sites', {
 }, (table) => ({
   statusIdx: index('sites_status_idx').on(table.status),
   platformUrlUnique: uniqueIndex('sites_platform_url_unique').on(table.platform, table.url),
+}));
+
+/** Deployment-wide proxy capacity, fenced by unique site slots and expiring tokens. */
+export const siteConcurrencyLeases = sqliteTable('site_concurrency_leases', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  leaseToken: text('lease_token').notNull(),
+  slot: integer('slot').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  leaseTokenUnique: uniqueIndex('site_concurrency_leases_token_unique').on(table.leaseToken),
+  siteSlotUnique: uniqueIndex('site_concurrency_leases_site_slot_unique').on(table.siteId, table.slot),
+  siteIdIdx: index('site_concurrency_leases_site_id_idx').on(table.siteId),
+  expiresAtIdx: index('site_concurrency_leases_expires_at_idx').on(table.expiresAt),
+  slotPositive: check('site_concurrency_leases_slot_positive', sql`${table.slot} > 0`),
 }));
 
 export const siteApiEndpoints = sqliteTable('site_api_endpoints', {

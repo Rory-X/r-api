@@ -796,6 +796,8 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       useSystemProxy: false,
       customHeaders: null,
       customHeadersOverrideRequestHeaders: false,
+      maxConcurrency: null,
+      concurrencyWaitTimeoutMs: 0,
       codexFingerprintEnabled: false,
       status: 'active',
       isPinned: false,
@@ -1046,6 +1048,8 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         useSystemProxy: false,
         customHeaders: null,
         customHeadersOverrideRequestHeaders: false,
+        maxConcurrency: null,
+        concurrencyWaitTimeoutMs: 0,
         codexFingerprintEnabled: false,
         status: 'active',
         isPinned: false,
@@ -1580,6 +1584,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.modelAvailability).run();
     await tx.delete(schema.modelSyncStates).run();
     await tx.delete(schema.oauthRefreshLeases).run();
+    await tx.delete(schema.siteConcurrencyLeases).run();
     await tx.delete(schema.oauthRefreshProviderStates).run();
     await tx.delete(schema.credentialLifecycleAudits).run();
     await tx.delete(schema.credentialRefreshJobs).run();
@@ -1603,6 +1608,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         useSystemProxy: row.useSystemProxy ?? false,
         customHeaders: row.customHeaders ?? null,
         customHeadersOverrideRequestHeaders: row.customHeadersOverrideRequestHeaders ?? false,
+        maxConcurrency: row.maxConcurrency ?? null,
+        concurrencyWaitTimeoutMs: row.concurrencyWaitTimeoutMs ?? 0,
         status: row.status || 'active',
         isPinned: row.isPinned ?? false,
         sortOrder: row.sortOrder ?? 0,
