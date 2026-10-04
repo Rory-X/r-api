@@ -426,7 +426,7 @@ export function buildUpstreamEndpointRequest(input: {
   headers: Record<string, string>;
   body: Record<string, unknown>;
   runtime?: {
-    executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude';
+    executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude' | 'gemini-native';
     modelName?: string;
     stream?: boolean;
     oauthProjectId?: string | null;
@@ -528,7 +528,7 @@ export function buildUpstreamEndpointRequest(input: {
             : sitePlatform === 'claude'
               ? 'claude'
               : 'default'
-    ) as 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude',
+    ) as 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude' | 'gemini-native',
     modelName: input.modelName,
     stream: input.stream,
     oauthProjectId: asTrimmedString(input.oauthProjectId) || null,
@@ -552,7 +552,11 @@ export function buildUpstreamEndpointRequest(input: {
     }) as T
   );
 
-  if (isInternalGeminiUpstream) {
+  const useNativeGeminiChat = input.endpoint === 'chat'
+    && input.downstreamFormat !== 'responses'
+    && providerProfile?.prefersNativeChat?.(openaiBody) === true;
+
+  if (isInternalGeminiUpstream || useNativeGeminiChat) {
     const instructions = (
       input.downstreamFormat === 'responses'
       && typeof input.responsesOriginalBody?.instructions === 'string'

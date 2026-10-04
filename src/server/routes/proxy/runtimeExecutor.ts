@@ -1,3 +1,4 @@
+import { geminiNativeExecutor } from '../../proxy-core/executors/geminiNativeExecutor.js';
 import { antigravityExecutor } from '../../proxy-core/executors/antigravityExecutor.js';
 import { claudeExecutor } from '../../proxy-core/executors/claudeExecutor.js';
 import { codexExecutor } from '../../proxy-core/executors/codexExecutor.js';
@@ -8,6 +9,7 @@ export async function dispatchRuntimeRequest(
   input: RuntimeDispatchInput,
 ): Promise<RuntimeResponse> {
   const executor = input.request.runtime?.executor || 'default';
+  if (executor === 'gemini-native') return geminiNativeExecutor.dispatch(input);
   if (executor === 'codex') {
     return codexExecutor.dispatch(input);
   }

@@ -292,6 +292,7 @@ export function createSurfaceDispatchRequest(input: {
   site: SiteProxyConfigLike & { url: string };
   accountExtraConfig?: string | null;
   siteUrl?: string;
+  signal?: AbortSignal;
 }) {
   const channelProxyUrl = resolveChannelProxyUrl(input.site, input.accountExtraConfig);
   return (
@@ -302,7 +303,7 @@ export function createSurfaceDispatchRequest(input: {
     dispatchRuntimeRequest({
       siteUrl: input.siteUrl ?? input.site.url,
       targetUrl,
-      signal,
+      signal: input.signal && signal ? AbortSignal.any([input.signal, signal]) : (input.signal ?? signal),
       request,
       buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(input.site, {
         method: 'POST',

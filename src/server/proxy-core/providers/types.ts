@@ -2,7 +2,8 @@ export type ProviderProfileId =
   | 'codex'
   | 'claude'
   | 'gemini-cli'
-  | 'antigravity';
+  | 'antigravity'
+  | 'gemini';
 
 export type ProviderEndpoint =
   | 'chat'
@@ -15,7 +16,7 @@ export type ProviderAction =
   | 'countTokens';
 
 export type ProviderRuntimeDescriptor = {
-  executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude';
+  executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude' | 'gemini-native';
   modelName?: string;
   stream?: boolean;
   oauthProjectId?: string | null;
@@ -49,5 +50,6 @@ export type PrepareProviderRequestInput = {
 
 export type ProviderProfile = {
   id: ProviderProfileId;
+  prefersNativeChat?: (body: Record<string, unknown>) => boolean;
   prepareRequest(input: PrepareProviderRequestInput): PreparedProviderRequest;
 };

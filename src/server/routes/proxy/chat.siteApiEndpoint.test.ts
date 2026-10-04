@@ -369,4 +369,31 @@ describe('chat proxy site api endpoint rotation', () => {
       lastFailureReason: null,
     });
   });
+
+  it('does not rotate native Gemini addresses or channels after an ambiguous first-byte timeout', async () => {
+    const site = await db.insert(schema.sites).values({ name: 'native Gemini', url: 'https://panel.example.com', platform: 'gemini', status: 'active' }).returning().get();
+    const account = await db.insert(schema.accounts).values({ siteId: site.id, username: 'gemini-user', accessToken: '', apiToken: 'native-key', status: 'active', checkinEnabled: false }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values([
+      { siteId: site.id, url: 'https://api-a.example.com/v1beta/openai', enabled: true, sortOrder: 0 },
+      { siteId: site.id, url: 'https://api-b.example.com/v1beta/openai', enabled: true, sortOrder: 1 },
+    ]).run();
+    selectChannelMock.mockReturnValue({ channel: { id: 11, routeId: 22, retryOwner: 'local_proxy' }, site, account, tokenValue: 'native-key', actualModel: 'gemini-3-flash-preview' });
+    selectNextChannelMock.mockReturnValue({ channel: { id: 12, routeId: 22, retryOwner: 'local_proxy' }, site, account, tokenValue: 'native-key', actualModel: 'gemini-3-flash-preview' });
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    const previousTimeout = config.proxyFirstByteTimeoutSec;
+    config.proxyFirstByteTimeoutSec = 0.01;
+    const cancel = vi.fn();
+    try {
+      fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ cancel }), { headers: { 'content-type': 'text/event-stream' } }));
+      const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: { model: 'gemini-3-flash-preview', stream: true, messages: [{ role: 'user', content: 'check' }], tools: [{ type: 'function', function: { name: 'weather', parameters: { type: 'object' } } }] } });
+      expect(response.statusCode, response.body).toBe(408);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api-a.example.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse');
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      const endpoints = await db.select().from(schema.siteApiEndpoints).where(eq(schema.siteApiEndpoints.siteId, site.id)).orderBy(asc(schema.siteApiEndpoints.sortOrder)).all();
+      expect(endpoints[1].cooldownUntil).toBeNull();
+      expect(recordSuccessMock).not.toHaveBeenCalled();
+    } finally { config.proxyFirstByteTimeoutSec = previousTimeout; }
+  });
 });

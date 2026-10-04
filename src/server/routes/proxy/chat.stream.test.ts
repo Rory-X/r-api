@@ -6,6 +6,7 @@ import { PRE_OUTPUT_RETRY_GRACE_MS } from '../../proxy-core/deferredSseOutput.js
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
+const shouldRetryProxyRequestMock = vi.fn((..._args: unknown[]) => false);
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
@@ -64,7 +65,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
-  shouldRetryProxyRequest: () => false,
+  shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
   shouldAbortSameSiteEndpointFallback: () => false,
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
@@ -123,6 +124,7 @@ describe('chat proxy stream behavior', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    shouldRetryProxyRequestMock.mockReset().mockReturnValue(false);
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
     recordSuccessMock.mockReset();
@@ -5137,5 +5139,219 @@ describe('chat proxy stream behavior', () => {
     const [secondUrl] = fetchMock.mock.calls[1] as [string, any];
     expect(firstUrl).toContain('/v1/chat/completions');
     expect(secondUrl).toContain('/v1/messages');
+  });
+
+  const geminiPayload = {
+    model: 'gemini-3-flash-preview', stream: true,
+    messages: [{ role: 'user', content: 'check weather' }],
+    tools: [{ type: 'function', function: { name: 'weather', parameters: { type: 'object' } } }],
+  };
+  const nativeEvent = (parts: unknown[], finishReason?: string) => ({ candidates: [{ index: 0, content: { role: 'model', parts }, ...(finishReason ? { finishReason } : {}) }] });
+  const nativeTool = (name: string, id: string, signature?: string) => ({ functionCall: { id, name, args: { city: 'Paris' } }, ...(signature ? { thoughtSignature: signature } : {}) });
+  const geminiChannel = (id = 11, retryOwner = 'local_proxy') => ({
+    channel: { id, routeId: 22, retryOwner, upstreamRetryMode: 'none' },
+    site: { id: 1, name: 'gemini', platform: 'gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai?trace=1&key=old-key' },
+    account: { id: 33, username: 'demo-user' }, tokenName: 'default', tokenValue: 'native-key', actualModel: 'gemini-3-flash-preview',
+  });
+  const mockGeminiLedger = async () => {
+    const runtime = await import('../../services/proxyAttemptLedgerRuntime.js');
+    const ledger = {
+      requestId: 'gemini-request', requestRowId: 1,
+      setRetryOwner: vi.fn(async () => {}), setSelection: vi.fn(), recordRoutingDecision: vi.fn(async () => {}),
+      getLatestAttemptId: () => 'gemini-attempt', beginAttempt: vi.fn(async () => ({ attemptId: 'gemini-attempt', attemptIndex: 0 })),
+      markAttemptCommit: vi.fn(async () => {}), finishAttempt: vi.fn(async () => {}),
+      createAttemptIdentity: () => ({ attemptId: 'gemini-attempt', attemptIndex: 0 }),
+      onAttemptStart: vi.fn(async () => {}), onAttemptCommitState: vi.fn(async () => {}), onAttemptFailure: vi.fn(async () => {}),
+      onAttemptSuccess: vi.fn(async () => {}), finishRequest: vi.fn(async () => {}),
+    };
+    const spy = vi.spyOn(runtime, 'startProxyAttemptLedgerSession').mockResolvedValue(ledger);
+    return { ledger, spy };
+  };
+
+  it('streams native Gemini tools through endpoint flow with stable identity, signatures, usage and a completed ledger', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    const { ledger, spy } = await mockGeminiLedger();
+    try {
+      const events = [nativeEvent([nativeTool('weather', 'weather-1', 'real-signature')]), nativeEvent([nativeTool('time', 'time-1')]), nativeEvent([], 'STOP'), { usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2, thoughtsTokenCount: 3, totalTokenCount: 10 } }];
+      fetchMock.mockResolvedValue(new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } }));
+      const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: geminiPayload });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.body).toContain('"index":1,"id":"time-1"');
+      expect(response.body).toContain('real-signature');
+      expect(response.body).toContain('"finish_reason":"tool_calls"');
+      expect(response.body).toContain('"completion_tokens":5');
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse');
+      expect(new Headers(init.headers).get('x-goog-api-key')).toBe('native-key');
+      expect(new Headers(init.headers).get('authorization')).toBeNull();
+      expect(ledger.onAttemptStart).toHaveBeenCalledWith(expect.objectContaining({ targetUrl: url, request: expect.objectContaining({ runtime: expect.objectContaining({ executor: 'gemini-native' }) }) }));
+      expect(ledger.onAttemptSuccess).toHaveBeenCalledOnce();
+      expect(ledger.finishRequest).toHaveBeenCalledWith('succeeded');
+      expect(ledger.setRetryOwner).toHaveBeenCalledWith('local_proxy');
+      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ policy: expect.objectContaining({ replaySafety: 'safe_only' }) }));
+      expect(recordSuccessMock).toHaveBeenCalledOnce();
+      expect(resolveProxyUsageWithSelfLogFallbackMock).toHaveBeenCalledWith(expect.objectContaining({ usage: expect.objectContaining({ promptTokens: 5, completionTokens: 5, totalTokens: 10 }) }));
+    } finally { spy.mockRestore(); }
+  });
+
+  it('replays native tool IDs and real signatures and returns a valid non-stream tool completion', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(nativeEvent([nativeTool('weather', 'next-call', 'next-signature')], 'STOP')), { headers: { 'content-type': 'application/json' } }));
+    const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: { ...geminiPayload, stream: false, messages: [
+      { role: 'assistant', content: '', tool_calls: [{ id: 'previous-call', type: 'function', function: { name: 'weather', arguments: '{}' }, provider_specific_fields: { thought_signature: 'previous-signature' } }] },
+      { role: 'tool', tool_call_id: 'previous-call', content: '{"temp":22}' },
+    ] } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().choices[0]).toMatchObject({ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'next-call', provider_specific_fields: { thought_signature: 'next-signature' } }] } });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.contents[0].parts[0]).toMatchObject({ functionCall: { id: 'previous-call', name: 'weather' }, thoughtSignature: 'previous-signature' });
+    expect(body.contents[1].parts[0].functionResponse).toMatchObject({ id: 'previous-call', name: 'weather' });
+    expect(recordSuccessMock).toHaveBeenCalledOnce();
+  });
+
+  it('fails unfinished native SSE without reporting attempt success or replaying committed tools', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    selectNextChannelMock.mockReturnValue(geminiChannel(12));
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    const { ledger, spy } = await mockGeminiLedger();
+    try {
+      fetchMock.mockResolvedValue(new Response(`data: ${JSON.stringify(nativeEvent([nativeTool('weather', 'weather-1')]))}\n\n`, { headers: { 'content-type': 'text/event-stream' } }));
+      const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: geminiPayload });
+      expect(response.body).toContain('Gemini stream ended before a finish reason');
+      expect(response.body).not.toContain('"finish_reason":"stop"');
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(recordSuccessMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).toHaveBeenCalledOnce();
+      expect(ledger.onAttemptSuccess).not.toHaveBeenCalled();
+      expect(ledger.finishRequest).toHaveBeenCalledWith('failed');
+    } finally { spy.mockRestore(); }
+  });
+
+  it('does not retry a native transport error after downstream text has been committed', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    selectNextChannelMock.mockReturnValue(geminiChannel(12));
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    let reads = 0;
+    fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ pull(controller) {
+      if (reads++ === 0) controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(nativeEvent([{ text: 'partial text' }]))}\n\n`));
+      else controller.error(new Error('connection reset'));
+    } }), { headers: { 'content-type': 'text/event-stream' } }));
+    const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: geminiPayload });
+    expect(response.body).toContain('partial text');
+    expect(response.body).not.toContain('"finish_reason":"stop"');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['local_proxy', 'upstream_gateway'])('keeps native pre-output retries owned by %s', async (retryOwner) => {
+    selectChannelMock.mockReturnValue(geminiChannel(11, retryOwner));
+    selectNextChannelMock.mockReturnValue(geminiChannel(12, retryOwner));
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'rate limit' } }), { status: 429, headers: { 'content-type': 'application/json' } })).mockResolvedValueOnce(new Response(JSON.stringify(nativeEvent([{ text: 'recovered' }], 'STOP')), { headers: { 'content-type': 'application/json' } }));
+    const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: { ...geminiPayload, stream: false } });
+    if (retryOwner === 'local_proxy') { expect(response.statusCode, response.body).toBe(200); expect(fetchMock).toHaveBeenCalledTimes(2); }
+    else { expect(response.statusCode, response.body).toBe(429); expect(fetchMock).toHaveBeenCalledOnce(); }
+  });
+
+  it('stops native generation on first-byte timeout without replaying an ambiguous send', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    selectNextChannelMock.mockReturnValue(geminiChannel(12));
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    const cancel = vi.fn();
+    const previousTimeout = config.proxyFirstByteTimeoutSec;
+    config.proxyFirstByteTimeoutSec = 0.01;
+    const { ledger, spy } = await mockGeminiLedger();
+    try {
+      fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ cancel }), { headers: { 'content-type': 'text/event-stream' } }));
+      const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: geminiPayload });
+      expect(response.statusCode, response.body).toBe(408);
+      expect(response.body).toContain('first byte timeout');
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(ledger.onAttemptFailure).toHaveBeenCalledWith(expect.objectContaining({ commitState: 'sent_unknown' }));
+      expect(ledger.onAttemptSuccess).not.toHaveBeenCalled();
+    } finally { config.proxyFirstByteTimeoutSec = previousTimeout; spy.mockRestore(); }
+  });
+
+  it('rechecks the downstream policy before a permitted native channel retry', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    selectNextChannelMock.mockReturnValue(geminiChannel(12));
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    const policy = await import('./downstreamPolicy.js');
+    const policySpy = vi.spyOn(policy, 'ensureDownstreamPolicySnapshotActive').mockResolvedValueOnce(true).mockImplementationOnce(async (_request, reply) => { reply.code(403).send({ error: { message: 'policy changed' } }); return false; });
+    const { ledger, spy } = await mockGeminiLedger();
+    try {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { message: 'rate limit' } }), { status: 429, headers: { 'content-type': 'application/json' } }));
+      const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: { ...geminiPayload, stream: false } });
+      expect(response.statusCode, response.body).toBe(403);
+      expect(policySpy).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(recordSuccessMock).not.toHaveBeenCalled();
+      expect(ledger.finishRequest).toHaveBeenCalledWith('failed');
+    } finally { policySpy.mockRestore(); spy.mockRestore(); }
+  });
+
+
+  it('uses native Gemini for a conversation with both a document and tools', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(nativeEvent([nativeTool('weather', 'call-1', 'real-signature')], 'STOP')), { headers: { 'content-type': 'application/json' } }));
+    const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: { ...geminiPayload, stream: false, messages: [{ role: 'user', content: [{ type: 'file', file: { filename: 'brief.pdf', mime_type: 'application/pdf', file_data: 'JVBERi0=' } }, { type: 'text', text: 'read and check' }] }] } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toContain(':generateContent');
+    expect(fetchMock.mock.calls[0][0]).not.toContain('/responses');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.contents[0].parts[0].inlineData).toEqual({ mime_type: 'application/pdf', data: 'JVBERi0=' });
+    expect(response.body).toContain('real-signature');
+  });
+
+  it.each([['MAX_TOKENS', 'length'], ['SAFETY', 'content_filter']])('preserves native %s through SSE and JSON streaming fallback', async (reason, expected) => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    for (const contentType of ['text/event-stream', 'application/json']) {
+      const event = nativeEvent([nativeTool('weather', 'call-1')], reason);
+      fetchMock.mockResolvedValueOnce(new Response(contentType === 'application/json' ? JSON.stringify(event) : `data: ${JSON.stringify(event)}\n\n`, { headers: { 'content-type': contentType } }));
+      const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: geminiPayload });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.body).toContain(`"finish_reason":"${expected}"`);
+      expect(response.body).not.toContain('"finish_reason":"tool_calls"');
+    }
+  });
+
+  it('accepts an empty native safety-blocked completion under the empty-content guard', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    config.proxyEmptyContentFailEnabled = true;
+    fetchMock.mockResolvedValueOnce(new Response(`data: ${JSON.stringify({ promptFeedback: { blockReason: 'SAFETY' } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } }));
+    const response = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: geminiPayload });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.body).toContain('"finish_reason":"content_filter"');
+    expect(recordFailureMock).not.toHaveBeenCalled();
+    expect(recordSuccessMock).toHaveBeenCalledOnce();
+  });
+  it('cancels native upstream reading and finishes the ledger when the HTTP client disconnects', async () => {
+    selectChannelMock.mockReturnValue(geminiChannel());
+    const { ledger, spy } = await mockGeminiLedger();
+    const cancel = vi.fn();
+    try {
+      const { request: httpRequest } = await import('node:http');
+      const address = await app.listen({ host: '127.0.0.1', port: 0 });
+      fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(nativeEvent([nativeTool('weather', 'call-1')]))}\n\n`)); }, cancel }), { headers: { 'content-type': 'text/event-stream' } }));
+      await new Promise<void>((resolve, reject) => {
+        const client = httpRequest(`${address}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' } }, (response) => {
+          response.once('data', () => { response.destroy(); client.destroy(); resolve(); });
+          response.on('error', () => {});
+        });
+        client.on('error', reject);
+        client.end(JSON.stringify(geminiPayload));
+      });
+      await vi.waitFor(() => expect(ledger.finishRequest).toHaveBeenCalledWith('cancelled'));
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(ledger.onAttemptSuccess).not.toHaveBeenCalled();
+      expect(recordSuccessMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
   });
 });

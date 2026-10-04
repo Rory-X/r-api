@@ -281,11 +281,13 @@ export async function recordSiteApiEndpointSuccess(
 export async function runWithSiteApiEndpointPool<T>(
   site: SiteRow,
   operation: (target: SiteApiEndpointTarget) => Promise<T>,
+  options?: { signal?: AbortSignal; canReplayFailure?: (error: unknown) => boolean },
 ): Promise<T> {
   const attemptedEndpointIds = new Set<number>();
   let lastError: unknown;
 
   while (true) {
+    options?.signal?.throwIfAborted();
     const target = await selectSiteApiEndpointTarget(site);
     if (!target) {
       if (lastError) throw lastError;
@@ -307,6 +309,7 @@ export async function runWithSiteApiEndpointPool<T>(
       }
       return result;
     } catch (error) {
+      if (options?.signal?.aborted) throw error;
       lastError = error;
       attachSiteApiEndpointId(error, target.endpointId);
       if (!target.endpointId) {
@@ -318,7 +321,7 @@ export async function runWithSiteApiEndpointPool<T>(
         message: error instanceof Error ? error.message : String(error ?? ''),
         error,
       });
-      if (!recordedFailure.rotateToNextEndpoint) {
+      if (!recordedFailure.rotateToNextEndpoint || options?.canReplayFailure?.(error) === false) {
         throw error;
       }
 

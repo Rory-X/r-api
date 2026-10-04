@@ -24,6 +24,19 @@ function listTransformerFiles(directory: string): string[] {
 }
 
 describe('final transformer hard-cut architecture', () => {
+  it('owns Gemini chat conversion in a pure transformer and shares native URL resolution with endpoint flow', () => {
+    const bridge = readWorkspaceFile('src/server/transformers/gemini/generate-content/nativeChatBridge.ts');
+    const surface = readWorkspaceFile('src/server/proxy-core/surfaces/chatSurface.ts');
+    const flow = readWorkspaceFile('src/server/proxy-core/orchestration/endpointFlow.ts');
+    const executor = readWorkspaceFile('src/server/proxy-core/executors/geminiNativeExecutor.ts');
+    expect(bridge).toContain('createGeminiNativeChatBridge');
+    expect(bridge).not.toMatch(/from ['"][^'"]*(?:proxy-core|services|routes)\//);
+    expect(surface).toContain('createGeminiNativeChatStreamReader(');
+    expect(surface).not.toContain('toolArgumentsByIndex');
+    expect(flow).toContain('resolveRuntimeRequestUrl(input.siteUrl, request)');
+    expect(executor).toContain('resolveRuntimeRequestUrl(input.siteUrl, input.request)');
+    expect(executor).not.toMatch(/for\s*\(|while\s*\(/);
+  });
   it('keeps shared normalized helpers independent from route chatFormats', () => {
     const sharedNormalized = readWorkspaceFile('src/server/transformers/shared/normalized.ts');
 

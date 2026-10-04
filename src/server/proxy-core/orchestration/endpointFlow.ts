@@ -1,3 +1,4 @@
+import { resolveRuntimeRequestUrl } from '../providers/requestUrl.js';
 import { fetch } from 'undici';
 import { readRuntimeResponseText } from '../executors/types.js';
 import { fetchWithObservedFirstByte, isObservedFirstByteTimeoutResponse } from '../firstByteTimeout.js';
@@ -19,7 +20,7 @@ export type BuiltEndpointRequest = {
   headers: Record<string, string>;
   body: Record<string, unknown>;
   runtime?: {
-    executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude';
+    executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude' | 'gemini-native';
     modelName?: string;
     stream?: boolean;
     oauthProjectId?: string | null;
@@ -161,9 +162,9 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
     const request = input.buildRequest(endpoint, endpointIndex);
-    const defaultTarget = buildUpstreamUrl(input.siteUrl, request.path);
+    const defaultTarget = resolveRuntimeRequestUrl(input.siteUrl, request);
     const targetUrl = input.proxyUrl
-      ? buildUpstreamUrl(input.proxyUrl, request.path)
+      ? resolveRuntimeRequestUrl(input.proxyUrl, request)
       : defaultTarget;
 
     const defaultAttemptIdentity: EndpointAttemptIdentity = {

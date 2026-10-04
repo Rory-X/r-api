@@ -1,3 +1,8 @@
+import { resolveProviderProfile } from '../providers/registry.js';
+import { createDownstreamAbortScope, withAbortableStreamReader } from '../downstreamAbort.js';
+import { canRetryLocally, classifyRetryErrorScope, type AttemptCommitState } from '../../services/proxyRetryContract.js';
+import type { EndpointAttemptSuccessContext } from '../orchestration/endpointFlow.js';
+import { buildOpenAiChatFromGeminiNative, createGeminiNativeChatStreamReader } from '../../transformers/gemini/generate-content/nativeChatBridge.js';
 import { TextDecoder } from 'node:util';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config.js';
@@ -134,6 +139,15 @@ export async function handleChatSurfaceRequest(
   reply: FastifyReply,
   downstreamFormat: DownstreamFormat,
 ) {
+  const abortScope = createDownstreamAbortScope(request.raw, reply.raw);
+  try {
+    return await runChatSurfaceRequest(request, reply, downstreamFormat, abortScope.signal);
+  } finally {
+    abortScope.dispose();
+  }
+}
+
+async function runChatSurfaceRequest(request: FastifyRequest, reply: FastifyReply, downstreamFormat: DownstreamFormat, clientSignal: AbortSignal) {
   const requestReceivedAtMs = Date.now();
   const downstreamTransformer = downstreamFormat === 'claude'
     ? anthropicMessagesTransformer
@@ -240,6 +254,9 @@ export async function handleChatSurfaceRequest(
     requestHeaders: request.headers as Record<string, unknown>,
     requestBody: request.body,
   });
+  let nativeCommitState: AttemptCommitState | undefined;
+  let pendingNativeAttempt: EndpointAttemptSuccessContext | null = null;
+  const getPendingNativeAttempt = () => pendingNativeAttempt;
   let pendingEndpointSuccessHooks: Promise<void> | null = null;
   const settlePendingEndpointSuccessHooks = async () => {
     const pending = pendingEndpointSuccessHooks;
@@ -261,6 +278,10 @@ export async function handleChatSurfaceRequest(
   };
   const finalizeDebugSuccess = async (status: number, upstreamPath: string | null, responseHeaders: unknown, responseBody: unknown) => {
     await settlePendingEndpointSuccessHooks();
+    if (pendingNativeAttempt) {
+      await attemptLedger?.onAttemptSuccess(pendingNativeAttempt);
+      pendingNativeAttempt = null;
+    }
     await attemptLedger?.finishRequest('succeeded');
     await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
       finalStatus: 'success',
@@ -276,7 +297,8 @@ export async function handleChatSurfaceRequest(
 
   while (retryCount <= maxRetries) {
     await settlePendingEndpointSuccessHooks();
-    if (!await ensureDownstreamPolicySnapshotActive(request, reply)) return;
+    if (clientSignal.aborted) { await attemptLedger?.finishRequest('cancelled'); return; }
+    if (!await ensureDownstreamPolicySnapshotActive(request, reply)) { await attemptLedger?.finishRequest('failed'); return; }
     const stickyPreferredChannelId = retryCount === 0
       ? getSurfaceStickyPreferredChannelId(stickySessionKey)
       : null;
@@ -348,6 +370,9 @@ export async function handleChatSurfaceRequest(
         },
       ),
     ];
+    if (resolveProviderProfile(selected.site.platform)?.prefersNativeChat?.(resolvedOpenAiBody)) {
+      endpointCandidates = ['chat'];
+    }
     const endpointRuntimeContext = {
       siteId: selected.site.id,
       modelName,
@@ -442,6 +467,7 @@ export async function handleChatSurfaceRequest(
         site: selected.site,
         siteUrl: siteApiBaseUrl,
         accountExtraConfig: selected.account.extraConfig,
+        signal: clientSignal,
       });
       const endpointStrategy = downstreamTransformer.compatibility.createEndpointStrategy({
         downstreamFormat,
@@ -481,8 +507,14 @@ export async function handleChatSurfaceRequest(
         dispatchRequest,
         deferSuccessHooks: isStream && !debugTrace,
         createAttemptIdentity: attemptLedger?.createAttemptIdentity,
-        onAttemptStart: attemptLedger?.onAttemptStart,
-        onAttemptCommitState: attemptLedger?.onAttemptCommitState,
+        onAttemptStart: async (ctx) => {
+          nativeCommitState = ctx.request.runtime?.executor === 'gemini-native' ? 'not_started' : undefined;
+          await attemptLedger?.onAttemptStart(ctx);
+        },
+        onAttemptCommitState: async (ctx) => {
+          if (ctx.request.runtime?.executor === 'gemini-native') nativeCommitState = ctx.commitState;
+          await attemptLedger?.onAttemptCommitState(ctx);
+        },
         tryRecover,
         shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
           ctx.response.status,
@@ -516,7 +548,8 @@ export async function handleChatSurfaceRequest(
           });
         },
         onAttemptSuccess: async (ctx) => {
-          await attemptLedger?.onAttemptSuccess(ctx);
+          if (ctx.request.runtime?.executor === 'gemini-native') pendingNativeAttempt = ctx;
+          else await attemptLedger?.onAttemptSuccess(ctx);
           const memoryWrite = recordUpstreamEndpointSuccess({
             ...endpointRuntimeContext,
             endpoint: ctx.request.endpoint,
@@ -615,6 +648,17 @@ export async function handleChatSurfaceRequest(
           throw upstreamFailure;
         }
         return result;
+      }, {
+        signal: clientSignal,
+        canReplayFailure: (error) => nativeCommitState === undefined || canRetryLocally({
+          retryOwner: resolveApiChannelRetryPolicy(selected.channel).retryOwner,
+          replaySafety: 'safe_only',
+          commitState: nativeCommitState,
+          errorScope: classifyRetryErrorScope({
+            status: error instanceof SiteApiEndpointRequestError ? error.status ?? 502 : 502,
+            rawErrorText: error instanceof Error ? error.message : String(error),
+          }),
+        }),
       });
 
       const upstream = endpointResult.upstream;
@@ -666,6 +710,7 @@ export async function handleChatSurfaceRequest(
         };
         let upstreamUsagePresent = false;
         const recordStreamSuccess = async (latencyMs: number) => {
+          clientSignal.throwIfAborted();
           await recordSurfaceSuccess({
             selected,
             requestedModel,
@@ -788,6 +833,9 @@ export async function handleChatSurfaceRequest(
           if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
             fallbackData = unwrapGeminiCliPayload(fallbackData);
           }
+          if (/:(?:stream)?generateContent/i.test(successfulUpstreamPath)) {
+            fallbackData = buildOpenAiChatFromGeminiNative(fallbackData, modelName);
+          }
           upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(fallbackData);
           parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
           const latency = Date.now() - startTime;
@@ -798,6 +846,7 @@ export async function handleChatSurfaceRequest(
               selected,
             });
             const failureOutcome = await failureToolkit.handleDetectedFailure({
+              commitState: nativeCommitState,
               selected,
               requestedModel,
               modelName,
@@ -880,27 +929,31 @@ export async function handleChatSurfaceRequest(
           return;
         } else {
           const upstreamReader = getRuntimeResponseReader(upstream);
-          const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
+          const unwrappedReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
             : upstreamReader;
+          const baseReader = unwrappedReader && /:(?:stream)?generateContent/i.test(successfulUpstreamPath)
+            ? createGeminiNativeChatStreamReader(unwrappedReader, modelName)
+            : unwrappedReader;
+          const abortableReader = baseReader ? withAbortableStreamReader(baseReader, clientSignal) : baseReader;
           const decoder = new TextDecoder();
-          const reader = baseReader
+          const reader = abortableReader
             ? {
               async read() {
-                const result = await baseReader.read();
+                const result = await abortableReader.read();
                 if (result.value) {
                   rawText += decoder.decode(result.value, { stream: true });
                 }
                 return result;
               },
               async cancel(reason?: unknown) {
-                return baseReader.cancel(reason);
+                return abortableReader.cancel(reason);
               },
               releaseLock() {
-                return baseReader.releaseLock();
+                return abortableReader.releaseLock();
               },
             }
-            : baseReader;
+            : abortableReader;
           const streamResult = await streamSession.run(reader, streamResponse);
           rawText += decoder.decode();
 
@@ -990,6 +1043,7 @@ export async function handleChatSurfaceRequest(
         upstreamData = unwrapGeminiCliPayload(upstreamData);
       }
 
+      clientSignal.throwIfAborted();
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
       const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
@@ -1000,6 +1054,7 @@ export async function handleChatSurfaceRequest(
           selected,
         });
         const failureOutcome = await failureToolkit.handleDetectedFailure({
+              commitState: nativeCommitState,
           selected,
           requestedModel,
           modelName,
@@ -1026,6 +1081,9 @@ export async function handleChatSurfaceRequest(
           successfulUpstreamPath,
         );
         return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+      }
+      if (/:(?:stream)?generateContent/i.test(successfulUpstreamPath)) {
+        upstreamData = buildOpenAiChatFromGeminiNative(upstreamData, modelName);
       }
       const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
       const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
@@ -1064,10 +1122,25 @@ export async function handleChatSurfaceRequest(
 
       return reply.send(downstreamResponse);
     } catch (err: any) {
-      clearSurfaceStickyChannel({
-        stickySessionKey,
-        selected,
-      });
+      clearSurfaceStickyChannel({ stickySessionKey, selected });
+      if (clientSignal.aborted) {
+        await settlePendingEndpointSuccessHooks();
+        await attemptLedger?.finishRequest('cancelled');
+        await safeFinalizeSurfaceProxyDebugTrace(debugTrace, { finalStatus: 'failed', finalHttpStatus: 499, finalResponseBody: { error: { message: 'Downstream client disconnected' } } });
+        return;
+      }
+      // Native generation has already started once its response is accepted.
+      // Neither a conversion failure nor a transport failure after SSE output
+      // is safe to replay under the request's safe_only policy.
+      const nativeAttempt = getPendingNativeAttempt();
+      if (reply.raw.headersSent || nativeAttempt) {
+        const message = err?.message || 'upstream stream failed';
+        await failureToolkit.recordStreamFailure({ selected, requestedModel, modelName, errorMessage: message, latencyMs: Date.now() - startTime, retryCount, upstreamPath: nativeAttempt?.request.path ?? null, runtimeFailureStatus: 502 });
+        await finalizeDebugFailure(502, { error: { message, type: 'stream_error' } });
+        if (!reply.raw.headersSent) return reply.code(502).send({ error: { message, type: 'upstream_error' } });
+        if (!reply.raw.writableEnded) reply.raw.end();
+        return;
+      }
       const endpointFailureStatus = typeof err?.status === 'number' ? err.status : null;
       const isSiteApiEndpointFailure = (
         err instanceof SiteApiEndpointRequestError
@@ -1093,6 +1166,7 @@ export async function handleChatSurfaceRequest(
       }
       if (isSiteApiEndpointFailure) {
         const failureOutcome = await failureToolkit.handleUpstreamFailure({
+          commitState: nativeCommitState,
           selected,
           requestedModel,
           modelName,
@@ -1121,6 +1195,7 @@ export async function handleChatSurfaceRequest(
         return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
       const failureOutcome = await failureToolkit.handleExecutionError({
+        commitState: nativeCommitState,
         selected,
         requestedModel,
         modelName,

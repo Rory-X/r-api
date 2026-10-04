@@ -477,4 +477,24 @@ describe('siteApiEndpointService', () => {
       lastFailureReason: null,
     });
   });
+
+  it.each(['unsafe replay', 'client cancellation'])('stops URL rotation for %s', async (reason) => {
+    const site = await db.insert(schema.sites).values({ name: reason, url: 'https://panel.example.com', platform: 'gemini', status: 'active' }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values([
+      { siteId: site.id, url: 'https://api-primary.example.com', enabled: true, sortOrder: 0 },
+      { siteId: site.id, url: 'https://api-secondary.example.com', enabled: true, sortOrder: 1 },
+    ]).run();
+    const controller = new AbortController();
+    const attempted: string[] = [];
+    await expect(runWithSiteApiEndpointPool(site, async (target) => {
+      attempted.push(target.baseUrl);
+      if (reason === 'client cancellation') controller.abort(new Error('client disconnected'));
+      throw new SiteApiEndpointRequestError('first byte timeout', { status: 408 });
+    }, { signal: controller.signal, canReplayFailure: () => false })).rejects.toThrow('first byte timeout');
+    expect(attempted).toEqual(['https://api-primary.example.com']);
+    const endpoints = await db.select().from(schema.siteApiEndpoints).where(eq(schema.siteApiEndpoints.siteId, site.id)).orderBy(asc(schema.siteApiEndpoints.sortOrder)).all();
+    expect(endpoints[1].cooldownUntil).toBeNull();
+    if (reason === 'client cancellation') expect(endpoints[0].cooldownUntil).toBeNull();
+    else expect(endpoints[0].cooldownUntil).not.toBeNull();
+  });
 });

@@ -10,10 +10,10 @@ function splitBaseUrl(baseUrl: string): { path: string; query: string } {
   const raw = baseUrl || '';
   const queryIndex = raw.indexOf('?');
   if (queryIndex < 0) {
-    return { path: normalizePathname(raw), query: '' };
+    return { path: normalizePathname(raw).replace(/\/openai$/i, ''), query: '' };
   }
   return {
-    path: normalizePathname(raw.slice(0, queryIndex)),
+    path: normalizePathname(raw.slice(0, queryIndex)).replace(/\/openai$/i, ''),
     query: raw.slice(queryIndex + 1),
   };
 }
@@ -46,7 +46,7 @@ export function resolveGeminiGenerateContentUrl(
   baseUrl: string,
   apiVersion: string,
   modelActionPath: string,
-  apiKey: string,
+  apiKey: string | undefined,
   search: string,
 ): string {
   const base = resolveGeminiNativeBaseUrl(baseUrl, apiVersion);
@@ -57,7 +57,8 @@ export function resolveGeminiGenerateContentUrl(
   for (const [key, value] of extraParams) {
     params.set(key, value);
   }
-  params.set('key', apiKey);
+  if (apiKey !== undefined) params.set('key', apiKey);
+  else for (const key of [...params.keys()]) { if (key.toLowerCase() === 'key') params.delete(key); }
   const query = params.toString();
   return `${path}/${normalizedAction}${query ? `?${query}` : ''}`;
 }
