@@ -1,3 +1,4 @@
+import { resolveSqlitePath } from './sqlitePath.js';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
@@ -85,20 +86,6 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'proxy_logs', column: 'first_byte_latency_ms' },
 ];
 
-
-function resolveSqliteDbPath(): string {
-  const raw = (config.dbUrl || '').trim();
-  if (!raw) return resolve(`${config.dataDir}/hub.db`);
-  if (raw === ':memory:') return raw;
-  if (raw.startsWith('file://')) {
-    const parsed = new URL(raw);
-    return decodeURIComponent(parsed.pathname);
-  }
-  if (raw.startsWith('sqlite://')) {
-    return resolve(raw.slice('sqlite://'.length).trim());
-  }
-  return resolve(raw);
-}
 
 function resolveMigrationsFolder(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '../../../drizzle');
@@ -679,7 +666,7 @@ function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsF
 }
 
 export function runSqliteMigrations(): void {
-  const dbPath = resolveSqliteDbPath();
+  const dbPath = resolveSqlitePath();
   const migrationsFolder = resolveMigrationsFolder();
   if (dbPath !== ':memory:') {
     mkdirSync(dirname(dbPath), { recursive: true });

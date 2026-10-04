@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { mkdtempSync } from 'node:fs';
 
 type DbModule = typeof import('./index.js');
 
@@ -36,10 +37,12 @@ describe('sqlite default path resolution', () => {
     delete process.env.DB_URL;
     const { config } = await import('../config.js');
     const cachedDataDir = config.dataDir;
-    process.env.DATA_DIR = resolve(tmpdir(), 'metapi-late-fixture-directory');
+    process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'metapi-late-fixture-directory-'));
+    await import('./migrate.js');
     dbModule = await import('./index.js');
     expect(dbModule.__dbProxyTestUtils.resolveSqlitePath()).toBe(resolve(process.env.DATA_DIR, 'hub.db'));
     expect(dbModule.__dbProxyTestUtils.resolveSqlitePath()).not.toBe(resolve(cachedDataDir, 'hub.db'));
+    expect(await dbModule.db.select().from(dbModule.schema.proxyLogs).all()).toEqual([]);
     await dbModule.closeDbConnections();
   });
 

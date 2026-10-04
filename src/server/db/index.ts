@@ -1,3 +1,4 @@
+import { resolveSqlitePath, resolveVitestSqlitePath } from './sqlitePath.js';
 import Database from 'better-sqlite3';
 import mysql from 'mysql2/promise';
 import pg from 'pg';
@@ -17,9 +18,7 @@ import { executeLegacyCompat, executeLegacyCompatSync } from './legacySchemaComp
 import { config } from '../config.js';
 import { ensureRuntimeDatabaseReady } from '../runtimeDatabaseBootstrap.js';
 import { mkdirSync } from 'fs';
-import { tmpdir } from 'os';
 import { dirname, resolve } from 'path';
-import { threadId } from 'worker_threads';
 
 export type RuntimeDbDialect = 'sqlite' | 'mysql' | 'postgres';
 type SqlMethod = 'all' | 'get' | 'run' | 'values' | 'execute';
@@ -98,63 +97,6 @@ function buildPostgresPoolOptions(
     poolOptions.ssl = { rejectUnauthorized: false };
   }
   return poolOptions;
-}
-
-function resolveSqlitePath(): string {
-  const raw = (config.dbUrl || '').trim();
-  if (!raw) {
-    const isolatedVitestPath = resolveVitestSqlitePath();
-    if (isolatedVitestPath) {
-      return isolatedVitestPath;
-    }
-    return resolve(`${config.dataDir}/hub.db`);
-  }
-  if (raw === ':memory:') return raw;
-  if (raw.startsWith('file://')) {
-    const parsed = new URL(raw);
-    return decodeURIComponent(parsed.pathname);
-  }
-  if (raw.startsWith('sqlite://')) {
-    return resolve(raw.slice('sqlite://'.length).trim());
-  }
-  return resolve(raw);
-}
-
-function isVitestRuntime(): boolean {
-  if ((process.env.VITEST_POOL_ID || '').trim()) {
-    return true;
-  }
-  if ((process.env.VITEST_WORKER_ID || '').trim()) {
-    return true;
-  }
-  const runtimeArgs = [...process.argv, ...process.execArgv]
-    .map((value) => String(value || '').toLowerCase());
-  return runtimeArgs.some((value) => value.includes('vitest'));
-}
-
-function isDefaultRepoDataDir(value: string | undefined): boolean {
-  const trimmed = (value || '').trim();
-  if (!trimmed) return false;
-  return resolve(trimmed) === resolve('./data');
-}
-
-function resolveVitestSqlitePath(): string | null {
-  if (!isVitestRuntime()) {
-    return null;
-  }
-  if ((process.env.DB_URL || '').trim()) {
-    return null;
-  }
-  if ((process.env.DATA_DIR || '').trim() && !isDefaultRepoDataDir(process.env.DATA_DIR)) {
-    // Tests may import config before choosing their fixture directory. Resolve
-    // the live test override here instead of falling back to cached config.
-    return resolve(process.env.DATA_DIR!, 'hub.db');
-  }
-
-  const workerTag = process.env.VITEST_POOL_ID
-    || process.env.VITEST_WORKER_ID
-    || `${process.pid}-${threadId}`;
-  return resolve(tmpdir(), `metapi-vitest-${workerTag}`, 'hub.db');
 }
 
 function requireSqliteConnection(): Database.Database {
