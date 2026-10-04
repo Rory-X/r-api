@@ -1,10 +1,10 @@
+import { MAX_SITE_CONCURRENCY, MAX_SITE_CONCURRENCY_WAIT_MS, validateSiteConcurrencyConfig } from '../../shared/siteConcurrency.js';
+export { MAX_SITE_CONCURRENCY, MAX_SITE_CONCURRENCY_WAIT_MS } from '../../shared/siteConcurrency.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { and, eq, gt, lte } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { claimDatabaseLeaseSlot, DatabaseSlotLease } from './databaseSlotLease.js';
 
-export const MAX_SITE_CONCURRENCY = 10_000;
-export const MAX_SITE_CONCURRENCY_WAIT_MS = 60_000;
 
 export class SiteConcurrencyError extends Error {
   readonly status = 503;
@@ -46,7 +46,7 @@ async function loadPolicy(siteId: number) {
   const site = await db.select({ maxConcurrency: schema.sites.maxConcurrency, concurrencyWaitTimeoutMs: schema.sites.concurrencyWaitTimeoutMs, status: schema.sites.status })
     .from(schema.sites).where(eq(schema.sites.id, siteId)).get();
   if (!site || site.status !== 'active') throw new SiteConcurrencyError('Site is unavailable');
-  if (site.maxConcurrency !== null && (!Number.isInteger(site.maxConcurrency) || site.maxConcurrency < 1 || site.maxConcurrency > MAX_SITE_CONCURRENCY)) {
+  if (validateSiteConcurrencyConfig(site)) {
     throw new SiteConcurrencyError('Invalid site concurrency configuration');
   }
   return site;

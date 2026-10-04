@@ -1,3 +1,4 @@
+import { validateSiteConcurrencyConfig } from '../../shared/siteConcurrency.js';
 import { asc, eq } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
@@ -1566,6 +1567,10 @@ function detectImportMetadata(data: RawBackupData): {
 }
 
 async function importAccountsSection(section: AccountsBackupSection): Promise<void> {
+  for (const site of section.sites) {
+    const invalidField = validateSiteConcurrencyConfig(site);
+    if (invalidField) throw new Error(`导入数据格式错误：站点 ${site.id} 的 ${invalidField} 无效`);
+  }
   const runtimeState = await collectCurrentRuntimeStateSnapshot();
   const importedIndexes = buildRuntimeIdentityIndexesFromSection(section);
   const shouldReplaceSiteDisabledModels = Array.isArray(section.siteDisabledModels);

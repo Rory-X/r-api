@@ -6,6 +6,7 @@ import {
   emptySiteForm,
   serializeSiteApiEndpoints,
   serializeSiteCustomHeaders,
+  serializeSiteConcurrency,
   siteFormFromSite,
 } from './sitesEditor.js';
 
@@ -220,5 +221,18 @@ describe('buildSiteSaveAction', () => {
       apiEndpoints: [],
       error: 'API 请求地址 "https://api.example.com" 重复了',
     });
+  });
+});
+
+describe('site capacity editor', () => {
+  it('hydrates old records as unlimited and roundtrips a persisted limit and wait', () => {
+    expect(serializeSiteConcurrency(emptySiteForm())).toEqual({ valid: true, maxConcurrency: null, concurrencyWaitTimeoutMs: 0 });
+    expect(serializeSiteConcurrency(siteFormFromSite({ maxConcurrency: 25, concurrencyWaitTimeoutMs: 100 }))).toEqual({ valid: true, maxConcurrency: 25, concurrencyWaitTimeoutMs: 100 });
+    expect(serializeSiteConcurrency(siteFormFromSite({ name: 'legacy' }))).toMatchObject({ valid: true, maxConcurrency: null });
+  });
+  it.each([
+    ['0', '0'], ['-1', '0'], ['1.5', '0'], ['10001', '0'], ['', '-1'], ['', '60001'], ['', ''], ['', '1.5'], ['nonsense', '0'],
+  ])('rejects invalid saved input %s / %s', (maxConcurrency, concurrencyWaitTimeoutMs) => {
+    expect(serializeSiteConcurrency({ maxConcurrency, concurrencyWaitTimeoutMs })).toMatchObject({ valid: false });
   });
 });

@@ -235,6 +235,9 @@ export async function videosProxyRoute(app: FastifyInstance) {
     try {
       ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET'));
     } catch (error) {
+      if (getProxyRequestSignal()?.aborted) return;
+      const capacityError = getSiteConcurrencyError(error);
+      if (capacityError) return reply.code(capacityError.status).send(siteCapacityErrorPayload(capacityError));
       if (isSiteApiEndpointFailure(error)) {
         return sendVideoTaskEndpointFailure(reply, error);
       }
@@ -268,6 +271,9 @@ export async function videosProxyRoute(app: FastifyInstance) {
     try {
       ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE'));
     } catch (error) {
+      if (getProxyRequestSignal()?.aborted) return;
+      const capacityError = getSiteConcurrencyError(error);
+      if (capacityError) return reply.code(capacityError.status).send(siteCapacityErrorPayload(capacityError));
       if (isSiteApiEndpointFailure(error)) {
         return sendVideoTaskEndpointFailure(reply, error);
       }

@@ -1,3 +1,4 @@
+import SiteConcurrencyFields from './sites/SiteConcurrencyFields.js';
 /**
  * @Author: 橘子
  * @Project_description: r-api 站点管理页
@@ -30,6 +31,7 @@ import {
   emptySiteForm,
   serializeSiteApiEndpoints,
   serializeSiteCustomHeaders,
+  serializeSiteConcurrency,
   siteFormFromSite,
   type SiteEditorState,
   type SiteApiEndpointField,
@@ -68,6 +70,8 @@ type SiteRow = {
   customHeaders?: string | null;
   customHeadersOverrideRequestHeaders?: boolean | null;
   globalWeight?: number;
+  maxConcurrency?: number | null;
+  concurrencyWaitTimeoutMs?: number;
   isPinned?: boolean;
   sortOrder?: number;
   totalBalance?: number;
@@ -761,7 +765,11 @@ export default function Sites() {
       return;
     }
 
+    const serializedConcurrency = serializeSiteConcurrency(form);
+    if (!serializedConcurrency.valid) { toast.error(serializedConcurrency.error); return; }
     const payload = {
+      maxConcurrency: serializedConcurrency.maxConcurrency,
+      concurrencyWaitTimeoutMs: serializedConcurrency.concurrencyWaitTimeoutMs,
       name: form.name.trim(),
       url: primarySiteUrlAnalysis.persistedUrl || form.url.trim(),
       homepageUrl: form.homepageUrl.trim()
@@ -1911,6 +1919,8 @@ export default function Sites() {
               )}
             </div>
           )}
+
+          <SiteConcurrencyFields values={form} onChange={(values) => setForm((prev) => ({ ...prev, ...values }))} inputStyle={formInputStyle} />
 
           <ResponsiveFormGrid>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

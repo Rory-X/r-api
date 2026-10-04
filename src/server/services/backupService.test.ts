@@ -53,6 +53,15 @@ describe('backupService', () => {
     delete process.env.DATA_DIR;
   });
 
+
+  it.each([{ maxConcurrency: 0 }, { maxConcurrency: '2' }, { concurrencyWaitTimeoutMs: 60001 }, { concurrencyWaitTimeoutMs: null }])('rejects invalid site concurrency before destructive backup import: %j', async (invalid) => {
+    const original = await db.insert(schema.sites).values({ name: 'preserved', url: 'https://example.com', platform: 'openai', maxConcurrency: 4, concurrencyWaitTimeoutMs: 100 }).returning().get();
+    const exported = await backupService.exportBackup('accounts');
+    Object.assign(exported.accounts!.sites[0], invalid);
+    await expect(backupService.importBackup(exported as Record<string, unknown>)).rejects.toThrow('导入数据格式错误');
+    expect(await db.select().from(schema.sites).where(eq(schema.sites.id, original.id)).get()).toMatchObject({ name: 'preserved', maxConcurrency: 4, concurrencyWaitTimeoutMs: 100 });
+  });
+
   it('exports backup-owned config in v2.1 backups and still roundtrips core connection fields', async () => {
     const now = new Date().toISOString();
     const site = await db.insert(schema.sites).values({

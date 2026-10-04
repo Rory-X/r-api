@@ -226,6 +226,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites/detect" \
 | `initializationPresetId` | `string` | 否 | 官方预设 ID；用于保留预设语义、初始化建议和后续跳转 |
 | `proxyUrl` | `string \| null` | 否 | 站点专用代理地址，支持 `http(s)` / `socks` |
 | `useSystemProxy` | `boolean` | 否 | 是否使用全局 `SYSTEM_PROXY_URL` |
+| `maxConcurrency` | `number \| null` | 否 | 部署级站点合计并发；`null`（默认）为不限，否则整数 1–10000 |
+| `concurrencyWaitTimeoutMs` | `number` | 否 | 容量不足的等待上限，整数 0–60000 毫秒；默认 0，立即返回 503 |
 | `customHeaders` | `string \| null` | 否 | 自定义请求头，注意这里传的是 **JSON 字符串** |
 | `externalCheckinUrl` | `string \| null` | 否 | 外部签到地址，需为 `http(s)` |
 | `status` | `string` | 否 | `active` 或 `disabled` |

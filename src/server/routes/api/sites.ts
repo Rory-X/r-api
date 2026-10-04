@@ -530,6 +530,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       useSystemProxy,
       customHeaders,
       customHeadersOverrideRequestHeaders,
+      maxConcurrency,
+      concurrencyWaitTimeoutMs,
       externalCheckinUrl,
       status,
       isPinned,
@@ -624,6 +626,8 @@ export async function sitesRoutes(app: FastifyInstance) {
           useSystemProxy: normalizedUseSystemProxy ?? false,
           customHeaders: normalizedCustomHeaders.customHeaders,
           customHeadersOverrideRequestHeaders: customHeadersOverrideRequestHeaders ?? false,
+          maxConcurrency: maxConcurrency ?? null,
+          concurrencyWaitTimeoutMs: concurrencyWaitTimeoutMs ?? 0,
           codexFingerprintEnabled: (createBody as Record<string, unknown>).codexFingerprintEnabled === true
             || (createBody as Record<string, unknown>).codexFingerprintEnabled === 1,
           externalCheckinUrl: normalizedExternalCheckinUrl.url,
@@ -748,6 +752,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
     }
 
+    if (body.maxConcurrency !== undefined) updates.maxConcurrency = body.maxConcurrency;
+    if (body.concurrencyWaitTimeoutMs !== undefined) updates.concurrencyWaitTimeoutMs = body.concurrencyWaitTimeoutMs;
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = nextUrl;
     if (normalizedHomepageUrl.present) updates.homepageUrl = normalizedHomepageUrl.url;

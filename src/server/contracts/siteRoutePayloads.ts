@@ -1,3 +1,4 @@
+import { isValidSiteConcurrencyLimit, isValidSiteConcurrencyWait } from '../../shared/siteConcurrency.js';
 import { z } from 'zod';
 
 const requiredTrimmedString = z.string().trim().min(1);
@@ -13,6 +14,8 @@ const siteCreatePayloadSchema = z.object({
   useSystemProxy: unknownField,
   customHeaders: unknownField,
   customHeadersOverrideRequestHeaders: z.boolean().optional(),
+  maxConcurrency: z.custom<number | null>(isValidSiteConcurrencyLimit).optional(),
+  concurrencyWaitTimeoutMs: z.custom<number>(isValidSiteConcurrencyWait).optional(),
   codexFingerprintEnabled: unknownField,
   externalCheckinUrl: unknownField,
   status: unknownField,
@@ -30,6 +33,8 @@ const siteUpdatePayloadSchema = z.object({
   useSystemProxy: unknownField,
   customHeaders: unknownField,
   customHeadersOverrideRequestHeaders: z.boolean().optional(),
+  maxConcurrency: z.custom<number | null>(isValidSiteConcurrencyLimit).optional(),
+  concurrencyWaitTimeoutMs: z.custom<number>(isValidSiteConcurrencyWait).optional(),
   codexFingerprintEnabled: unknownField,
   externalCheckinUrl: unknownField,
   status: unknownField,
@@ -66,6 +71,8 @@ function normalizeSitePayloadInput(input: unknown): unknown {
 function formatSitePayloadError(error: z.ZodError): string {
   const firstIssue = error.issues[0];
   const firstPath = firstIssue?.path[0];
+  if (firstPath === 'maxConcurrency') return 'Invalid maxConcurrency. Expected null or an integer from 1 to 10000.';
+  if (firstPath === 'concurrencyWaitTimeoutMs') return 'Invalid concurrencyWaitTimeoutMs. Expected an integer from 0 to 60000.';
   if (firstPath === 'name') {
     return 'Invalid name. Expected non-empty string.';
   }

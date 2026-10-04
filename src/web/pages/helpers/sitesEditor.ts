@@ -1,3 +1,4 @@
+import { validateSiteConcurrencyConfig } from '../../../shared/siteConcurrency.js';
 export type SiteCustomHeaderField = {
   key: string;
   value: string;
@@ -24,6 +25,8 @@ export type SiteForm = {
   customHeaders: SiteCustomHeaderField[];
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: string;
+  maxConcurrency: string;
+  concurrencyWaitTimeoutMs: string;
 };
 
 export type SiteEditorState =
@@ -48,6 +51,8 @@ export type SiteSavePayload = {
   customHeaders: string;
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: number;
+  maxConcurrency?: number | null;
+  concurrencyWaitTimeoutMs?: number;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
   postRefreshProbeScope?: 'single' | 'all';
@@ -89,6 +94,8 @@ export function emptySiteForm(): SiteForm {
     customHeaders: [emptySiteCustomHeader()],
     customHeadersOverrideRequestHeaders: false,
     globalWeight: '1',
+    maxConcurrency: '',
+    concurrencyWaitTimeoutMs: '0',
   };
 }
 
@@ -140,7 +147,7 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'homepageUrl' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy' | 'codexFingerprintEnabled'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'homepageUrl' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy' | 'codexFingerprintEnabled' | 'maxConcurrency' | 'concurrencyWaitTimeoutMs'>> & {
   homepageUrl?: string | null;
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
@@ -155,6 +162,8 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   customHeaders?: string | null;
   customHeadersOverrideRequestHeaders?: boolean | null;
   globalWeight?: number | string | null;
+  maxConcurrency?: number | null;
+  concurrencyWaitTimeoutMs?: number | null;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
   const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
@@ -171,6 +180,8 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     customHeadersOverrideRequestHeaders: !!site.customHeadersOverrideRequestHeaders,
     globalWeight,
+    maxConcurrency: site.maxConcurrency == null ? '' : String(site.maxConcurrency),
+    concurrencyWaitTimeoutMs: String(site.concurrencyWaitTimeoutMs ?? 0),
   };
 }
 
@@ -269,4 +280,13 @@ export function buildSiteSaveAction(editor: SiteEditorState, form: SiteSavePaylo
     return { kind: 'update', id: editor.editingSiteId, payload: form };
   }
   return { kind: 'add', payload: form };
+}
+
+export function serializeSiteConcurrency(form: Pick<SiteForm, 'maxConcurrency' | 'concurrencyWaitTimeoutMs'>):
+  { valid: true; maxConcurrency: number | null; concurrencyWaitTimeoutMs: number } | { valid: false; error: string } {
+  const maxConcurrency = form.maxConcurrency.trim() === '' ? null : Number(form.maxConcurrency);
+  const concurrencyWaitTimeoutMs = form.concurrencyWaitTimeoutMs.trim() === '' ? NaN : Number(form.concurrencyWaitTimeoutMs);
+  const invalidField = validateSiteConcurrencyConfig({ maxConcurrency, concurrencyWaitTimeoutMs });
+  if (invalidField) return { valid: false, error: invalidField === 'maxConcurrency' ? '站点总并发必须留空或填写 1–10000 的整数' : '并发等待时间必须是 0–60000 毫秒的整数' };
+  return { valid: true, maxConcurrency, concurrencyWaitTimeoutMs };
 }
