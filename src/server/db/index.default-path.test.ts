@@ -31,6 +31,18 @@ describe('sqlite default path resolution', () => {
     expect(sqlitePath).toContain('metapi-vitest');
   });
 
+  it('honors a fixture DATA_DIR selected after config was already imported', async () => {
+    delete process.env.DATA_DIR;
+    delete process.env.DB_URL;
+    const { config } = await import('../config.js');
+    const cachedDataDir = config.dataDir;
+    process.env.DATA_DIR = resolve(tmpdir(), 'metapi-late-fixture-directory');
+    dbModule = await import('./index.js');
+    expect(dbModule.__dbProxyTestUtils.resolveSqlitePath()).toBe(resolve(process.env.DATA_DIR, 'hub.db'));
+    expect(dbModule.__dbProxyTestUtils.resolveSqlitePath()).not.toBe(resolve(cachedDataDir, 'hub.db'));
+    await dbModule.closeDbConnections();
+  });
+
   it('still honors explicit DATA_DIR when provided', async () => {
     process.env.DATA_DIR = resolve(tmpdir(), 'metapi-explicit-data-dir');
     delete process.env.DB_URL;

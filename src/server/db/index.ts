@@ -146,7 +146,9 @@ function resolveVitestSqlitePath(): string | null {
     return null;
   }
   if ((process.env.DATA_DIR || '').trim() && !isDefaultRepoDataDir(process.env.DATA_DIR)) {
-    return null;
+    // Tests may import config before choosing their fixture directory. Resolve
+    // the live test override here instead of falling back to cached config.
+    return resolve(process.env.DATA_DIR!, 'hub.db');
   }
 
   const workerTag = process.env.VITEST_POOL_ID
