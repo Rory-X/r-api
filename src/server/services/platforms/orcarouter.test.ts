@@ -1,24 +1,29 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { RequestInit as UndiciRequestInit } from 'undici';
 import { OrcaRouterAdapter } from './orcarouter.js';
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
-vi.mock('undici', () => ({ fetch: mocks.fetch }));
+const mocks = vi.hoisted(() => ({ fetchJson: vi.fn() }));
 vi.mock('../siteProxy.js', () => ({
   withSiteProxyRequestInit: async (_url: string, options: unknown) => options,
 }));
+
+// Stub the transport boundary so parallel catalog scans do not depend on
+// Vitest's concurrent dynamic-import mocking of Undici.
+class DiscoveryTestAdapter extends OrcaRouterAdapter {
+  protected override async fetchJson<T>(url: string, options?: UndiciRequestInit): Promise<T> {
+    return mocks.fetchJson(url, options);
+  }
+}
 
 afterEach(() => vi.resetAllMocks());
 
 describe('OrcaRouter model discovery', () => {
   it('uses the versioned endpoint and preserves sourced model context metadata', async () => {
-    mocks.fetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: [{ id: 'orcarouter/auto', context_length: 128000 }] }),
-    });
+    mocks.fetchJson.mockResolvedValue({ data: [{ id: 'orcarouter/auto', context_length: 128000 }] });
 
-    const models = await new OrcaRouterAdapter().discoverModels('https://api.orcarouter.ai/v1', 'sk-orca-test');
+    const models = await new DiscoveryTestAdapter().discoverModels('https://api.orcarouter.ai/v1', 'sk-orca-test');
 
-    expect(mocks.fetch).toHaveBeenCalledWith('https://api.orcarouter.ai/v1/models', expect.objectContaining({
+    expect(mocks.fetchJson).toHaveBeenCalledWith('https://api.orcarouter.ai/v1/models', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer sk-orca-test' }),
     }));
     expect(models).toEqual([{
@@ -28,14 +33,14 @@ describe('OrcaRouter model discovery', () => {
 
   it('isolates concurrent credential scans and discards missing context metadata on refresh', async () => {
     let firstCredentialScans = 0;
-    mocks.fetch.mockImplementation(async (_url: string, options: { headers: Record<string, string> }) => {
+    mocks.fetchJson.mockImplementation(async (_url: string, options: { headers: Record<string, string> }) => {
       const firstCredential = options.headers.Authorization === 'Bearer sk-orca-first';
       const contextLength = firstCredential
         ? (++firstCredentialScans === 1 ? 128000 : undefined)
         : 64000;
-      return { ok: true, json: async () => ({ data: [{ id: 'shared', context_length: contextLength }] }) };
+      return { data: [{ id: 'shared', context_length: contextLength }] };
     });
-    const adapter = new OrcaRouterAdapter();
+    const adapter = new DiscoveryTestAdapter();
 
     const [first, second] = await Promise.all([
       adapter.discoverModels('https://api.orcarouter.ai', 'sk-orca-first'),
