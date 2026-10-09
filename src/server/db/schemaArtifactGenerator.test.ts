@@ -226,12 +226,21 @@ describe('schema artifact generator', () => {
       }],
     };
 
-    expect(generateUpgradeSql('mysql', currentContract, previousContract)).toMatch(
+    const artifacts = generateDialectArtifacts(currentContract, previousContract);
+    expect(artifacts.mysqlBootstrap).toContain('`parent_id` VARCHAR(191)');
+    expect(artifacts.postgresBootstrap).toContain('"parent_id" TEXT');
+    expect(artifacts.mysqlUpgrade).toContain('ALTER TABLE `children` MODIFY COLUMN `parent_id` VARCHAR(191)');
+    expect(artifacts.mysqlUpgrade.indexOf('MODIFY COLUMN')).toBeLessThan(artifacts.mysqlUpgrade.indexOf('ADD CONSTRAINT'));
+    expect(artifacts.mysqlUpgrade).toMatch(
       /ALTER TABLE `children` ADD CONSTRAINT `[^`]+` FOREIGN KEY \(`parent_id`\) REFERENCES `parents`\(`id`\) ON DELETE CASCADE/,
     );
     expect(generateUpgradeSql('postgres', currentContract, previousContract)).toMatch(
       /ALTER TABLE "children" ADD CONSTRAINT "[^"]+" FOREIGN KEY \("parent_id"\) REFERENCES "parents"\("id"\) ON DELETE CASCADE/,
     );
+
+    const previousWithoutColumn = structuredClone(previousContract);
+    delete previousWithoutColumn.tables.children.columns.parent_id;
+    expect(generateUpgradeSql('mysql', currentContract, previousWithoutColumn)).toContain('ALTER TABLE `children` ADD COLUMN `parent_id` VARCHAR(191)');
   });
 
   it('rejects destructive diffs when generating additive upgrades', () => {

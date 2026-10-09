@@ -69,18 +69,23 @@ describe('downstreamApiKeyTrendService', () => {
       createdAt: '2026-04-06T00:30:00.000Z',
     }).run();
 
+    // Pick a different zone from the daily projection so this exercises raw
+    // cursor pagination on both UTC CI runners and local development machines.
+    const timeZone = trendService.resolveDownstreamTrendTimeZone() === 'UTC' ? 'Asia/Tokyo' : 'UTC';
+    const offsetHours = timeZone === 'Asia/Tokyo' ? 9 : 0;
+    const bucketStart = (day: number) => new Date(Date.UTC(2026, 3, day) - offsetHours * 3_600_000).toISOString();
     const trend = await trendService.readDownstreamApiKeyTrendBuckets({
       downstreamApiKeyId: inserted.id,
       range: 'all',
-      timeZone: 'UTC',
+      timeZone,
     });
 
     expect(trend.bucketSeconds).toBe(86400);
-    expect(trend.timeZone).toBe('UTC');
+    expect(trend.timeZone).toBe(timeZone);
     expect(trend.source).toBe('raw');
     expect(trend.buckets).toHaveLength(2);
     expect(trend.buckets[0]).toMatchObject({
-      startUtc: '2026-04-05T00:00:00.000Z',
+      startUtc: bucketStart(5),
       totalRequests: 5_001,
       successRequests: 5_001,
       failedRequests: 0,
@@ -88,7 +93,7 @@ describe('downstreamApiKeyTrendService', () => {
     });
     expect(trend.buckets[0]?.totalCost).toBeCloseTo(5.001, 6);
     expect(trend.buckets[1]).toMatchObject({
-      startUtc: '2026-04-06T00:00:00.000Z',
+      startUtc: bucketStart(6),
       totalRequests: 1,
       successRequests: 0,
       failedRequests: 1,

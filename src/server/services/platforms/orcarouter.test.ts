@@ -26,10 +26,14 @@ describe('OrcaRouter model discovery', () => {
   });
 
   it('isolates concurrent credential scans and discards missing context metadata on refresh', async () => {
-    mocks.fetch
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'shared', context_length: 128000 }] })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'shared', context_length: 64000 }] })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'shared' }] })));
+    let firstCredentialScans = 0;
+    mocks.fetch.mockImplementation(async (_url: string, options: { headers: Record<string, string> }) => {
+      const firstCredential = options.headers.Authorization === 'Bearer sk-orca-first';
+      const contextLength = firstCredential
+        ? (++firstCredentialScans === 1 ? 128000 : undefined)
+        : 64000;
+      return new Response(JSON.stringify({ data: [{ id: 'shared', context_length: contextLength }] }));
+    });
     const adapter = new OrcaRouterAdapter();
 
     const [first, second] = await Promise.all([

@@ -57,7 +57,14 @@ function resolveMysqlIndexPrefix(
   return column ? escapeMysqlTextPrefix(column.logicalType) : '';
 }
 
-function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaContractColumn): string {
+function isForeignKeyColumn(tableName: string, columnName: string, contract: SchemaContract): boolean {
+  return contract.foreignKeys.some((foreignKey) => (
+    (foreignKey.table === tableName && foreignKey.columns.includes(columnName))
+    || (foreignKey.referencedTable === tableName && foreignKey.referencedColumns.includes(columnName))
+  ));
+}
+
+function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaContractColumn, foreignKeyColumn = false): string {
   if (dialect === 'sqlite') {
     switch (column.logicalType) {
       case 'boolean':
@@ -86,7 +93,7 @@ function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaCo
       case 'json':
         return 'JSON';
       case 'text':
-        return column.primaryKey || column.defaultValue != null ? 'VARCHAR(191)' : 'TEXT';
+        return column.primaryKey || column.defaultValue != null || foreignKeyColumn ? 'VARCHAR(191)' : 'TEXT';
       default:
         return 'TEXT';
     }
@@ -135,8 +142,9 @@ function buildColumnDefinition(
   dialect: SqlDialect,
   columnName: string,
   column: SchemaContractColumn,
+  foreignKeyColumn = false,
 ): string {
-  const sqlType = mapColumnType(dialect, columnName, column);
+  const sqlType = mapColumnType(dialect, columnName, column, foreignKeyColumn);
   const notNull = column.notNull ? ' NOT NULL' : '';
   const defaultValue = formatDefaultValue(dialect, column);
   const primaryKey = column.primaryKey ? ' PRIMARY KEY' : '';
@@ -195,7 +203,7 @@ function buildCreateTableStatement(
   const columnEntries = Object.entries(table.columns);
   const foreignKeys = contract.foreignKeys.filter((foreignKey) => foreignKey.table === tableName);
   const parts = [
-    ...columnEntries.map(([columnName, column]) => buildColumnDefinition(dialect, columnName, column)),
+    ...columnEntries.map(([columnName, column]) => buildColumnDefinition(dialect, columnName, column, isForeignKeyColumn(tableName, columnName, contract))),
     ...foreignKeys.map((foreignKey) => buildForeignKeyClause(dialect, foreignKey)),
   ];
   return `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(dialect, tableName)} (${parts.join(', ')})`;
@@ -360,8 +368,9 @@ function buildAddColumnStatement(
   tableName: string,
   columnName: string,
   column: SchemaContractColumn,
+  contract: SchemaContract,
 ): string {
-  return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column)}`;
+  return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column, isForeignKeyColumn(tableName, columnName, contract))}`;
 }
 
 function buildRelaxNotNullStatement(
@@ -369,9 +378,10 @@ function buildRelaxNotNullStatement(
   tableName: string,
   columnName: string,
   column: SchemaContractColumn,
+  contract: SchemaContract,
 ): string {
   if (dialect === 'mysql') {
-    const sqlType = mapColumnType(dialect, columnName, column);
+    const sqlType = mapColumnType(dialect, columnName, column, isForeignKeyColumn(tableName, columnName, contract));
     const defaultValue = formatDefaultValue(dialect, column);
     return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} MODIFY COLUMN ${quoteIdentifier(dialect, columnName)} ${sqlType} NULL${defaultValue}`;
   }
@@ -429,11 +439,15 @@ export function generateUpgradeSql(
       const previousColumn = previousColumns[columnName];
       if (previousColumn) {
         if (isNullableRelaxation(column, previousColumn) && dialect !== 'sqlite') {
-          relaxNotNullStatements.push(buildRelaxNotNullStatement(dialect, tableName, columnName, column));
+          relaxNotNullStatements.push(buildRelaxNotNullStatement(dialect, tableName, columnName, column, currentContract));
+        } else if (dialect === 'mysql'
+          && mapColumnType(dialect, columnName, column, isForeignKeyColumn(tableName, columnName, currentContract))
+            !== mapColumnType(dialect, columnName, previousColumn, isForeignKeyColumn(tableName, columnName, previousContract))) {
+          relaxNotNullStatements.push(`ALTER TABLE ${quoteIdentifier(dialect, tableName)} MODIFY COLUMN ${buildColumnDefinition(dialect, columnName, column, isForeignKeyColumn(tableName, columnName, currentContract))}`);
         }
         continue;
       }
-      addColumnStatements.push(buildAddColumnStatement(dialect, tableName, columnName, column));
+      addColumnStatements.push(buildAddColumnStatement(dialect, tableName, columnName, column, currentContract));
     }
   }
 
