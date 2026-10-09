@@ -71,6 +71,7 @@ function normalizeSitePayloadInput(input: unknown): unknown {
 function formatSitePayloadError(error: z.ZodError): string {
   const firstIssue = error.issues[0];
   const firstPath = firstIssue?.path[0];
+  if (firstPath === 'customHeadersOverrideRequestHeaders') return 'Invalid customHeadersOverrideRequestHeaders. Expected boolean.';
   if (firstPath === 'maxConcurrency') return 'Invalid maxConcurrency. Expected null or an integer from 1 to 10000.';
   if (firstPath === 'concurrencyWaitTimeoutMs') return 'Invalid concurrencyWaitTimeoutMs. Expected an integer from 0 to 60000.';
   if (firstPath === 'name') {

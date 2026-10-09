@@ -40,6 +40,7 @@ export async function syncPatternRouteChannels(input: {
   candidates?: RoutingModelCandidates;
   routeIds?: number[];
   includeExact?: boolean;
+  schedulingSourceRouteIds?: number[];
 } = {}): Promise<PatternSyncResult> {
   const candidates = input.candidates ?? await loadRoutingModelCandidates();
   const exclusions = await readExclusions();
@@ -69,6 +70,7 @@ export async function syncPatternRouteChannels(input: {
       if (parsed.error) throw new Error(`Invalid route pattern ${route.id}: ${parsed.error}`);
     }
     const desired = new Map<string, Candidate>();
+    const schedulingKeys = new Set<string>();
     for (const [model, modelCandidates] of candidates) {
       if (exclusions.has(model.toLowerCase()) || !matchesTokenRouteModelPattern(model, route.modelPattern)) continue;
       const sources = (sourcesByModel.get(model.toLowerCase()) ?? []).filter((source) => source.id !== route.id);
@@ -77,13 +79,16 @@ export async function syncPatternRouteChannels(input: {
         const template = sources.filter((source) => source.enabled)
           .map((source) => templatesByRoute.get(source.id)?.get(buildRoutingCandidateKey(candidate)))
           .find((channel) => channel !== undefined);
+        if (sources.length > 0 && !template) continue;
         if (template && !template.enabled) continue;
         const value: Candidate = {
           ...candidate, sourceModel: model,
           priority: template?.priority ?? 0, weight: template?.weight ?? 10,
           enabled: template ? !!template.enabled : true,
         };
-        desired.set(buildPatternChannelIdentity(value), value);
+        const identity = buildPatternChannelIdentity(value);
+        desired.set(identity, value);
+        if (template && input.schedulingSourceRouteIds?.includes(template.routeId)) schedulingKeys.add(identity);
       }
     }
     // One group delta is atomic; a failed insert must not discard existing rows.
@@ -101,10 +106,17 @@ export async function syncPatternRouteChannels(input: {
       for (const [key, candidate] of desired) {
         if (existingKeys.has(key)) {
           const current = existing.find((channel) => buildPatternChannelIdentity(channel) === key);
-          if (candidate.oauthRouteUnitId && current && !current.manualOverride && current.accountId !== candidate.accountId) {
-            await tx.update(schema.routeChannels).set({ accountId: candidate.accountId })
-              .where(eq(schema.routeChannels.id, current.id)).run();
-            updated++;
+          if (current && !current.manualOverride) {
+            const updates: Partial<Channel> = {};
+            if (candidate.oauthRouteUnitId && current.accountId !== candidate.accountId) updates.accountId = candidate.accountId;
+            if (schedulingKeys.has(key)) {
+              if (current.priority !== candidate.priority) updates.priority = candidate.priority;
+              if (current.weight !== candidate.weight) updates.weight = candidate.weight;
+            }
+            if (Object.keys(updates).length > 0) {
+              await tx.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, current.id)).run();
+              updated++;
+            }
           }
           continue;
         }
@@ -146,6 +158,7 @@ export async function rebuildAutomaticRouteChannelsByModelPattern(routeId: numbe
 export async function syncPatternRouteChannelsAfterRouteChanges(input: {
   removedRoutes?: Array<Pick<Route, 'modelPattern' | 'routeMode'>>;
   restoredRoutes?: Array<Pick<Route, 'modelPattern' | 'routeMode'>>;
+  schedulingSourceRouteIds?: number[];
 } = {}): Promise<PatternSyncResult> {
   return withRouteMutation(async () => {
     const exclusions = await readExclusions();
@@ -158,6 +171,6 @@ export async function syncPatternRouteChannelsAfterRouteChanges(input: {
     if ((input.removedRoutes?.length ?? 0) + (input.restoredRoutes?.length ?? 0) > 0) {
       await upsertSetting(EXCLUSIONS_KEY, [...exclusions].sort());
     }
-    return syncPatternRouteChannels();
+    return syncPatternRouteChannels({ schedulingSourceRouteIds: input.schedulingSourceRouteIds });
   });
 }

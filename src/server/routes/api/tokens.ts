@@ -849,6 +849,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (created > 0) {
       await clearRouteDecisionSnapshot(routeId);
       await clearDependentExplicitGroupSnapshotsBySourceRouteIds([routeId]);
+      await syncPatternRouteChannelsAfterRouteChanges();
       invalidateTokenRouterCache();
     }
 
@@ -1310,6 +1311,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     await clearRouteDecisionSnapshot(routeId);
     await clearDependentExplicitGroupSnapshotsBySourceRouteIds([routeId]);
+    await syncPatternRouteChannelsAfterRouteChanges();
     invalidateTokenRouterCache();
     return created;
   });
@@ -1364,7 +1366,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       .all();
     await clearRouteDecisionSnapshots(existingChannels.map((channel) => channel.routeId));
     await clearDependentExplicitGroupSnapshotsBySourceRouteIds(existingChannels.map((channel) => channel.routeId));
-    await syncPatternRouteChannelsAfterRouteChanges();
+    await syncPatternRouteChannelsAfterRouteChanges({ schedulingSourceRouteIds: routeIds });
     invalidateTokenRouterCache();
     return { success: true, channels: updatedChannels };
   });
@@ -1430,7 +1432,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);
     await clearDependentExplicitGroupSnapshotsBySourceRouteIds([channel.routeId]);
-    await syncPatternRouteChannelsAfterRouteChanges();
+    await syncPatternRouteChannelsAfterRouteChanges({ schedulingSourceRouteIds: [channel.routeId] });
     invalidateTokenRouterCache();
     return await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
   });
@@ -1443,6 +1445,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (channel) {
       await clearRouteDecisionSnapshot(channel.routeId);
       await clearDependentExplicitGroupSnapshotsBySourceRouteIds([channel.routeId]);
+      await syncPatternRouteChannelsAfterRouteChanges();
     }
     invalidateTokenRouterCache();
     return { success: true };

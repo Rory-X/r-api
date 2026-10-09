@@ -44,6 +44,9 @@ function createDbSelectChain() {
     where() {
       return this;
     },
+    orderBy() {
+      return this;
+    },
     all: (...args: unknown[]) => dbSelectAllMock(...args),
     get: (...args: unknown[]) => dbSelectGetMock(...args),
   };
@@ -125,6 +128,11 @@ vi.mock('../../db/index.js', () => ({
     sites: {
       id: Symbol('sites.id'),
       status: Symbol('sites.status'),
+    },
+    siteApiEndpoints: {
+      siteId: Symbol('siteApiEndpoints.siteId'),
+      sortOrder: Symbol('siteApiEndpoints.sortOrder'),
+      id: Symbol('siteApiEndpoints.id'),
     },
     tokenRoutes: {
       displayName: Symbol('tokenRoutes.displayName'),

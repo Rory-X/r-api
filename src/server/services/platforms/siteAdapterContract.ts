@@ -157,6 +157,13 @@ function buildContract(
 }
 
 const CONTRACTS: Record<string, SiteAdapterContract> = {
+  orcarouter: buildContract('orcarouter', {
+    credentialKinds: ['api_key'],
+    operations: { ...DEFAULT_OPERATIONS, login: false, balance: false, checkin: false, api_tokens: false, announcements: false },
+    probePolicy: 'metadata_only',
+    checkin: { support: 'unsupported', idempotency: 'unknown', allowsAutomaticExecution: false },
+    notes: ['OrcaRouter 通过 API Key 接入 OpenAI 兼容网关，不提供面板账号管理。'],
+  }),
   openai: buildContract('openai', {
     proxyEndpoints: { rerank: 'passthrough' },
     credentialKinds: ['api_key'],

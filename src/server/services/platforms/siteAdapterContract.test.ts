@@ -6,6 +6,15 @@ import {
 } from './siteAdapterContract.js';
 
 describe('site adapter capability contract', () => {
+  it('limits OrcaRouter to API-key discovery and proxy capabilities', () => {
+    const contract = getSiteAdapterContract('orcarouter');
+    expect(contract.credentialKinds).toEqual(['api_key']);
+    expect(contract.operations).toMatchObject({ models: true, verify_token: true, login: false, balance: false, checkin: false, api_tokens: false, announcements: false });
+    expect(contract.browser.supported).toBe(false);
+    expect(contract.checkin.allowsAutomaticExecution).toBe(false);
+    expect(validateSiteAdapterContract(contract)).toEqual([]);
+  });
+
   it('keeps every registered contract structurally valid', () => {
     const contracts = listSiteAdapterContracts();
 

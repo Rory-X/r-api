@@ -1,4 +1,5 @@
-import currentContract from '../db/generated/schemaContract.json' with { type: 'json' };
+import currentContractJson from '../db/generated/schemaContract.json' with { type: 'json' };
+import type { SchemaContract } from '../db/schemaContract.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   __databaseMigrationServiceTestUtils,
@@ -8,6 +9,12 @@ import {
 
 function cloneContract<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+const currentContract = currentContractJson as unknown as SchemaContract;
+
+function deleteContractColumn(contract: SchemaContract, tableName: string, columnName: string): void {
+  delete (contract.tables[tableName].columns as Record<string, unknown>)[columnName];
 }
 
 function createDbSchemaMock() {
@@ -143,7 +150,7 @@ describe('databaseMigrationService', () => {
     expect(normalized.ssl).toBe(false);
   });
 
-  it.each(['postgres', 'mysql', 'sqlite'] as const)('creates or patches sites schema with use_system_proxy and custom_headers for %s', async (dialect) => {
+  it.each(['postgres', 'mysql', 'sqlite'] as const)('creates or patches sites schema with custom header priority columns for %s', async (dialect) => {
     const executedSql: string[] = [];
     const liveContract = cloneContract(currentContract);
     delete liveContract.tables.sites.columns.use_system_proxy;
@@ -175,6 +182,7 @@ describe('databaseMigrationService', () => {
 
     const useSystemProxySql = executedSql.find((sqlText) => sqlText.includes('use_system_proxy'));
     const customHeadersSql = executedSql.find((sqlText) => sqlText.includes('custom_headers'));
+    const customHeadersOverrideSql = executedSql.find((sqlText) => sqlText.includes('custom_headers_override_request_headers'));
 
     expect(useSystemProxySql).toContain('use_system_proxy');
     expect(customHeadersSql).toContain('custom_headers');
@@ -189,7 +197,7 @@ describe('databaseMigrationService', () => {
   it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
     const executedSql: string[] = [];
     const liveContract = cloneContract(currentContract);
-    delete liveContract.tables.token_routes.columns.decision_snapshot;
+    deleteContractColumn(liveContract, 'token_routes', 'decision_snapshot');
 
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
@@ -214,7 +222,7 @@ describe('databaseMigrationService', () => {
     ).toBe(true);
   });
 
-  it('includes useSystemProxy and customHeaders when building site migration statements', () => {
+  it('includes site proxy, custom header, and probe settings when building site migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',
       timestamp: Date.now(),
@@ -227,8 +235,13 @@ describe('databaseMigrationService', () => {
           useSystemProxy: true,
           customHeaders: '{"x-site-scope":"internal"}',
           customHeadersOverrideRequestHeaders: true,
+          postRefreshProbeEnabled: true,
+          postRefreshProbeModel: 'gpt-4o-mini',
+          postRefreshProbeScope: 'all',
+          postRefreshProbeLatencyThresholdMs: 750,
           status: 'active',
         }],
+        siteApiEndpoints: [],
         siteAnnouncements: [],
         siteDisabledModels: [],
         accounts: [],
@@ -238,6 +251,7 @@ describe('databaseMigrationService', () => {
         tokenModelAvailability: [{ id: 1, tokenId: 1, modelName: 'known', available: true, contextLength: 64000, contextSource: 'test.models:context_window', contextUpdatedAt: '2026-10-04T00:00:00Z' }],
         tokenRoutes: [],
         routeChannels: [],
+        routeGroupSources: [],
         proxyLogs: [],
         proxyVideoTasks: [],
         proxyFiles: [],
@@ -258,6 +272,11 @@ describe('databaseMigrationService', () => {
     const siteStatement = statements.find((statement) => statement.table === 'sites');
     const useSystemProxyIndex = siteStatement?.columns.indexOf('use_system_proxy') ?? -1;
     const customHeadersIndex = siteStatement?.columns.indexOf('custom_headers') ?? -1;
+    const customHeadersOverrideIndex = siteStatement?.columns.indexOf('custom_headers_override_request_headers') ?? -1;
+    const probeEnabledIndex = siteStatement?.columns.indexOf('post_refresh_probe_enabled') ?? -1;
+    const probeModelIndex = siteStatement?.columns.indexOf('post_refresh_probe_model') ?? -1;
+    const probeScopeIndex = siteStatement?.columns.indexOf('post_refresh_probe_scope') ?? -1;
+    const probeLatencyIndex = siteStatement?.columns.indexOf('post_refresh_probe_latency_threshold_ms') ?? -1;
 
     expect(useSystemProxyIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[useSystemProxyIndex]).toBe(true);
@@ -266,6 +285,14 @@ describe('databaseMigrationService', () => {
     const overrideIndex = siteStatement!.columns.indexOf('custom_headers_override_request_headers');
     expect(overrideIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement!.values[overrideIndex]).toBe(true);
+    expect(probeEnabledIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeEnabledIndex]).toBe(true);
+    expect(probeModelIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeModelIndex]).toBe('gpt-4o-mini');
+    expect(probeScopeIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeScopeIndex]).toBe('all');
+    expect(probeLatencyIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeLatencyIndex]).toBe(750);
   });
 
   it('includes site api endpoints when building migration statements', () => {

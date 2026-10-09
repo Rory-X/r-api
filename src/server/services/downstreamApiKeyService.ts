@@ -580,15 +580,15 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
 }
 
 export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedRouteIds' | 'siteWeightMultipliers' | 'excludedSiteIds' | 'allowedCredentialRefs' | 'excludedCredentialRefs'>): DownstreamRoutingPolicy {
-  return {
+  return freezeRoutingPolicy({
     supportedModels: normalizeSupportedModelsInput(view.supportedModels),
     allowedRouteIds: normalizeAllowedRouteIdsInput(view.allowedRouteIds),
     siteWeightMultipliers: normalizeSiteWeightMultipliersInput(view.siteWeightMultipliers),
     excludedSiteIds: normalizeExcludedSiteIdsInput(view.excludedSiteIds),
     allowedCredentialRefs: normalizeAllowedCredentialRefsInput(view.allowedCredentialRefs),
     excludedCredentialRefs: normalizeExcludedCredentialRefsInput(view.excludedCredentialRefs),
-    denyAllWhenEmpty: true,
-  };
+    denyAllWhenEmpty: false,
+  });
 }
 
 export async function listDownstreamApiKeys(): Promise<DownstreamApiKeyPolicyView[]> {

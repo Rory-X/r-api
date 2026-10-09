@@ -86,13 +86,23 @@ describe('rerank authorization, routing, billing and durable ledger', () => {
     expect(await db.select().from(schema.siteConcurrencyLeases).all()).toHaveLength(0);
   });
 
-  it.each([[], ['other-model']])('denies empty or unauthorized model scope %j without selecting or dispatching', async (supportedModels) => {
+  it.each([['other-model']])('denies unauthorized model scope %j without selecting or dispatching', async (supportedModels) => {
     await key({ supportedModels: JSON.stringify(supportedModels) });
     await channel();
     const response = await send();
     expect(response.statusCode).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await ledger(String(response.headers['x-metapi-request-id']))).toMatchObject({ status: 'failed', attempts: [] });
+  });
+
+  it('allows runtime-wide rerank with empty managed-key selections through policy revalidation', async () => {
+    await key({ supportedModels: '[]', allowedRouteIds: '[]' });
+    await channel();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(payload())));
+    const response = await send();
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await ledger(String(response.headers['x-metapi-request-id']))).toMatchObject({ status: 'succeeded' });
   });
 
   it.each([{ maxCost: 1, usedCost: 1 }, { maxRequests: 1, usedRequests: 1 }])('rejects an exhausted key before upstream dispatch: %j', async (limits) => {
