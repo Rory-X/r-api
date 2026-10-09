@@ -11,9 +11,10 @@ afterEach(() => vi.resetAllMocks());
 
 describe('OrcaRouter model discovery', () => {
   it('uses the versioned endpoint and preserves sourced model context metadata', async () => {
-    mocks.fetch.mockResolvedValue(new Response(JSON.stringify({
-      data: [{ id: 'orcarouter/auto', context_length: 128000 }],
-    })));
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'orcarouter/auto', context_length: 128000 }] }),
+    });
 
     const models = await new OrcaRouterAdapter().discoverModels('https://api.orcarouter.ai/v1', 'sk-orca-test');
 
@@ -32,7 +33,7 @@ describe('OrcaRouter model discovery', () => {
       const contextLength = firstCredential
         ? (++firstCredentialScans === 1 ? 128000 : undefined)
         : 64000;
-      return new Response(JSON.stringify({ data: [{ id: 'shared', context_length: contextLength }] }));
+      return { ok: true, json: async () => ({ data: [{ id: 'shared', context_length: contextLength }] }) };
     });
     const adapter = new OrcaRouterAdapter();
 

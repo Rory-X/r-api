@@ -242,6 +242,22 @@ export function normalizeDefaultValue(rawDefaultValue: string | null | undefined
   return normalizeDefaultValueForColumn(rawDefaultValue, null);
 }
 
+export function normalizeMySqlColumnDefault(rawDefaultValue: string | null, logicalType: LogicalColumnType): string | null {
+  // COLUMN_DEFAULT returns decoded text literals rather than SQL expressions.
+  if (rawDefaultValue !== null && logicalType === 'text') {
+    return `'${rawDefaultValue.replace(/'/g, "''")}'`;
+  }
+  return normalizeDefaultValueForColumn(rawDefaultValue, logicalType);
+}
+
+export function isMySqlImplicitForeignKeyIndex(index: SchemaContractIndex, foreignKey: SchemaContractForeignKey, constraintName: string): boolean {
+  return !index.unique
+    && index.table === foreignKey.table
+    && (index.name === foreignKey.columns[0] || index.name === constraintName)
+    && index.columns.length === foreignKey.columns.length
+    && index.columns.every((column, position) => column === foreignKey.columns[position]);
+}
+
 function sortForeignKeys(foreignKeys: SchemaContractForeignKey[]): SchemaContractForeignKey[] {
   return foreignKeys.sort((left, right) => {
     const leftKey = `${left.table}:${left.columns.join(',')}`;
@@ -433,7 +449,7 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
         notNull: isNullable === 'NO',
         defaultValue: primaryKeys.has(`${tableName}.${columnName}`)
           ? null
-          : normalizeDefaultValueForColumn(columnDefault, logicalType),
+          : normalizeMySqlColumnDefault(columnDefault, logicalType),
         primaryKey: primaryKeys.has(`${tableName}.${columnName}`),
       };
     }
@@ -527,7 +543,9 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
 
     return {
       tables,
-      indexes,
+      indexes: indexes.filter((index) => ![...foreignKeyGroups.entries()].some(([key, foreignKey]) => (
+        isMySqlImplicitForeignKeyIndex(index, foreignKey, key.slice(foreignKey.table.length + 1))
+      ))),
       uniques,
       foreignKeys: sortForeignKeys([...foreignKeyGroups.values()]),
     };
